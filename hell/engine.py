@@ -6,6 +6,19 @@ and emits plain *domain events* that the Discord layer turns into messages.
 That separation is what makes the whole thing unit-testable without a gateway
 connection.
 
+Two independent timelines
+-------------------------
+* **Global event timeline — 0 → 160h** (:mod:`hell.timeline`): one clock for
+  the whole run, driven only by absolute timestamps.  Milestones and completion
+  are measured against it, and *no individual user* can move it: people joining,
+  leaving, being disconnected or being kicked never touch it.
+* **Per-user session timelines — 0 → Xh** (:mod:`hell.tracking`): one clock per
+  human, accumulating only while they are actually in the VC.  Leaving pauses a
+  user's own clock and nothing else; rejoining resumes it on top of the total.
+
+The only thing that can stop the global clock early is the VC being empty of
+valid humans for longer than the grace window (:mod:`hell.grace`).
+
 Timing rules implemented here
 -----------------------------
 * Elapsed time is always ``min(now, start + 160h) - start`` using absolute
@@ -15,7 +28,9 @@ Timing rules implemented here
   RUNNING, capped per tick so downtime cannot be silently credited.
 * Milestones are claimed atomically in SQLite, therefore each one triggers at
   most once, even across restarts.
-* An empty VC (zero valid humans) fails the event immediately and permanently.
+* An empty VC (zero valid humans) opens the grace window; only when that window
+  expires does the event fail — permanently, timestamped at the moment the VC
+  actually emptied.
 """
 
 from __future__ import annotations
@@ -26,7 +41,8 @@ from dataclasses import dataclass, field
 from typing import Optional, Sequence
 
 from .config import Config
-from .leaderboard import build_leaderboard, top_participants
+from .grace import EmptyVcGracePeriod
+from .leaderboard import top_participants
 from .milestones import (
     FINAL_MILESTONE_HOURS,
     MILESTONES,
@@ -36,7 +52,9 @@ from .milestones import (
 )
 from .models import EventState, EventStatus, LeaderboardEntry, Milestone, MilestoneRecord, ParticipantRef
 from .storage import Store
+from .timeline import EventTimeline
 from .timeutil import now_ts
+from .tracking import UserTimeTracker
 
 log = logging.getLogger("hell.engine")
 
@@ -73,10 +91,31 @@ class MilestoneReached(DomainEvent):
 
 
 @dataclass
+class GraceStarted(DomainEvent):
+    """The VC just emptied: the run dies unless somebody joins in time."""
+
+    started_ts: float
+    deadline_ts: float
+    seconds: float
+    elapsed: float
+
+
+@dataclass
+class GraceRecovered(DomainEvent):
+    """Somebody joined before the grace window expired — the run continues."""
+
+    started_ts: float
+    recovered_ts: float
+    empty_for: float
+    participants: list[ParticipantRef] = field(default_factory=list)
+
+
+@dataclass
 class EventFailed(DomainEvent):
     failed_ts: float
     elapsed: float
-    reason: str = "The voice channel became completely empty of valid participants."
+    reason: str = "The voice channel stayed empty of valid participants for the whole grace period."
+    empty_since: Optional[float] = None
     leaderboard: list[LeaderboardEntry] = field(default_factory=list)
 
 
@@ -115,6 +154,9 @@ class Snapshot:
     end_ts: Optional[float]
     unverified: float = 0.0
     end_reason: Optional[str] = None
+    grace_open: bool = False
+    grace_seconds_left: float = 0.0
+    grace_total: float = 0.0
 
 
 class StartError(RuntimeError):
@@ -134,6 +176,11 @@ class HellEngine:
         self._presence_signature: frozenset[int] = frozenset(
             p.user_id for p in self._last_participants
         )
+        # Timeline #2 (per-user 0 -> Xh). Timeline #1 (global 0 -> 160h) is
+        # built on demand from the start timestamp; see `self.timeline`.
+        self.tracker = UserTimeTracker(store, max_credit=config.max_tick_credit)
+        self.grace = EmptyVcGracePeriod(seconds=config.empty_vc_grace_seconds)
+        self.grace.restore(self.state.grace_started_ts)
 
     # ------------------------------------------------------------- accessors
 
@@ -153,15 +200,21 @@ class HellEngine:
     def last_participants(self) -> tuple[ParticipantRef, ...]:
         return self._last_participants
 
+    @property
+    def timeline(self) -> Optional[EventTimeline]:
+        """The global 0 → 160h clock, or None before the event starts."""
+        if self.state.start_ts is None:
+            return None
+        return EventTimeline(start_ts=self.state.start_ts, total=TOTAL_SECONDS)
+
     def elapsed(self, now: Optional[float] = None) -> float:
         """Elapsed event time, clamped to [0, 160h] and frozen once terminal."""
-        if self.state.start_ts is None:
+        timeline = self.timeline
+        if timeline is None:
             return 0.0
         now = now_ts() if now is None else now
-        reference = now
-        if self.state.status.is_terminal and self.state.end_ts is not None:
-            reference = self.state.end_ts
-        return max(0.0, min(reference, self.state.start_ts + TOTAL_SECONDS) - self.state.start_ts)
+        frozen = self.state.end_ts if (self.state.status.is_terminal and self.state.end_ts) else None
+        return timeline.elapsed(now, frozen_at=frozen)
 
     def snapshot(self, now: Optional[float] = None, participants: Optional[int] = None) -> Snapshot:
         now = now_ts() if now is None else now
@@ -181,6 +234,9 @@ class HellEngine:
             end_ts=self.state.end_ts,
             unverified=self.store.get_unverified_seconds(self.state.event_uid) if self.state.event_uid else 0.0,
             end_reason=self.state.end_reason,
+            grace_open=self.grace.is_open and self.is_running,
+            grace_seconds_left=self.grace.seconds_left(now),
+            grace_total=self.grace.seconds,
         )
 
     # --------------------------------------------------------------- control
@@ -216,6 +272,7 @@ class HellEngine:
             end_reason=None,
             final_saved=False,
         )
+        self.grace.restore(None)
         self.store.save_state(self.state)
         participants = tuple(initial_participants)
         self._last_participants = participants
@@ -245,6 +302,7 @@ class HellEngine:
         self.state = self.store.load_state()
         self._last_participants = ()
         self._presence_signature = frozenset()
+        self.grace.restore(None)
         log.warning("Event data reset")
 
     def set_progress_message(self, channel_id: Optional[int], message_id: Optional[int]) -> None:
@@ -265,34 +323,25 @@ class HellEngine:
             return []
 
         uid = self.state.event_uid
-        start = self.state.start_ts
-        deadline = start + TOTAL_SECONDS
-        effective_now = min(obs.now, deadline)
-        elapsed = max(0.0, effective_now - start)
-        finished = obs.now >= deadline
+        timeline = self.timeline
+        assert timeline is not None
+        effective_now = timeline.clamp(obs.now)
+        elapsed = timeline.elapsed(obs.now)
+        finished = timeline.is_finished(obs.now)
 
         events: list[DomainEvent] = []
         self._last_participants = tuple(obs.participants)
 
-        # 1) Leaderboard accrual for the observed interval.
-        previous = self.state.last_tick_ts if self.state.last_tick_ts is not None else start
-        raw_delta = max(0.0, effective_now - previous)
-        credit = min(raw_delta, self.config.max_tick_credit)
-        unverified = raw_delta - credit
-        if unverified > 0.5:
-            total = self.store.add_unverified_seconds(uid, unverified)
-            log.warning(
-                "Observation gap of %.1fs (bot downtime?) — not credited; total unverified %.1fs",
-                unverified,
-                total,
-            )
-        if credit > 0 and obs.participants:
-            self.store.add_user_time(
-                uid,
-                [(p.user_id, p.display_name, credit, obs.now) for p in obs.participants],
-            )
-        elif obs.participants:
-            self.store.touch_users(uid, obs.participants, obs.now)
+        # 1) Timeline #2: advance each present user's own 0 -> Xh clock.
+        #    Nothing here can affect the global 0 -> 160h timeline.
+        previous = self.state.last_tick_ts if self.state.last_tick_ts is not None else timeline.start_ts
+        self.tracker.credit(
+            uid,
+            previous_ts=previous,
+            now_ts=effective_now,
+            participants=obs.participants,
+            stamp=obs.now,
+        )
 
         self.state.last_tick_ts = effective_now
         self.store.set_last_tick(effective_now)
@@ -304,40 +353,113 @@ class HellEngine:
             self._presence_signature = signature
             self.store.replace_presence(uid, obs.participants, obs.now)
 
-        # 2) Failure check — an empty VC before the deadline ends the run.
-        #    (Once the 160h deadline is reached the run is already won, so
-        #    completion takes precedence over an empty channel.)
-        if not finished and obs.count == 0:
-            self._terminate(
-                EventStatus.FAILED,
-                obs.now,
-                "The voice channel became completely empty of valid participants.",
-            )
-            log.warning("Event %s FAILED at %.3f (elapsed %.1fs)", uid, obs.now, elapsed)
-            return [
-                EventFailed(
-                    failed_ts=obs.now,
-                    elapsed=elapsed,
-                    leaderboard=self.leaderboard(),
-                )
-            ]
+        # 2) Empty-VC grace window (see hell/grace.py).
+        if not finished:
+            grace_event = self._evaluate_grace(obs, elapsed)
+            if isinstance(grace_event, EventFailed):
+                return [grace_event]
+            if grace_event is not None:
+                events.append(grace_event)
 
-        # 3) Milestone detection (global timer only, each one exactly once).
-        events.extend(self._trigger_due_milestones(elapsed, obs))
+        # 3) Milestone detection (global timeline only, each one exactly once).
+        #    Skipped while the VC is empty: nobody would be able to claim it,
+        #    so the milestone waits for the first tick with people present.
+        if obs.participants:
+            events.extend(self._trigger_due_milestones(elapsed, obs))
 
         # 4) Completion at exactly 160 hours — never counts beyond that.
         if finished:
-            self._terminate(EventStatus.COMPLETED, deadline, "160 consecutive hours survived.")
+            self._terminate(EventStatus.COMPLETED, timeline.deadline, "160 consecutive hours survived.")
             board = self.leaderboard()
             log.info("Event %s COMPLETED", uid)
             events.append(
                 EventCompleted(
-                    completed_ts=deadline,
+                    completed_ts=timeline.deadline,
                     leaderboard=board,
                     top3=top_participants(board, 3),
                 )
             )
         return events
+
+    # ------------------------------------------------------------ grace rule
+
+    def _evaluate_grace(self, obs: Observation, elapsed: float) -> Optional[DomainEvent]:
+        """Apply the empty-VC grace rule for one observation.
+
+        Returns a :class:`GraceStarted`, a :class:`GraceRecovered`, an
+        :class:`EventFailed` (window expired), or None when nothing changed.
+        """
+        assert self.state.event_uid is not None
+
+        if obs.count > 0:
+            # Someone valid is in the VC: close any open window.
+            started = self.grace.close()
+            if started is None:
+                return None
+            self._persist_grace(None)
+            empty_for = max(0.0, obs.now - started)
+            log.warning(
+                "VC repopulated after %.1fs empty — the run continues (%d person(s) back)",
+                empty_for,
+                obs.count,
+            )
+            return GraceRecovered(
+                started_ts=started,
+                recovered_ts=obs.now,
+                empty_for=empty_for,
+                participants=list(obs.participants),
+            )
+
+        # VC is empty of valid humans.
+        if not self.grace.is_open:
+            started = self.grace.open(obs.now)
+            self._persist_grace(started)
+            deadline = self.grace.deadline() or obs.now
+            log.warning(
+                "VC is EMPTY — grace period of %.0fs started, failing at %.3f unless someone joins",
+                self.grace.seconds,
+                deadline,
+            )
+            if not self.grace.has_expired(obs.now):
+                return GraceStarted(
+                    started_ts=started,
+                    deadline_ts=deadline,
+                    seconds=self.grace.seconds,
+                    elapsed=elapsed,
+                )
+
+        if self.grace.has_expired(obs.now):
+            # The run dies as of the moment the VC emptied, never later, so a
+            # grace window can never inflate the survived time.
+            empty_since = self.grace.empty_since or obs.now
+            timeline = self.timeline
+            failed_elapsed = timeline.elapsed(empty_since) if timeline else elapsed
+            self.grace.close()
+            self._persist_grace(None)
+            self._terminate(
+                EventStatus.FAILED,
+                empty_since,
+                "The voice channel stayed empty of valid participants for the whole "
+                f"{self.grace.seconds:.0f}s grace period.",
+            )
+            log.warning(
+                "Event %s FAILED — VC empty since %.3f, grace expired at %.3f (elapsed %.1fs)",
+                self.state.event_uid,
+                empty_since,
+                obs.now,
+                failed_elapsed,
+            )
+            return EventFailed(
+                failed_ts=empty_since,
+                elapsed=failed_elapsed,
+                empty_since=empty_since,
+                leaderboard=self.leaderboard(),
+            )
+        return None
+
+    def _persist_grace(self, started: Optional[float]) -> None:
+        self.state.grace_started_ts = started
+        self.store.set_grace_started(started)
 
     # -------------------------------------------------------------- internals
 
@@ -386,14 +508,14 @@ class HellEngine:
             saved = self.store.get_final_leaderboard(uid)
             if saved:
                 return saved
-        return build_leaderboard(self.store.get_user_times(uid))
+        return self.tracker.totals(uid)   # timeline #2: per-user 0 -> Xh
 
     def freeze_leaderboard(self) -> list[LeaderboardEntry]:
         """Persist the final rankings so they can never drift afterwards."""
         uid = self.state.event_uid
         if uid is None:
             return []
-        entries = build_leaderboard(self.store.get_user_times(uid))
+        entries = self.tracker.totals(uid)
         self.store.save_final_leaderboard(uid, entries)
         self.state.final_saved = True
         self.store.save_state(self.state)

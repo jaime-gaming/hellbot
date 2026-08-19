@@ -9,6 +9,9 @@ valid humans, the run is dead.
 * Started manually with `/hell start` by `@gamenight host`
 * Bots never count · `@clanker` users are kicked from the VC on sight · AFK still counts
 * **Random alive checks** every 1–6 h: reply `Yes` in 5 minutes or you are disconnected
+* **15-second grace period** when the VC empties — a no-ping warning goes out, and the run only
+  dies if nobody comes back
+* Everyone gets a **personal stat card by DM** when the run ends
 * Everything is timestamp-based and persisted in SQLite — **restarting the bot never resets the timer**
 * Ships with a **desktop control panel** (no console) and a one-file **`.exe`** build
 
@@ -95,6 +98,8 @@ in the log, and in the launcher's Dashboard.
 | `DATABASE_PATH` | optional | default `data/hell.sqlite3` |
 | `MONITOR_INTERVAL` / `PROGRESS_INTERVAL` | optional | default `1` s / `10` s |
 | `STARTUP_GRACE_SECONDS` | optional | default `15` — VC reads right after boot are observed but cannot fail the event (cold-cache guard) |
+| `EMPTY_VC_GRACE_SECONDS` | optional | default `15` — how long the VC may be empty before the run fails |
+| `SEND_FINAL_DMS` / `DM_DELAY_SECONDS` | optional | default `true` / `1` — end-of-event stat cards |
 | `MAX_TICK_CREDIT_SECONDS` | optional | default `5` — cap on leaderboard credit per check, so downtime is never silently credited |
 | `REQUIRE_OCCUPANTS_TO_START` | optional | default `true` — refuses to start into an empty VC |
 | `HEARTBEAT_MINUTES` | optional | default `15` — proof-of-life line in the log |
@@ -118,6 +123,7 @@ in the log, and in the launcher's Dashboard.
 | `/hell status` | everyone | Status, elapsed, remaining, % complete, progress bar, live VC headcount, current + next milestone, and the milestones already reached. |
 | `/hell leaderboard` | everyone | Current (or frozen final) leaderboard: Top 3 on the podium, everyone else below. |
 | `/hell alivecheck` | `@gamenight host` | Runs a roll call immediately instead of waiting for the random timer. |
+| `/hell mystats` | everyone | Your own stat card (time survived, rank, rewards) — handy if your DMs are closed. |
 | `/hell milestones` | everyone | All five milestones, their rewards, when each was reached and how many users were eligible. |
 | `/hell stop` | `@gamenight host` | Button confirmation → marks the event **CANCELLED** (explicitly *not* FAILED) and freezes the leaderboard. |
 | `/hell reset` | `@gamenight host` | Modal requiring the exact phrase `RESET WELCOME TO HELL` → wipes all event data for a fresh run. |
@@ -140,6 +146,11 @@ hell/
 ├── engine.py         ← 1./3./4. state machine, user time tracking, milestone detection
 ├── leaderboard.py    ← 6. ranking, tie handling, Top-3 rendering
 ├── milestones.py     the five milestones + reward definitions
+├── timeline.py       ← timeline #1: the global 0 → 160h event clock
+├── tracking.py       ← timeline #2: per-user 0 → Xh session clocks
+├── grace.py          ← the empty-VC grace window (pure state machine)
+├── reports.py        ← per-user end-of-event stat cards (pure)
+├── dm.py             delivery of those cards, resumable and rate-limited
 ├── alivecheck.py     ← 9. roll-call scheduling/resolution (Discord-free, like the engine)
 ├── aliveio.py        Discord side of the roll call: pings, kicks, reply backfill
 ├── monitor.py        ← 2. VC monitoring: 1 s tick, clanker kicks, 10 s progress edit, heartbeat
@@ -156,15 +167,72 @@ tools/simulate.py     offline dry-run of a whole 160 h event
 plain domain events (`MilestoneReached`, `EventFailed`, `EventCompleted`, `EventCancelled`) that
 the announcer turns into messages. That is why the entire rulebook is unit-testable.
 
+### Two explicit timelines
+
+The code keeps these two clocks in separate modules on purpose — mixing them up is the classic way
+this kind of bot goes wrong.
+
+| | Module | Range | Moved by | Stopped by |
+|---|---|---|---|---|
+| **Global event timeline** | [`hell/timeline.py`](hell/timeline.py) — `EventTimeline` | **0 → 160h** | nothing but the wall clock | the run ending (FAILED / COMPLETED / CANCELLED) |
+| **Per-user session timeline** | [`hell/tracking.py`](hell/tracking.py) — `UserTimeTracker` | **0 → Xh** per person | that person being in the VC | that person leaving (their clock only) |
+
+A user disconnecting, leaving, being alive-check-kicked or being removed as `@clanker` **never**
+touches the global 0 → 160h progress, as long as at least one valid participant remains. Their own
+0 → Xh clock simply pauses and resumes where it left off when they come back.
+
 ### The 1-second loop
 
 1. Read the target VC members.
 2. Drop bots.
 3. `@clanker` → `member.move_to(None)` immediately (plus an instant `on_voice_state_update` fast
    path), and they never appear in the participant list.
-4. The remaining humans are the valid participants; each is credited for the observed interval.
-5. `valid_human_count == 0` → **FAILED**, timer stopped permanently, leaderboard frozen and saved,
-   announcement posted. The event can never resume automatically.
+4. The remaining humans are the valid participants; each one's own clock is credited for the
+   observed interval.
+5. `valid_human_count == 0` → the **grace period** opens (below). Only when it expires is the run
+   FAILED, permanently, with the leaderboard frozen and saved.
+
+### Empty-VC grace period ([`hell/grace.py`](hell/grace.py))
+
+```
+VC becomes empty ──► GRACE OPEN (15s) ──► somebody joins in time ──► run continues
+                                     └──► nobody joins ──────────► run FAILED
+```
+
+* A warning embed goes to the progress/announcement channel **with pings explicitly disabled**
+  (`AllowedMentions(everyone=False, users=False, roles=False)`) — it alerts whoever is already
+  watching without waking the server.
+* If a valid human joins before the deadline, a "✅ SAVED — THE RUN CONTINUES" notice is posted
+  (also without pings) and the 160h clock — which never stopped — carries on.
+* Nobody accrues per-user time during the window, and milestones are not triggered while the VC is
+  empty (there would be nobody to claim them); a milestone that lands mid-window fires on the first
+  tick with people back in.
+* If the window expires the event fails **as of the moment the VC emptied**, not the moment the
+  window ran out, so grace can never inflate the survived time.
+* The window is persisted (`event.grace_started_ts`), so a restart mid-countdown resumes it.
+* Length is `EMPTY_VC_GRACE_SECONDS` (default 15; `0` restores instant failure).
+
+### End-of-event stat cards ([`hell/reports.py`](hell/reports.py), [`hell/dm.py`](hell/dm.py))
+
+When the run ends — completed, failed or cancelled — every contestant is DM'd their own card:
+
+```
+WELCOME TO HELL
+
+128:42:15 SURVIVED
+
+YOU WERE... TOP 3
+out of 41 contestant(s)
+
+YOU WON 2 REWARDS
+• 32h — @hell (limited)
+• 64h — Limited-time Verity in Find the Verities
+```
+
+The final Top 3 of a completed run get all five milestone rewards plus `@cool people :D` listed.
+Delivery is resumable (every attempt is written to `dm_log`, so a restart never double-messages),
+paced at one DM per second, and users with DMs closed are reported in the channel summary — they
+can run `/hell mystats` to see the same card.
 
 ### The 10-second progress message
 
@@ -238,7 +306,13 @@ CANCELLED.
 | User leaves exactly at a milestone | Excluded from the snapshot |
 | A bot joins the VC | Ignored everywhere; cannot keep the event alive |
 | A `@clanker` joins | Disconnected immediately, no leaderboard time, cannot keep the event alive |
-| Last valid participant leaves | Instant permanent `FAILED` + frozen leaderboard + announcement |
+| Last valid participant leaves | 15 s grace window + no-ping warning; `FAILED` only if nobody returns |
+| Someone rejoins with 1 s to spare | Window closes, "SAVED" notice, run continues untouched |
+| VC empties repeatedly | Each empty period gets its own window; survived time is never inflated |
+| Milestone lands while the VC is empty | Held back, then awarded to whoever is present when the VC recovers (or lost with the run) |
+| Restart mid-grace-window | Window resumes from the persisted `grace_started_ts` |
+| Event ends while some DMs are unsent | `dm_log` resumes delivery on the next start, without duplicates |
+| Contestant has DMs closed | Recorded as blocked, reported in the summary, `/hell mystats` still works |
 | Rapid join/leave churn | 1-second sampling keeps per-user totals correct |
 | Bot restarts mid-event | State reloaded from SQLite; elapsed = `now - start_ts`; nothing resets |
 | Bot restarts around a milestone | Atomic DB claim prevents duplicates; unsent announcements are re-posted on boot |
@@ -266,7 +340,7 @@ Two deliberate policy calls worth knowing:
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest                        # 129 tests, no Discord connection required
+python -m pytest                        # 163 tests, no Discord connection required
 python -m pyflakes hell launcher tests  # lint
 python tools/simulate.py                # dry-run a full 160h event, printing every message
 python tools/simulate.py --fail-at 40   # dry-run a run that dies after 40 hours

@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import pytest
 
-from hell.engine import EventCompleted, EventFailed, HellEngine, MilestoneReached, Observation, StartError
+from hell.engine import (
+    EventCompleted,
+    EventFailed,
+    GraceStarted,
+    HellEngine,
+    MilestoneReached,
+    StartError,
+)
 from hell.milestones import TOTAL_SECONDS
 from hell.models import EventStatus
-from tests.conftest import HOUR, T0, obs, start
+from tests.conftest import GRACE, HOUR, T0, empty_out, obs, start
 
 
 # ------------------------------------------------------------------- start
@@ -27,7 +34,7 @@ def test_second_start_is_rejected(engine):
 
 def test_start_after_a_finished_run_creates_a_new_event(engine):
     start(engine, T0, 1)
-    engine.tick(obs(T0 + 1))  # empty -> FAILED
+    empty_out(engine, T0 + 1)  # empty for the whole grace window -> FAILED
     first_uid = engine.event_uid
     state = start(engine, T0 + 100, 1)
     assert state.status is EventStatus.RUNNING
@@ -36,10 +43,12 @@ def test_start_after_a_finished_run_creates_a_new_event(engine):
 
 # ---------------------------------------------------------------- failing
 
-def test_empty_vc_fails_immediately_and_permanently(engine):
+def test_empty_vc_fails_after_the_grace_period(engine):
     start(engine, T0, 1)
-    events = engine.tick(obs(T0 + 1))
-    assert isinstance(events[0], EventFailed)
+    opened, expired = empty_out(engine, T0 + 1)
+    assert isinstance(opened[0], GraceStarted)      # warning first, no instant death
+    assert engine.status is EventStatus.RUNNING or isinstance(expired[0], EventFailed)
+    assert isinstance(expired[0], EventFailed)
     assert engine.status is EventStatus.FAILED
     # Further ticks are inert, even with people back in the VC.
     assert engine.tick(obs(T0 + 2, 1, 2)) == []
@@ -49,7 +58,7 @@ def test_empty_vc_fails_immediately_and_permanently(engine):
 def test_elapsed_is_frozen_after_failure(engine):
     start(engine, T0, 1)
     engine.tick(obs(T0 + 30, 1))
-    engine.tick(obs(T0 + 31))
+    empty_out(engine, T0 + 31)
     frozen = engine.elapsed(T0 + 31)
     assert engine.elapsed(T0 + 10_000) == pytest.approx(frozen)
 
@@ -65,15 +74,15 @@ def test_one_user_leaving_while_others_remain_does_not_fail(engine):
 def test_only_bots_or_clankers_cannot_save_the_event(engine):
     """The monitor filters them out, so the engine simply sees an empty VC."""
     start(engine, T0, 1)
-    events = engine.tick(Observation(now=T0 + 1, participants=()))
-    assert isinstance(events[0], EventFailed)
+    _opened, expired = empty_out(engine, T0 + 1)
+    assert isinstance(expired[0], EventFailed)
 
 
 def test_failure_freezes_final_leaderboard(engine, store):
     start(engine, T0, 1)
     for i in range(1, 61):
         engine.tick(obs(T0 + i, 1))
-    engine.tick(obs(T0 + 61))
+    empty_out(engine, T0 + 61)
     assert engine.state.final_saved
     saved = store.get_final_leaderboard(engine.event_uid)
     assert saved and saved[0].user_id == 1
@@ -118,9 +127,9 @@ def test_no_time_is_awarded_after_the_event_ends(engine):
     start(engine, T0, 1)
     for i in range(1, 11):
         engine.tick(obs(T0 + i, 1))
-    engine.tick(obs(T0 + 11))  # fail
+    empty_out(engine, T0 + 11)  # fail
     before = engine.leaderboard()[0].seconds
-    for i in range(12, 40):
+    for i in range(12 + int(GRACE), 40 + int(GRACE)):
         engine.tick(obs(T0 + i, 1))
     assert engine.leaderboard()[0].seconds == pytest.approx(before)
 
@@ -170,11 +179,26 @@ def test_milestones_missed_during_downtime_fire_once_and_are_flagged_late(engine
     assert all(e.late for e in events)
 
 
-def test_failure_in_the_same_tick_wins_over_a_milestone(engine):
+def test_milestone_is_not_awarded_while_the_vc_is_empty(engine):
+    """Nobody in the VC = nobody who could claim it, so it waits (or dies)."""
     start(engine, T0, 1)
-    events = engine.tick(obs(T0 + 32 * HOUR))  # nobody left in the VC
-    assert len(events) == 1 and isinstance(events[0], EventFailed)
+    events = engine.tick(obs(T0 + 32 * HOUR))          # empty at the exact mark
+    assert isinstance(events[0], GraceStarted)
     assert engine.store.triggered_milestone_hours(engine.event_uid) == set()
+    expired = engine.tick(obs(T0 + 32 * HOUR + GRACE))  # nobody came back
+    assert isinstance(expired[0], EventFailed)
+    assert engine.store.triggered_milestone_hours(engine.event_uid) == set()
+
+
+def test_milestone_missed_during_grace_fires_when_people_return(engine):
+    start(engine, T0, 1)
+    engine.tick(obs(T0 + 32 * HOUR))                    # empty exactly at 32h
+    events = engine.tick(obs(T0 + 32 * HOUR + 5, 1, 2))  # rescued in time
+    kinds = [type(e).__name__ for e in events]
+    assert "GraceRecovered" in kinds and "MilestoneReached" in kinds
+    milestone = [e for e in events if isinstance(e, MilestoneReached)][0]
+    assert {m.user_id for m in milestone.members} == {1, 2}   # the rescuers claim it
+    assert engine.status is EventStatus.RUNNING
 
 
 def test_milestone_is_based_on_global_timer_not_user_time(engine):

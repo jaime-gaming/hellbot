@@ -78,6 +78,7 @@ class Config:
     monitor_interval: float = 1.0        # VC check cadence (seconds)
     progress_interval: float = 10.0      # progress message edit cadence (seconds)
     startup_grace: float = 15.0          # ignore VC observations right after boot
+    empty_vc_grace_seconds: float = 15.0  # empty VC -> this long to repopulate or the run dies
     max_tick_credit: float = 5.0         # cap per-tick leaderboard credit (downtime guard)
     require_occupants_to_start: bool = True
     heartbeat_minutes: float = 15.0
@@ -89,6 +90,10 @@ class Config:
     alive_check_timeout_minutes: float = 5.0
     alive_check_strict: bool = False          # True -> only the exact string "Yes"
     alive_check_channel_id: int | None = None  # default: the VC's own text chat
+
+    # --- end-of-event stat cards ---
+    send_final_dms: bool = True
+    dm_delay_seconds: float = 1.0
     log_level: str = "INFO"
 
     @classmethod
@@ -117,6 +122,7 @@ class Config:
             monitor_interval=_float_env("MONITOR_INTERVAL", 1.0),
             progress_interval=_float_env("PROGRESS_INTERVAL", 10.0),
             startup_grace=_float_env("STARTUP_GRACE_SECONDS", 15.0),
+            empty_vc_grace_seconds=_float_env("EMPTY_VC_GRACE_SECONDS", 15.0),
             max_tick_credit=_float_env("MAX_TICK_CREDIT_SECONDS", 5.0),
             require_occupants_to_start=_bool_env("REQUIRE_OCCUPANTS_TO_START", True),
             heartbeat_minutes=_float_env("HEARTBEAT_MINUTES", 15.0),
@@ -126,6 +132,8 @@ class Config:
             alive_check_timeout_minutes=_float_env("ALIVE_CHECK_TIMEOUT_MINUTES", 5.0),
             alive_check_strict=_bool_env("ALIVE_CHECK_STRICT", False),
             alive_check_channel_id=_int_env("ALIVE_CHECK_CHANNEL_ID"),
+            send_final_dms=_bool_env("SEND_FINAL_DMS", True),
+            dm_delay_seconds=_float_env("DM_DELAY_SECONDS", 1.0),
             log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO",
         )
 

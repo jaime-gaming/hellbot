@@ -13,6 +13,7 @@ code trivially testable.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 from pathlib import Path
@@ -20,7 +21,9 @@ from typing import Iterable, Optional, Sequence
 
 from .models import EventState, EventStatus, LeaderboardEntry, MilestoneRecord, ParticipantRef
 
-SCHEMA_VERSION = 1
+log = logging.getLogger("hell.storage")
+
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -45,7 +48,8 @@ CREATE TABLE IF NOT EXISTS event (
     progress_message_id  INTEGER,
     started_by           INTEGER,
     end_reason           TEXT,
-    final_saved          INTEGER NOT NULL DEFAULT 0
+    final_saved          INTEGER NOT NULL DEFAULT 0,
+    grace_started_ts     REAL              -- empty-VC grace window in progress
 );
 
 CREATE TABLE IF NOT EXISTS user_time (
@@ -100,6 +104,14 @@ CREATE TABLE IF NOT EXISTS alive_check_history (
     PRIMARY KEY (event_uid, check_id)
 );
 
+CREATE TABLE IF NOT EXISTS dm_log (
+    event_uid TEXT    NOT NULL,
+    user_id   INTEGER NOT NULL,
+    sent_ts   REAL    NOT NULL,
+    status    TEXT    NOT NULL,   -- sent | blocked | failed
+    PRIMARY KEY (event_uid, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS final_leaderboard (
     event_uid    TEXT    NOT NULL,
     rank         INTEGER NOT NULL,   -- ties share a rank, hence not part of the key
@@ -133,6 +145,15 @@ class Store:
                 "INSERT OR IGNORE INTO event(id, status) VALUES (1, ?)",
                 (EventStatus.IDLE.value,),
             )
+            self._migrate()
+
+    def _migrate(self) -> None:
+        """Additive schema migrations for databases created by older versions."""
+        columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(event)").fetchall()}
+        for name, ddl in (("grace_started_ts", "REAL"),):
+            if name not in columns:
+                log.info("Migrating database: adding event.%s", name)
+                self._conn.execute(f"ALTER TABLE event ADD COLUMN {name} {ddl}")
 
     # ------------------------------------------------------------------ core
 
@@ -189,6 +210,7 @@ class Store:
             started_by=r["started_by"],
             end_reason=r["end_reason"],
             final_saved=bool(r["final_saved"]),
+            grace_started_ts=r["grace_started_ts"],
         )
 
     def save_state(self, state: EventState) -> None:
@@ -199,7 +221,7 @@ class Store:
                     status = ?, event_uid = ?, start_ts = ?, end_ts = ?, last_tick_ts = ?,
                     guild_id = ?, voice_channel_id = ?, announce_channel_id = ?,
                     progress_channel_id = ?, progress_message_id = ?, started_by = ?,
-                    end_reason = ?, final_saved = ?
+                    end_reason = ?, final_saved = ?, grace_started_ts = ?
                 WHERE id = 1
                 """,
                 (
@@ -216,12 +238,18 @@ class Store:
                     state.started_by,
                     state.end_reason,
                     int(state.final_saved),
+                    state.grace_started_ts,
                 ),
             )
 
     def set_last_tick(self, ts: float) -> None:
         with self._lock:
             self._conn.execute("UPDATE event SET last_tick_ts = ? WHERE id = 1", (ts,))
+
+    def set_grace_started(self, ts: Optional[float]) -> None:
+        """Persist the empty-VC grace window so a restart resumes it."""
+        with self._lock:
+            self._conn.execute("UPDATE event SET grace_started_ts = ? WHERE id = 1", (ts,))
 
     def set_progress_message(self, channel_id: Optional[int], message_id: Optional[int]) -> None:
         with self._lock:
@@ -460,6 +488,35 @@ class Store:
         except ValueError:  # pragma: no cover
             return None
 
+    # ------------------------------------------------------- end-of-run DMs
+
+    def record_dm(self, event_uid: str, user_id: int, status: str, ts: Optional[float] = None) -> None:
+        import time as _time
+
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO dm_log(event_uid, user_id, sent_ts, status) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(event_uid, user_id) DO UPDATE SET sent_ts = excluded.sent_ts, "
+                "status = excluded.status",
+                (event_uid, user_id, ts if ts is not None else _time.time(), status),
+            )
+
+    def dm_recipients(self, event_uid: str) -> set[int]:
+        """Users already messaged (any outcome) — used to resume after a restart."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT user_id FROM dm_log WHERE event_uid = ?", (event_uid,)
+            ).fetchall()
+        return {r["user_id"] for r in rows}
+
+    def dm_summary(self, event_uid: str) -> dict[str, int]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT status, COUNT(*) AS n FROM dm_log WHERE event_uid = ? GROUP BY status",
+                (event_uid,),
+            ).fetchall()
+        return {r["status"]: r["n"] for r in rows}
+
     # ----------------------------------------------------- final leaderboard
 
     def save_final_leaderboard(self, event_uid: str, entries: Sequence[LeaderboardEntry]) -> None:
@@ -499,7 +556,7 @@ class Store:
             try:
                 for table in (
                     "user_time", "milestones", "milestone_members", "presence",
-                    "final_leaderboard", "alive_check", "alive_check_history",
+                    "final_leaderboard", "alive_check", "alive_check_history", "dm_log",
                 ):
                     self._conn.execute(f"DELETE FROM {table} WHERE event_uid = ?", (event_uid,))
                 self._conn.execute(
@@ -517,7 +574,7 @@ class Store:
             try:
                 for table in (
                     "user_time", "milestones", "milestone_members", "presence",
-                    "final_leaderboard", "alive_check", "alive_check_history",
+                    "final_leaderboard", "alive_check", "alive_check_history", "dm_log",
                 ):
                     self._conn.execute(f"DELETE FROM {table}")
                 self._conn.execute(
@@ -526,7 +583,8 @@ class Store:
                 self._conn.execute(
                     "UPDATE event SET status = ?, event_uid = NULL, start_ts = NULL, end_ts = NULL, "
                     "last_tick_ts = NULL, progress_channel_id = NULL, progress_message_id = NULL, "
-                    "started_by = NULL, end_reason = NULL, final_saved = 0 WHERE id = 1",
+                    "started_by = NULL, end_reason = NULL, final_saved = 0, "
+                    "grace_started_ts = NULL WHERE id = 1",
                     (EventStatus.IDLE.value,),
                 )
                 self._conn.execute("COMMIT")

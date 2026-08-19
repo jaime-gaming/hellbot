@@ -260,6 +260,24 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             )
         await interaction.followup.send(embed=embed)
 
+    # --------------------------------------------------------------- my stats
+
+    @app_commands.command(name="mystats", description="Your personal Welcome to Hell stat card.")
+    @app_commands.guild_only()
+    async def mystats(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        report = self.monitor.reports.report_for(interaction.user.id)
+        if report is None:
+            await interaction.followup.send(
+                "You have no recorded time in this event yet — join "
+                f"<#{self.config.voice_channel_id}> to start your clock.",
+                ephemeral=True,
+            )
+            return
+        await interaction.followup.send(
+            embed=self.monitor.reports.build_embed(report), ephemeral=True
+        )
+
     # ----------------------------------------------------------- alive check
 
     @app_commands.command(

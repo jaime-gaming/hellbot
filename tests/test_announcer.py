@@ -42,9 +42,11 @@ def test_progress_message_contains_every_required_field(announcer, engine):
 
 
 def test_progress_reflects_failure(announcer, engine):
+    from tests.conftest import empty_out
+
     start(engine, T0, 1)
     engine.tick(obs(T0 + 10, 1))
-    engine.tick(obs(T0 + 11))
+    empty_out(engine, T0 + 11)
     text = announcer.render_progress(engine.snapshot(now=T0 + 60))
     assert "FAILED" in text and "0.0%" in text
 

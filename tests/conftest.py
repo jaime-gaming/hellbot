@@ -54,6 +54,19 @@ def obs(now: float, *ids: int) -> Observation:
     return Observation(now=now, participants=users(*ids))
 
 
+GRACE = 15.0  # default EMPTY_VC_GRACE_SECONDS
+
+
+def empty_out(engine: HellEngine, at: float, *, grace: float = GRACE):
+    """Empty the VC and let the grace window expire -> the run fails.
+
+    Returns (grace_events, failure_events).
+    """
+    opened = engine.tick(obs(at))
+    expired = engine.tick(obs(at + grace))
+    return opened, expired
+
+
 def start(engine: HellEngine, now: float = T0, *ids: int):
     return engine.start(
         now=now,

@@ -46,6 +46,15 @@ def format_hms(seconds: float) -> str:
     return f"{hours}h {minutes:02d}m {secs:02d}s"
 
 
+def format_clock(seconds: float) -> str:
+    """`0:00:00` — hours:minutes:seconds, hours unbounded (stat cards)."""
+    seconds = max(0.0, float(seconds))
+    total = int(seconds)
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}"
+
+
 def progress_bar(fraction: float, width: int = 20, full: str = "█", empty: str = "░") -> str:
     """Visual progress bar, e.g. `██████████░░░░░░░░░░`."""
     fraction = min(1.0, max(0.0, float(fraction)))

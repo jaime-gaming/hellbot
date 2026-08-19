@@ -9,7 +9,7 @@ import pytest
 
 from hell.alivecheck import CHECK_TEXT, AliveCheckManager, is_valid_reply
 from hell.models import EventStatus
-from tests.conftest import T0, make_config, obs, start, users
+from tests.conftest import T0, empty_out, make_config, obs, start, users
 
 HOUR = 3600.0
 MINUTE = 60.0
@@ -341,9 +341,9 @@ def test_event_fails_if_everyone_ignores_the_check(engine, store, config):
     result = run(manager.tick(T0 + 1 + 5 * MINUTE, users(1, 2)))
     assert sorted(p.user_id for p in result.kicked) == [1, 2]
 
-    events = engine.tick(obs(T0 + 2 + 5 * MINUTE))
+    _opened, expired = empty_out(engine, T0 + 2 + 5 * MINUTE)
     assert engine.status is EventStatus.FAILED
-    assert events and type(events[0]).__name__ == "EventFailed"
+    assert expired and type(expired[0]).__name__ == "EventFailed"
 
 
 def test_disabled_checks_never_fire(tmp_path, store):

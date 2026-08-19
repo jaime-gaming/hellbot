@@ -26,10 +26,13 @@ from .alivecheck import AliveCheckManager
 from .aliveio import DiscordAliveCheckIO
 from .announcer import Announcer
 from .config import Config
+from .dm import FinalReportDM
 from .engine import (
     EventCancelled,
     EventCompleted,
     EventFailed,
+    GraceRecovered,
+    GraceStarted,
     HellEngine,
     MilestoneReached,
     Observation,
@@ -55,6 +58,7 @@ class VoiceMonitor:
         self.alive_io = DiscordAliveCheckIO(bot, config)
         self.alive_checks = AliveCheckManager(config, engine.store, self.alive_io)
         self.alive_checks.bind(engine.event_uid)
+        self.reports = FinalReportDM(bot, config, engine, announcer)
         self._ready_at: Optional[float] = None
         self._kick_attempts: dict[int, float] = {}
         self._lock = asyncio.Lock()  # serialises ticks; no milestone can race
@@ -265,20 +269,30 @@ class VoiceMonitor:
             # A roll call in flight when the run ends is dropped, not enforced.
             if self.alive_checks.pending is not None:
                 await self.alive_checks.cancel(now_ts(), "the event ended")
-        if isinstance(event, MilestoneReached):
+        if isinstance(event, GraceStarted):
+            # Warning only, and deliberately without pinging anybody.
+            await self.announcer.announce_grace_warning(event)
+            await self._final_progress(terminal=False)
+        elif isinstance(event, GraceRecovered):
+            await self.announcer.announce_grace_recovered(event)
+            await self._final_progress(terminal=False)
+        elif isinstance(event, MilestoneReached):
             await self.announcer.announce_milestone(event)
         elif isinstance(event, EventFailed):
             await self.announcer.announce_failure(event)
             await self._final_progress()
+            self.reports.schedule()          # DM every contestant their stats
         elif isinstance(event, EventCompleted):
             await self.announcer.announce_completion(event)
             await self._final_progress()
+            self.reports.schedule()
         elif isinstance(event, EventCancelled):
             await self.announcer.announce_cancelled(event)
             await self._final_progress()
+            self.reports.schedule()
 
-    async def _final_progress(self) -> None:
-        self._terminal_rendered = True
+    async def _final_progress(self, *, terminal: bool = True) -> None:
+        self._terminal_rendered = terminal
         await self.announcer.update_progress(
             self.engine.snapshot(participants=len(self.engine.last_participants)), force=True
         )
@@ -312,8 +326,15 @@ class VoiceMonitor:
     # -------------------------------------------------------------- recovery
 
     async def resume_after_restart(self) -> None:
-        """Bring a RUNNING event back to life after the process restarted."""
+        """Bring an event back to life (or finish its paperwork) after a restart."""
         state = self.engine.state
+        if state.status.is_terminal:
+            # The run ended before/while the bot was down: finish sending the
+            # stat cards that never went out.
+            if self.reports.pending():
+                log.info("Resuming end-of-event stat cards after restart")
+                self.reports.schedule()
+            return
         if state.status is not EventStatus.RUNNING:
             return
         gap = now_ts() - (state.last_tick_ts or state.start_ts or now_ts())

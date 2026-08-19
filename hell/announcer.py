@@ -24,7 +24,16 @@ from typing import Iterable, Optional, Sequence
 import discord
 
 from .config import Config
-from .engine import EventCancelled, EventCompleted, EventFailed, HellEngine, MilestoneReached, Snapshot
+from .engine import (
+    EventCancelled,
+    EventCompleted,
+    EventFailed,
+    GraceRecovered,
+    GraceStarted,
+    HellEngine,
+    MilestoneReached,
+    Snapshot,
+)
 from .leaderboard import format_entry, render_leaderboard, top_n
 from .milestones import MILESTONES, TOP3_BONUS_ROLE, get_milestone
 from .models import EventStatus, LeaderboardEntry, MilestoneRecord, ParticipantRef
@@ -44,6 +53,7 @@ COLOR_MILESTONE = 0xFF4500
 COLOR_FAILED = 0x8B0000
 COLOR_COMPLETED = 0xFFD700
 COLOR_CANCELLED = 0x607D8B
+COLOR_GRACE = 0xFFA500
 COLOR_IDLE = 0x2F3136
 
 STATUS_EMOJI = {
@@ -239,7 +249,10 @@ class Announcer:
             ),
             color=STATUS_COLOR.get(snap.status, COLOR_RUNNING),
         )
-        embed.add_field(name="Status", value=f"`{snap.status.value}`", inline=True)
+        status_value = f"`{snap.status.value}`"
+        if snap.grace_open:
+            status_value = f"`{snap.status.value}` ⚠️ **VC EMPTY**"
+        embed.add_field(name="Status", value=status_value, inline=True)
         embed.add_field(name="👥 Currently in Hell", value=f"**{snap.participants}**", inline=True)
         embed.add_field(name="⏳ Time remaining", value=f"**{format_hm(snap.remaining)}**", inline=True)
 
@@ -273,6 +286,16 @@ class Announcer:
             embed.add_field(
                 name="🛑 CANCELLED",
                 value=snap.end_reason or "Manually stopped by a host.",
+                inline=False,
+            )
+        if snap.grace_open:
+            embed.colour = discord.Colour(COLOR_GRACE)
+            embed.add_field(
+                name="⚠️ THE VC IS EMPTY",
+                value=(
+                    f"**{snap.grace_seconds_left:.0f}s** left to get somebody back in "
+                    f"<#{self.config.voice_channel_id}> or the run is over."
+                ),
                 inline=False,
             )
         if snap.unverified >= 60:
@@ -418,6 +441,58 @@ class Announcer:
             mention_everyone=True,
         )
 
+    # ---------------------------------------------------------- grace period
+
+    def build_grace_warning(self, event: GraceStarted) -> discord.Embed:
+        """Empty-VC warning.  Posted with pings explicitly disabled."""
+        embed = discord.Embed(
+            title="⚠️ THE VC IS EMPTY — THE RUN IS ABOUT TO DIE",
+            description=(
+                f"<#{self.config.voice_channel_id}> has **no valid humans** in it.\n"
+                f"Somebody has **{event.seconds:.0f} seconds** to join or "
+                "**Welcome to Hell fails permanently**."
+            ),
+            color=COLOR_GRACE,
+        )
+        embed.add_field(
+            name="⏳ Deadline",
+            value=f"{discord_ts(event.deadline_ts, 'T')} ({discord_ts(event.deadline_ts, 'R')})",
+            inline=True,
+        )
+        embed.add_field(name="⏱️ On the clock", value=f"**{format_hm(event.elapsed)}** / 160h", inline=True)
+        embed.set_footer(text="No pings on purpose — if you are reading this, get in the VC.")
+        return embed
+
+    def render_grace_warning(self, event: GraceStarted) -> str:
+        return embed_to_text(self.build_grace_warning(event))
+
+    async def announce_grace_warning(self, event: GraceStarted) -> None:
+        # allowed_mentions is None-by-default in `send`: nobody is pinged here.
+        await self.send([self.build_grace_warning(event)], mention_everyone=False)
+
+    def build_grace_recovered(self, event: GraceRecovered) -> discord.Embed:
+        embed = discord.Embed(
+            title="✅ SAVED — THE RUN CONTINUES",
+            description=(
+                f"The VC was empty for **{event.empty_for:.0f}s** and somebody made it back "
+                "in time. The 160h clock never stopped."
+            ),
+            color=COLOR_RUNNING,
+        )
+        embed.add_field(
+            name=f"👥 Back in Hell ({len(event.participants)})",
+            value=format_members(event.participants, empty="*nobody*"),
+            inline=False,
+        )
+        embed.set_footer(text="That was close.")
+        return embed
+
+    def render_grace_recovered(self, event: GraceRecovered) -> str:
+        return embed_to_text(self.build_grace_recovered(event))
+
+    async def announce_grace_recovered(self, event: GraceRecovered) -> None:
+        await self.send([self.build_grace_recovered(event)], mention_everyone=False)
+
     # ------------------------------------------------------------ milestones
 
     FLAVOUR = {
@@ -504,7 +579,8 @@ class Announcer:
         embed = discord.Embed(
             title="💀 WELCOME TO HELL — CHALLENGE FAILED",
             description=(
-                f"<#{self.config.voice_channel_id}> became **completely empty of valid participants**.\n"
+                f"<#{self.config.voice_channel_id}> was **completely empty of valid participants** "
+                "for the entire grace period, so nobody came back in time.\n"
                 "The timer has stopped **permanently** and the run cannot resume."
             ),
             color=COLOR_FAILED,

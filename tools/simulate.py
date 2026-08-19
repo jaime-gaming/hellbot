@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 import tempfile
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from hell.engine import (  # noqa: E402
     Observation,
 )
 from hell.alivecheck import AliveCheckManager  # noqa: E402
+from hell.engine import GraceRecovered, GraceStarted  # noqa: E402
 from hell.milestones import TOTAL_SECONDS  # noqa: E402
 from hell.models import ParticipantRef  # noqa: E402
 from hell.storage import Store  # noqa: E402
@@ -85,6 +87,50 @@ def crowd_at(hours: float) -> tuple[ParticipantRef, ...]:
     return tuple(person(i) for i in base + extras)
 
 
+def _grace_demo(engine, ann, cfg) -> None:
+    """Show what happens the moment the VC empties (on a throwaway engine)."""
+    import tempfile as _tempfile
+    from pathlib import Path as _Path
+
+    from hell.engine import HellEngine as _Engine
+    from hell.engine import Observation as _Obs
+    from hell.storage import Store as _Store
+
+    with _tempfile.TemporaryDirectory() as tmp:
+        cfg2 = replace(cfg, database_path=_Path(tmp) / "grace.sqlite3")
+        store = _Store(cfg2.database_path)
+        eng = _Engine(store, cfg2)
+        eng.start(
+            now=T0,
+            guild_id=1,
+            voice_channel_id=cfg2.voice_channel_id,
+            announce_channel_id=cfg2.announce_channel_id,
+            started_by=111,
+            initial_participants=crowd_at(0),
+        )
+        ann2 = Announcer(FakeBot(), cfg2, eng)
+        for ev in eng.tick(_Obs(now=T0 + 3600, participants=())):
+            print(ann2.render_grace_warning(ev))
+        print()
+        for ev in eng.tick(_Obs(now=T0 + 3608, participants=crowd_at(1)[:2])):
+            print(ann2.render_grace_recovered(ev))
+        store.close()
+
+
+def _stat_card_demo(engine, cfg) -> None:
+    from hell.reports import build_reports, render_report
+
+    reports = build_reports(
+        engine.leaderboard(),
+        engine.milestone_records(),
+        status=engine.status,
+        event_elapsed=engine.elapsed(),
+    )
+    for report in reports[:2]:
+        print(render_report(report))
+        print("-" * 40)
+
+
 def banner(text: str) -> None:
     print("\n" + "=" * 78)
     print(text)
@@ -137,6 +183,12 @@ def main() -> None:
                 if isinstance(ev, MilestoneReached):
                     banner(f"MILESTONE {ev.milestone.hours}h")
                     print(ann.render_milestone(ev))
+                elif isinstance(ev, GraceStarted):
+                    banner("EMPTY-VC WARNING (no pings)")
+                    print(ann.render_grace_warning(ev))
+                elif isinstance(ev, GraceRecovered):
+                    banner("RECOVERED")
+                    print(ann.render_grace_recovered(ev))
                 elif isinstance(ev, EventFailed):
                     banner("FAILURE ANNOUNCEMENT")
                     print(ann.render_failure(ev))
@@ -151,6 +203,9 @@ def main() -> None:
                 banner("LIVE PROGRESS MESSAGE (edited every 10s)")
                 print(ann.render_progress(engine.snapshot(now=t, participants=len(people))))
 
+        banner("EMPTY-VC GRACE PERIOD")
+        _grace_demo(engine, ann, cfg)
+
         banner("ALIVE CHECK (random every 1-6h)")
         preview = AliveCheckManager(cfg, store, _PrintIO())
         preview.bind("preview", now=T0)
@@ -160,6 +215,9 @@ def main() -> None:
 
         banner("LEADERBOARD")
         print(ann.render_leaderboard_message(engine.leaderboard(), engine.status.is_terminal))
+        banner("END-OF-EVENT DM (sent to every contestant)")
+        _stat_card_demo(engine, cfg)
+
         banner(f"FINAL STATUS: {engine.status.value}  (elapsed {engine.elapsed(t) / HOUR:.2f}h)")
         store.close()
 

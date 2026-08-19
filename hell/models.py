@@ -90,3 +90,4 @@ class EventState:
     started_by: Optional[int] = None
     end_reason: Optional[str] = None
     final_saved: bool = False
+    grace_started_ts: Optional[float] = None   # empty-VC grace window in progress

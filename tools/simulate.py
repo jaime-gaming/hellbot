@@ -1,0 +1,133 @@
+"""Offline dry-run of a full Welcome to Hell event.
+
+Fast-forwards the real engine (no Discord connection) and prints every message
+the bot would post, so wording and edge cases can be reviewed before going live.
+
+    python tools/simulate.py            # full 160h success run
+    python tools/simulate.py --fail-at 40   # run that dies after 40 hours
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from hell.announcer import Announcer  # noqa: E402
+from hell.config import Config  # noqa: E402
+from hell.engine import (  # noqa: E402
+    EventCancelled,
+    EventCompleted,
+    EventFailed,
+    HellEngine,
+    MilestoneReached,
+    Observation,
+)
+from hell.milestones import TOTAL_SECONDS  # noqa: E402
+from hell.models import ParticipantRef  # noqa: E402
+from hell.storage import Store  # noqa: E402
+
+HOUR = 3600.0
+T0 = 1_760_000_000.0
+
+
+class FakeBot:
+    def get_channel(self, _cid):
+        return None
+
+
+class FakeUser:
+    mention = "<@111>"
+
+
+NAMES = ["Ash", "Vera", "Milo", "Juno", "Kai", "Nova", "Rex", "Sol", "Wren", "Zed"]
+
+
+def person(i: int) -> ParticipantRef:
+    return ParticipantRef(1000 + i, NAMES[i % len(NAMES)])
+
+
+def crowd_at(hours: float) -> tuple[ParticipantRef, ...]:
+    """A deterministic, wobbling VC population: 3-8 people, everyone in and out."""
+    base = [0, 1, 2]  # the diehards, always present
+    extras = [i for i in range(3, 10) if (int(hours * 3) + i * 7) % 11 < 5]
+    return tuple(person(i) for i in base + extras)
+
+
+def banner(text: str) -> None:
+    print("\n" + "=" * 78)
+    print(text)
+    print("=" * 78)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--fail-at", type=float, default=None, help="hours after which the VC empties")
+    ap.add_argument("--step", type=float, default=300.0, help="simulated seconds per tick")
+    args = ap.parse_args()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = Config(
+            token="dry-run",
+            guild_id=1,
+            voice_channel_id=1539756705997652079,
+            announce_channel_id=2,
+            gamenight_host_role_id=3,
+            clanker_role_id=4,
+            database_path=Path(tmp) / "sim.sqlite3",
+            # The simulator jumps `step` seconds per tick instead of 1s, so the
+            # per-tick credit cap is widened to match. The live bot uses 1s/5s.
+            max_tick_credit=args.step,
+        )
+        store = Store(cfg.database_path)
+        engine = HellEngine(store, cfg)
+        ann = Announcer(FakeBot(), cfg, engine)
+
+        participants = crowd_at(0)
+        engine.start(
+            now=T0,
+            guild_id=1,
+            voice_channel_id=cfg.voice_channel_id,
+            announce_channel_id=cfg.announce_channel_id,
+            started_by=111,
+            initial_participants=participants,
+        )
+        banner("START ANNOUNCEMENT")
+        print(ann.render_start(engine.snapshot(now=T0, participants=len(participants)), FakeUser.mention, participants))
+
+        printed_progress = False
+        t = T0
+        end = T0 + TOTAL_SECONDS + args.step
+        while t < end and not engine.status.is_terminal:
+            t += args.step
+            hours = (t - T0) / HOUR
+            people: tuple[ParticipantRef, ...] = () if (args.fail_at and hours >= args.fail_at) else crowd_at(hours)
+            for ev in engine.tick(Observation(now=t, participants=people)):
+                if isinstance(ev, MilestoneReached):
+                    banner(f"MILESTONE {ev.milestone.hours}h")
+                    print(ann.render_milestone(ev))
+                elif isinstance(ev, EventFailed):
+                    banner("FAILURE ANNOUNCEMENT")
+                    print(ann.render_failure(ev))
+                elif isinstance(ev, EventCompleted):
+                    banner("COMPLETION ANNOUNCEMENT")
+                    print(ann.render_completion(ev))
+                elif isinstance(ev, EventCancelled):
+                    banner("CANCELLED ANNOUNCEMENT")
+                    print(ann.render_cancelled(ev))
+            if not printed_progress and hours >= 73.4:
+                printed_progress = True
+                banner("LIVE PROGRESS MESSAGE (edited every 10s)")
+                print(ann.render_progress(engine.snapshot(now=t, participants=len(people))))
+
+        banner("LEADERBOARD")
+        print(ann.render_leaderboard_message(engine.leaderboard(), engine.status.is_terminal))
+        banner(f"FINAL STATUS: {engine.status.value}  (elapsed {engine.elapsed(t) / HOUR:.2f}h)")
+        store.close()
+
+
+if __name__ == "__main__":
+    main()

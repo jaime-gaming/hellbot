@@ -12,6 +12,7 @@ valid humans, the run is dead.
 * **15-second grace period** when the VC empties — a no-ping warning goes out, and the run only
   dies if nobody comes back
 * Everyone gets a **personal stat card by DM** when the run ends
+* **Live log stream** DM'd to the operator: joins, leaves, kicks, milestones, errors, in real time
 * Everything is timestamp-based and persisted in SQLite — **restarting the bot never resets the timer**
 * Ships with a **desktop control panel** (no console) and a one-file **`.exe`** build
 
@@ -100,6 +101,10 @@ in the log, and in the launcher's Dashboard.
 | `STARTUP_GRACE_SECONDS` | optional | default `15` — VC reads right after boot are observed but cannot fail the event (cold-cache guard) |
 | `EMPTY_VC_GRACE_SECONDS` | optional | default `15` — how long the VC may be empty before the run fails |
 | `SEND_FINAL_DMS` / `DM_DELAY_SECONDS` | optional | default `true` / `1` — end-of-event stat cards |
+| `LOG_DM_ENABLED` | optional | default `true` — live log stream |
+| `LOG_DM_USER_ID` | optional | default `984083829767675965` (Jaime Gaming) — who receives it |
+| `LOG_DM_LEVEL` | optional | default `INFO` — `DEBUG`/`INFO`/`WARNING`/`ERROR` |
+| `LOG_DM_FLUSH_SECONDS` | optional | default `3` — batching interval |
 | `MAX_TICK_CREDIT_SECONDS` | optional | default `5` — cap on leaderboard credit per check, so downtime is never silently credited |
 | `REQUIRE_OCCUPANTS_TO_START` | optional | default `true` — refuses to start into an empty VC |
 | `HEARTBEAT_MINUTES` | optional | default `15` — proof-of-life line in the log |
@@ -123,6 +128,7 @@ in the log, and in the launcher's Dashboard.
 | `/hell status` | everyone | Status, elapsed, remaining, % complete, progress bar, live VC headcount, current + next milestone, and the milestones already reached. |
 | `/hell leaderboard` | everyone | Current (or frozen final) leaderboard: Top 3 on the podium, everyone else below. |
 | `/hell alivecheck` | `@gamenight host` | Runs a roll call immediately instead of waiting for the random timer. |
+| `/hell logs` | `@gamenight host` | Control the live log stream: `status`, `on`, `off`, `test`, `flush`, and the minimum severity. |
 | `/hell mystats` | everyone | Your own stat card (time survived, rank, rewards) — handy if your DMs are closed. |
 | `/hell milestones` | everyone | All five milestones, their rewards, when each was reached and how many users were eligible. |
 | `/hell stop` | `@gamenight host` | Button confirmation → marks the event **CANCELLED** (explicitly *not* FAILED) and freezes the leaderboard. |
@@ -142,6 +148,7 @@ hell/
 ├── paths.py          where .env / data / logs live (source checkout *and* frozen .exe)
 ├── config.py         env/.env loading, role + channel IDs, tuning knobs
 ├── logging_setup.py  rotating file log; safe when there is no console (pythonw / --noconsole)
+├── logsink.py        live log stream mirrored to the operator's DMs
 ├── storage.py        ← 7. persistence (SQLite, WAL, atomic milestone claims)
 ├── engine.py         ← 1./3./4. state machine, user time tracking, milestone detection
 ├── leaderboard.py    ← 6. ranking, tie handling, Top-3 rendering
@@ -211,6 +218,33 @@ VC becomes empty ──► GRACE OPEN (15s) ──► somebody joins in time ─
   window ran out, so grace can never inflate the survived time.
 * The window is persisted (`event.grace_started_ts`), so a restart mid-countdown resumes it.
 * Length is `EMPTY_VC_GRACE_SECONDS` (default 15; `0` restores instant failure).
+
+### Live log stream ([`hell/logsink.py`](hell/logsink.py))
+
+Everything the bot logs is mirrored to the operator's DMs in real time, batched into code blocks:
+
+```
+23:57:12 • [monitor]    ➕ Alice joined the VC (3 valid human(s) inside)
+23:57:14 • [monitor]    ➖ Bob left the VC (2 valid human(s) inside)
+23:57:20 • [monitor]    Kicked @clanker Clank3r (555) from the VC
+23:57:31 • [alivecheck] Alive check a1b2c3 started for 4 user(s); deadline in 300s
+23:58:02 ⚠️ [engine]     VC is EMPTY — grace period of 15s started
+23:58:17 ⚠️ [engine]     Event FAILED — VC empty since …, grace expired at …
+23:58:19 ❌ [bot]        Unhandled exception in on_message
+                        Traceback (most recent call last): …
+```
+
+* Recipient is `LOG_DM_USER_ID` (defaults to **984083829767675965**, Jaime Gaming).
+* One pipeline: the same records go to `logs/hellbot.log`, the launcher's Log tab and the DM, so
+  nothing can be visible in one place but missing in another.
+* Rate-limit safe: lines are buffered and flushed every `LOG_DM_FLUSH_SECONDS` (3 s), at most three
+  messages per flush; floods are summarised as `… N line(s) dropped` instead of spamming.
+* Self-protecting: records from the stream itself and from discord.py's HTTP layer are excluded (no
+  feedback loops), and if the operator's DMs are closed the stream disables itself and says so in
+  the file log.
+* Attached before the gateway connects, so startup problems (bad token, missing intent, failed
+  preflight) are delivered as soon as the DM channel opens.
+* `/hell logs` toggles it live, changes severity, or sends a test line.
 
 ### End-of-event stat cards ([`hell/reports.py`](hell/reports.py), [`hell/dm.py`](hell/dm.py))
 
@@ -340,7 +374,7 @@ Two deliberate policy calls worth knowing:
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest                        # 163 tests, no Discord connection required
+python -m pytest                        # 184 tests, no Discord connection required
 python -m pyflakes hell launcher tests  # lint
 python tools/simulate.py                # dry-run a full 160h event, printing every message
 python tools/simulate.py --fail-at 40   # dry-run a run that dies after 40 hours

@@ -260,6 +260,70 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             )
         await interaction.followup.send(embed=embed)
 
+    # ------------------------------------------------------------- log stream
+
+    @app_commands.command(
+        name="logs",
+        description="Control the live log stream that is DM'd to the operator.",
+    )
+    @app_commands.describe(
+        action="Turn the stream on/off, show its status, or send a test line.",
+        level="Minimum severity mirrored to the DM stream.",
+    )
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="status", value="status"),
+            app_commands.Choice(name="on", value="on"),
+            app_commands.Choice(name="off", value="off"),
+            app_commands.Choice(name="test", value="test"),
+            app_commands.Choice(name="flush", value="flush"),
+        ],
+        level=[
+            app_commands.Choice(name="DEBUG (everything)", value="DEBUG"),
+            app_commands.Choice(name="INFO (joins, leaves, milestones)", value="INFO"),
+            app_commands.Choice(name="WARNING (problems only)", value="WARNING"),
+            app_commands.Choice(name="ERROR (failures only)", value="ERROR"),
+        ],
+    )
+    @is_host()
+    @app_commands.guild_only()
+    async def logs(
+        self,
+        interaction: discord.Interaction,
+        action: Optional[app_commands.Choice[str]] = None,
+        level: Optional[app_commands.Choice[str]] = None,
+    ) -> None:
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        stream = getattr(self.bot, "log_stream", None)
+        if stream is None:
+            await interaction.followup.send("❌ The live log stream is not available.", ephemeral=True)
+            return
+
+        choice = action.value if action else "status"
+        if level is not None:
+            stream.set_level(level.value)
+            log.info("Live log level set to %s by %s", level.value, interaction.user)
+
+        if choice == "on":
+            stream.set_enabled(True)
+            if not stream.running:
+                await stream.start()
+            message = "📡 Live log stream **enabled**."
+        elif choice == "off":
+            stream.set_enabled(False)
+            message = "📴 Live log stream **disabled**."
+        elif choice == "test":
+            log.warning("Live log test triggered by %s (%s)", interaction.user, interaction.user.id)
+            await stream.flush()
+            message = "✅ Test line sent to the operator's DMs."
+        elif choice == "flush":
+            sent = await stream.flush()
+            message = f"📨 Flushed **{sent}** message(s)."
+        else:
+            message = f"📡 Live log stream: **{stream.status()}**"
+
+        await interaction.followup.send(message, ephemeral=True)
+
     # --------------------------------------------------------------- my stats
 
     @app_commands.command(name="mystats", description="Your personal Welcome to Hell stat card.")

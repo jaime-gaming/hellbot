@@ -27,6 +27,7 @@ from .config import Config, ConfigError
 from .engine import HellEngine
 from .health import HealthReport, preflight
 from .logging_setup import setup_logging
+from .logsink import DiscordLogStream
 from .monitor import VoiceMonitor
 from .storage import Store
 
@@ -48,6 +49,10 @@ class HellBot(commands.Bot):
         self.engine = HellEngine(self.store, config)
         self.announcer = Announcer(self, config, self.engine)
         self.monitor = VoiceMonitor(self, config, self.engine, self.announcer)
+        # Live log stream: attach immediately so records produced during
+        # startup are buffered and delivered as soon as the DM opens.
+        self.log_stream = DiscordLogStream(self, config)
+        self.log_stream.attach()
         self.health: Optional[HealthReport] = None
         self._resumed = False
 
@@ -79,6 +84,10 @@ class HellBot(commands.Bot):
             log.exception("Preflight checks failed to run")
 
         await self._update_presence()
+        try:
+            await self.log_stream.start()
+        except Exception:  # pragma: no cover - streaming must never block boot
+            log.exception("Could not start the live log stream")
         self.monitor.start()
         if not self._resumed:
             self._resumed = True
@@ -139,6 +148,10 @@ class HellBot(commands.Bot):
     async def close(self) -> None:
         log.info("Shutting down…")
         self.monitor.stop()
+        try:
+            await self.log_stream.stop()
+        except Exception:  # pragma: no cover
+            pass
         try:
             await super().close()
         finally:

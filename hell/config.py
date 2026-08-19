@@ -19,6 +19,7 @@ except Exception:  # pragma: no cover - dotenv is in requirements but stay safe
 
 
 DEFAULT_VOICE_CHANNEL_ID = 1539756705997652079
+DEFAULT_LOG_DM_USER_ID = 984083829767675965  # Jaime Gaming — live log recipient
 
 
 class ConfigError(RuntimeError):
@@ -94,6 +95,12 @@ class Config:
     # --- end-of-event stat cards ---
     send_final_dms: bool = True
     dm_delay_seconds: float = 1.0
+
+    # --- live log stream (DM'd to the operator) ---
+    log_dm_enabled: bool = True
+    log_dm_user_id: int = DEFAULT_LOG_DM_USER_ID
+    log_dm_level: str = "INFO"
+    log_dm_flush_seconds: float = 3.0
     log_level: str = "INFO"
 
     @classmethod
@@ -134,6 +141,10 @@ class Config:
             alive_check_channel_id=_int_env("ALIVE_CHECK_CHANNEL_ID"),
             send_final_dms=_bool_env("SEND_FINAL_DMS", True),
             dm_delay_seconds=_float_env("DM_DELAY_SECONDS", 1.0),
+            log_dm_enabled=_bool_env("LOG_DM_ENABLED", True),
+            log_dm_user_id=_int_env("LOG_DM_USER_ID", default=DEFAULT_LOG_DM_USER_ID),  # type: ignore[arg-type]
+            log_dm_level=os.getenv("LOG_DM_LEVEL", "INFO").strip().upper() or "INFO",
+            log_dm_flush_seconds=_float_env("LOG_DM_FLUSH_SECONDS", 3.0),
             log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO",
         )
 

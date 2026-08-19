@@ -49,6 +49,7 @@ def setup_logging(
         target, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
     )
     file_handler.setFormatter(formatter)
+    file_handler.setLevel(root.level)   # own level, so the root can go lower
     root.addHandler(file_handler)
 
     # Only attach a console handler when there actually is a console.
@@ -58,6 +59,7 @@ def setup_logging(
             stream.write("")
             console = logging.StreamHandler(stream)
             console.setFormatter(formatter)
+            console.setLevel(root.level)
             root.addHandler(console)
         except Exception:  # pragma: no cover - pythonw edge cases
             pass

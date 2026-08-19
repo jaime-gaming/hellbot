@@ -62,6 +62,7 @@ class VoiceMonitor:
         self._ready_at: Optional[float] = None
         self._kick_attempts: dict[int, float] = {}
         self._lock = asyncio.Lock()  # serialises ticks; no milestone can race
+        self._known_presence: dict[int, str] = {}
         self._blind_since: Optional[float] = None
         self._blind_logged = False
         self._last_heartbeat = 0.0
@@ -129,6 +130,22 @@ class VoiceMonitor:
                 continue
             humans.append(participant_ref(member))
         return humans, clankers
+
+    def _log_presence_changes(self, humans: Sequence[ParticipantRef]) -> None:
+        """Emit a log line whenever somebody joins or leaves the target VC.
+
+        These lines are what makes the operator's live log stream readable —
+        they go to the file log, the launcher console and the DM stream alike.
+        """
+        current = {p.user_id: p.display_name for p in humans}
+        joined = [current[uid] for uid in current if uid not in self._known_presence]
+        left = [name for uid, name in self._known_presence.items() if uid not in current]
+        if joined or left:
+            for name in joined:
+                log.info("➕ %s joined the VC (%d valid human(s) inside)", name, len(current))
+            for name in left:
+                log.info("➖ %s left the VC (%d valid human(s) inside)", name, len(current))
+        self._known_presence = current
 
     def _note_blind(self, reason: str) -> None:
         """Remember that the bot currently cannot observe the VC."""
@@ -198,6 +215,7 @@ class VoiceMonitor:
         if collected is None:
             return
         humans, clankers = collected
+        self._log_presence_changes(humans)
         if clankers:
             await self.kick_clankers(clankers)
         if self.grace_active:

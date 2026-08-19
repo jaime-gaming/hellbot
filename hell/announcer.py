@@ -379,6 +379,9 @@ class Announcer:
                 "• Bots never count.\n"
                 f"• <@&{self.config.clanker_role_id}> users are removed on sight and earn no time.\n"
                 "• AFK still counts — you just have to *be there*.\n"
+                "• **Random alive checks**: every 1–6 hours everyone in the VC gets pinged and has "
+                "5 minutes to reply `Yes`. Miss it and you are disconnected — your leaderboard time "
+                "stays and you can rejoin instantly.\n"
                 "• The second the VC empties of valid humans, the run is **FAILED**, forever."
             ),
             inline=False,
@@ -598,8 +601,10 @@ class Announcer:
 
     # ------------------------------------------------------------ views
 
-    def build_status(self, snap: Snapshot) -> discord.Embed:
+    def build_status(self, snap: Snapshot, *, alive_line: Optional[str] = None) -> discord.Embed:
         embed = self.build_progress(snap)
+        if alive_line:
+            embed.add_field(name="🚨 Alive checks", value=alive_line, inline=False)
         records = self.engine.milestone_records()
         if records:
             add_chunked_field(

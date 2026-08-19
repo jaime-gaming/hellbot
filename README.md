@@ -8,6 +8,7 @@ valid humans, the run is dead.
 * Milestones: **32h · 64h · 96h · 128h · 160h**, each with its own reward and announcement
 * Started manually with `/hell start` by `@gamenight host`
 * Bots never count · `@clanker` users are kicked from the VC on sight · AFK still counts
+* **Random alive checks** every 1–6 h: reply `Yes` in 5 minutes or you are disconnected
 * Everything is timestamp-based and persisted in SQLite — **restarting the bot never resets the timer**
 * Ships with a **desktop control panel** (no console) and a one-file **`.exe`** build
 
@@ -97,6 +98,11 @@ in the log, and in the launcher's Dashboard.
 | `MAX_TICK_CREDIT_SECONDS` | optional | default `5` — cap on leaderboard credit per check, so downtime is never silently credited |
 | `REQUIRE_OCCUPANTS_TO_START` | optional | default `true` — refuses to start into an empty VC |
 | `HEARTBEAT_MINUTES` | optional | default `15` — proof-of-life line in the log |
+| `ALIVE_CHECK_ENABLED` | optional | default `true` |
+| `ALIVE_CHECK_MIN_HOURS` / `ALIVE_CHECK_MAX_HOURS` | optional | default `1` / `6` — the random window |
+| `ALIVE_CHECK_TIMEOUT_MINUTES` | optional | default `5` — time to answer |
+| `ALIVE_CHECK_STRICT` | optional | default `false` — `true` accepts only the exact string `Yes` |
+| `ALIVE_CHECK_CHANNEL_ID` | optional | where the roll call is posted; empty = the **VC's own text chat** |
 | `LOG_LEVEL` | optional | default `INFO` |
 
 > **Rewards are announcement-only.** The bot never assigns roles; it posts exactly who is eligible
@@ -111,6 +117,7 @@ in the log, and in the launcher's Dashboard.
 | `/hell start` | `@gamenight host` | Starts the event: status → `RUNNING`, records the absolute start timestamp, starts the 160 h timer, begins VC monitoring + per-user tracking, posts the start announcement. Rejected if one is already running or the VC is empty. |
 | `/hell status` | everyone | Status, elapsed, remaining, % complete, progress bar, live VC headcount, current + next milestone, and the milestones already reached. |
 | `/hell leaderboard` | everyone | Current (or frozen final) leaderboard: Top 3 on the podium, everyone else below. |
+| `/hell alivecheck` | `@gamenight host` | Runs a roll call immediately instead of waiting for the random timer. |
 | `/hell milestones` | everyone | All five milestones, their rewards, when each was reached and how many users were eligible. |
 | `/hell stop` | `@gamenight host` | Button confirmation → marks the event **CANCELLED** (explicitly *not* FAILED) and freezes the leaderboard. |
 | `/hell reset` | `@gamenight host` | Modal requiring the exact phrase `RESET WELCOME TO HELL` → wipes all event data for a fresh run. |
@@ -133,6 +140,8 @@ hell/
 ├── engine.py         ← 1./3./4. state machine, user time tracking, milestone detection
 ├── leaderboard.py    ← 6. ranking, tie handling, Top-3 rendering
 ├── milestones.py     the five milestones + reward definitions
+├── alivecheck.py     ← 9. roll-call scheduling/resolution (Discord-free, like the engine)
+├── aliveio.py        Discord side of the roll call: pings, kicks, reply backfill
 ├── monitor.py        ← 2. VC monitoring: 1 s tick, clanker kicks, 10 s progress edit, heartbeat
 ├── announcer.py      ← 5. every message the bot posts (embeds, length-safe)
 ├── health.py         startup preflight: IDs, channels, roles, permissions, intents
@@ -185,6 +194,33 @@ At **160 h** the event also becomes `COMPLETED`: the timer stops (it never count
 leaderboard accumulation stops, the rankings are frozen and displayed, and the final Top 3 are
 announced as receiving **every milestone reward + `@cool people :D`**.
 
+### Alive checks ("roll call")
+
+At a **random interval between 1 and 6 hours**, while the event is running, the bot posts in the
+VC chat (or `ALIVE_CHECK_CHANNEL_ID`):
+
+```
+@alice @bob @carol
+🚨 ARE YOU ALIVE? Say: Yes
+Reply with Yes in this channel within 5 minutes or you will be disconnected from the VC.
+You keep all your leaderboard time and can rejoin immediately.
+```
+
+* Everyone **currently in the VC** is pinged — bots and `@clanker` users are never included.
+* Each has **5 minutes** to reply `Yes` in that channel (case-insensitive by default; set
+  `ALIVE_CHECK_STRICT=true` to demand the exact string). Counted answers get a ✅ reaction.
+* Whoever stays silent is **disconnected from the VC**. Their accumulated leaderboard time is
+  **not** touched and they may **rejoin immediately** — tracking resumes as normal.
+* A disconnect never fails the event by itself; the run only ends if the VC is left with no valid
+  humans at all (e.g. literally nobody answered).
+* People who join *during* a check are not required to answer; people who already left are not
+  chased.
+* The pending check is persisted. If the bot restarts mid-check it resumes and even reads back
+  answers posted while it was offline; if the 5 minutes expired during the downtime the check is
+  **cancelled** — nobody is punished for the bot being away.
+* The next check time is never announced (that would defeat the point); `/hell status` only says
+  that checks happen randomly every 1–6 h.
+
 ### Leaderboard
 
 Per-user accumulated VC seconds, credited only while the event is `RUNNING`, sorted high → low,
@@ -211,6 +247,9 @@ CANCELLED.
 | Identical total times | Shared rank, deterministic display order |
 | 250 people in the VC at a milestone | Message split across embed fields; never exceeds Discord's limits |
 | Bot offline for a while | Timer keeps running (timestamps), the unobserved window is **not** credited to anyone and is reported in the progress message |
+| Alive check + restart | Check state is persisted; replies sent while offline are recovered, and an expired check is cancelled instead of kicking people |
+| Alive check ignored by everyone | Everyone is disconnected, the VC empties, and the normal failure rule ends the run |
+| Someone joins mid-check | Not pinged, not required to answer, never kicked for it |
 | Discord API hiccup on a message | Logged and retried on the next cycle; the event state is untouched |
 
 Two deliberate policy calls worth knowing:
@@ -227,7 +266,7 @@ Two deliberate policy calls worth knowing:
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest                        # 86 tests, no Discord connection required
+python -m pytest                        # 129 tests, no Discord connection required
 python -m pyflakes hell launcher tests  # lint
 python tools/simulate.py                # dry-run a full 160h event, printing every message
 python tools/simulate.py --fail-at 40   # dry-run a run that dies after 40 hours

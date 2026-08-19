@@ -22,6 +22,8 @@ from typing import Optional, Sequence
 import discord
 from discord.ext import tasks
 
+from .alivecheck import AliveCheckManager
+from .aliveio import DiscordAliveCheckIO
 from .announcer import Announcer
 from .config import Config
 from .engine import (
@@ -50,6 +52,9 @@ class VoiceMonitor:
         self.config = config
         self.engine = engine
         self.announcer = announcer
+        self.alive_io = DiscordAliveCheckIO(bot, config)
+        self.alive_checks = AliveCheckManager(config, engine.store, self.alive_io)
+        self.alive_checks.bind(engine.event_uid)
         self._ready_at: Optional[float] = None
         self._kick_attempts: dict[int, float] = {}
         self._lock = asyncio.Lock()  # serialises ticks; no milestone can race
@@ -196,9 +201,18 @@ class VoiceMonitor:
             log.debug("Startup grace active — skipping engine tick (%d humans seen)", len(humans))
             return
 
-        events = self.engine.tick(Observation(now=now_ts(), participants=tuple(humans)))
+        now = now_ts()
+        events = self.engine.tick(Observation(now=now, participants=tuple(humans)))
         for event in events:
             await self.dispatch(event)
+
+        if self.engine.is_running:
+            # Roll call: random every 1-6h, resolved 5 minutes later. Kicked
+            # users keep their leaderboard time and may rejoin immediately.
+            try:
+                await self.alive_checks.tick(now, humans)
+            except Exception:  # pragma: no cover - never break the event loop
+                log.exception("Alive check tick failed")
         self._heartbeat(len(humans))
 
     def _heartbeat(self, participants: int) -> None:
@@ -247,6 +261,10 @@ class VoiceMonitor:
     # ------------------------------------------------------------- dispatch
 
     async def dispatch(self, event: object) -> None:
+        if isinstance(event, (EventFailed, EventCompleted, EventCancelled)):
+            # A roll call in flight when the run ends is dropped, not enforced.
+            if self.alive_checks.pending is not None:
+                await self.alive_checks.cancel(now_ts(), "the event ended")
         if isinstance(event, MilestoneReached):
             await self.announcer.announce_milestone(event)
         elif isinstance(event, EventFailed):
@@ -265,6 +283,32 @@ class VoiceMonitor:
             self.engine.snapshot(participants=len(self.engine.last_participants)), force=True
         )
 
+    # ---------------------------------------------------------- alive checks
+
+    async def handle_message(self, message: discord.Message) -> None:
+        """Route a chat message to the pending alive check, if any."""
+        if message.author.bot or not self.engine.is_running:
+            return
+        pending = self.alive_checks.pending
+        if pending is None:
+            return
+        if self.alive_checks.register_reply(message.author.id, message.content, message.channel.id):
+            try:
+                await message.add_reaction("✅")
+            except discord.HTTPException:
+                pass
+
+    async def force_alive_check(self) -> bool:
+        """Trigger a roll call immediately (used by /hell alivecheck)."""
+        if not self.engine.is_running or self.alive_checks.pending is not None:
+            return False
+        collected = await self.collect()
+        if collected is None or not collected[0]:
+            return False
+        async with self._lock:
+            check = await self.alive_checks.start(now_ts(), collected[0])
+        return check is not None
+
     # -------------------------------------------------------------- recovery
 
     async def resume_after_restart(self) -> None:
@@ -279,6 +323,23 @@ class VoiceMonitor:
             format_hm(self.engine.elapsed()),
             gap,
         )
+        # A roll call interrupted by the restart is cancelled, never enforced:
+        # nobody gets disconnected because the bot was offline.
+        self.alive_checks.bind(state.event_uid)
+        pending = self.alive_checks.pending
+        if pending is not None:
+            recovered = await self.alive_checks.backfill_replies()
+            if now_ts() >= pending.deadline_ts:
+                log.warning("Alive check %s expired while offline — cancelling it", pending.check_id)
+                await self.alive_checks.cancel(now_ts(), "the bot restarted while it was running")
+            else:
+                log.info(
+                    "Resuming alive check %s (%d reply(ies) recovered, %.0fs left)",
+                    pending.check_id,
+                    recovered,
+                    pending.seconds_left(now_ts()),
+                )
+
         # Any milestone claimed but never announced (crash between the two).
         pending = self.engine.pending_announcements()
         if pending:

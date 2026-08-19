@@ -82,6 +82,7 @@ class Stats:
     participants: int = 0
     next_milestone: str = "—"
     time_to_next: str = "—"
+    alive_check: str = ""
     health_errors: list[str] = field(default_factory=list)
     health_warnings: list[str] = field(default_factory=list)
 
@@ -276,6 +277,9 @@ class BotSupervisor:
                 stats.participants = snap.participants
                 stats.next_milestone = f"{snap.upcoming.hours}h" if snap.upcoming else "—"
                 stats.time_to_next = format_hm(snap.time_to_next) if snap.time_to_next else "—"
+            monitor = getattr(bot, "monitor", None)
+            if monitor is not None and getattr(monitor, "alive_checks", None) is not None:
+                stats.alive_check = monitor.alive_checks.status_line(time.time()) or ""
             health = getattr(bot, "health", None)
             if health is not None:
                 stats.health_errors = list(health.errors)

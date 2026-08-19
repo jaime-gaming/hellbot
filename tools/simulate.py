@@ -26,6 +26,7 @@ from hell.engine import (  # noqa: E402
     MilestoneReached,
     Observation,
 )
+from hell.alivecheck import AliveCheckManager  # noqa: E402
 from hell.milestones import TOTAL_SECONDS  # noqa: E402
 from hell.models import ParticipantRef  # noqa: E402
 from hell.storage import Store  # noqa: E402
@@ -41,6 +42,33 @@ class FakeBot:
 
 class FakeUser:
     mention = "<@111>"
+
+
+class _PrintIO:
+    """Prints what the alive check would post instead of calling Discord."""
+
+    async def send_check(self, text, user_ids):
+        print(" ".join(f"<@{u}>" for u in user_ids))
+        print(text)
+        return (1, 2)
+
+    async def send_result(self, text):
+        print()
+        print(text)
+
+    async def kick(self, user_ids, reason):
+        return list(user_ids)
+
+    async def replies_since(self, channel_id, message_id, user_ids):
+        return set()
+
+
+async def _alive_preview(manager) -> None:
+    people = crowd_at(0)[:4]
+    await manager.start(T0, people)
+    manager.register_reply(people[0].user_id, "Yes", 1)
+    manager.register_reply(people[1].user_id, "yes", 1)
+    await manager.resolve(T0 + 300, people)
 
 
 NAMES = ["Ash", "Vera", "Milo", "Juno", "Kai", "Nova", "Rex", "Sol", "Wren", "Zed"]
@@ -122,6 +150,13 @@ def main() -> None:
                 printed_progress = True
                 banner("LIVE PROGRESS MESSAGE (edited every 10s)")
                 print(ann.render_progress(engine.snapshot(now=t, participants=len(people))))
+
+        banner("ALIVE CHECK (random every 1-6h)")
+        preview = AliveCheckManager(cfg, store, _PrintIO())
+        preview.bind("preview", now=T0)
+        import asyncio as _asyncio
+
+        _asyncio.run(_alive_preview(preview))
 
         banner("LEADERBOARD")
         print(ann.render_leaderboard_message(engine.leaderboard(), engine.status.is_terminal))

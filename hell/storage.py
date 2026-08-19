@@ -12,6 +12,7 @@ code trivially testable.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from pathlib import Path
@@ -80,6 +81,23 @@ CREATE TABLE IF NOT EXISTS presence (
     display_name TEXT    NOT NULL DEFAULT '',
     since_ts     REAL,
     PRIMARY KEY (event_uid, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS alive_check (
+    event_uid TEXT PRIMARY KEY,     -- at most one roll call in flight
+    payload   TEXT NOT NULL         -- JSON blob (see hell.alivecheck.PendingCheck)
+);
+
+CREATE TABLE IF NOT EXISTS alive_check_history (
+    event_uid   TEXT    NOT NULL,
+    check_id    TEXT    NOT NULL,
+    started_ts  REAL    NOT NULL,
+    resolved_ts REAL    NOT NULL,
+    required    INTEGER NOT NULL,
+    responded   INTEGER NOT NULL,
+    kicked      TEXT    NOT NULL DEFAULT '[]',
+    cancelled   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (event_uid, check_id)
 );
 
 CREATE TABLE IF NOT EXISTS final_leaderboard (
@@ -353,6 +371,95 @@ class Store:
         """Milestones claimed but never announced (crash between claim and post)."""
         return [m for m in self.get_milestones(event_uid) if not m.announced]
 
+    # ----------------------------------------------------------- alive checks
+
+    def save_alive_check(self, event_uid: str, payload: dict) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO alive_check(event_uid, payload) VALUES (?, ?) "
+                "ON CONFLICT(event_uid) DO UPDATE SET payload = excluded.payload",
+                (event_uid, json.dumps(payload)),
+            )
+
+    def load_alive_check(self, event_uid: str) -> Optional[dict]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload FROM alive_check WHERE event_uid = ?", (event_uid,)
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            return json.loads(row["payload"])
+        except json.JSONDecodeError:  # pragma: no cover - corrupt row
+            return None
+
+    def clear_alive_check(self, event_uid: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM alive_check WHERE event_uid = ?", (event_uid,))
+
+    def record_alive_check_history(
+        self,
+        event_uid: str,
+        *,
+        check_id: str,
+        started_ts: float,
+        resolved_ts: float,
+        required: int,
+        responded: int,
+        kicked: Sequence[int],
+        cancelled: bool,
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO alive_check_history"
+                "(event_uid, check_id, started_ts, resolved_ts, required, responded, kicked, cancelled) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    event_uid,
+                    check_id,
+                    started_ts,
+                    resolved_ts,
+                    int(required),
+                    int(responded),
+                    json.dumps(list(kicked)),
+                    int(cancelled),
+                ),
+            )
+
+    def alive_check_history(self, event_uid: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM alive_check_history WHERE event_uid = ? ORDER BY started_ts",
+                (event_uid,),
+            ).fetchall()
+        return [
+            {
+                "check_id": r["check_id"],
+                "started_ts": r["started_ts"],
+                "resolved_ts": r["resolved_ts"],
+                "required": r["required"],
+                "responded": r["responded"],
+                "kicked": json.loads(r["kicked"]),
+                "cancelled": bool(r["cancelled"]),
+            }
+            for r in rows
+        ]
+
+    def set_next_alive_check(self, event_uid: str, ts: Optional[float]) -> None:
+        key = f"next_alive_check:{event_uid}"
+        if ts is None:
+            with self._lock:
+                self._conn.execute("DELETE FROM meta WHERE key = ?", (key,))
+            return
+        self.set_meta(key, repr(float(ts)))
+
+    def get_next_alive_check(self, event_uid: str) -> Optional[float]:
+        raw = self.get_meta(f"next_alive_check:{event_uid}")
+        try:
+            return float(raw) if raw is not None else None
+        except ValueError:  # pragma: no cover
+            return None
+
     # ----------------------------------------------------- final leaderboard
 
     def save_final_leaderboard(self, event_uid: str, entries: Sequence[LeaderboardEntry]) -> None:
@@ -390,8 +497,15 @@ class Store:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
-                for table in ("user_time", "milestones", "milestone_members", "presence", "final_leaderboard"):
+                for table in (
+                    "user_time", "milestones", "milestone_members", "presence",
+                    "final_leaderboard", "alive_check", "alive_check_history",
+                ):
                     self._conn.execute(f"DELETE FROM {table} WHERE event_uid = ?", (event_uid,))
+                self._conn.execute(
+                    "DELETE FROM meta WHERE key IN (?, ?)",
+                    (f"next_alive_check:{event_uid}", f"unverified:{event_uid}"),
+                )
                 self._conn.execute("COMMIT")
             except Exception:
                 self._conn.execute("ROLLBACK")
@@ -401,8 +515,14 @@ class Store:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
-                for table in ("user_time", "milestones", "milestone_members", "presence", "final_leaderboard"):
+                for table in (
+                    "user_time", "milestones", "milestone_members", "presence",
+                    "final_leaderboard", "alive_check", "alive_check_history",
+                ):
                     self._conn.execute(f"DELETE FROM {table}")
+                self._conn.execute(
+                    "DELETE FROM meta WHERE key LIKE 'next_alive_check:%' OR key LIKE 'unverified:%'"
+                )
                 self._conn.execute(
                     "UPDATE event SET status = ?, event_uid = NULL, start_ts = NULL, end_ts = NULL, "
                     "last_tick_ts = NULL, progress_channel_id = NULL, progress_message_id = NULL, "

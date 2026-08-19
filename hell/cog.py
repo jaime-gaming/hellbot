@@ -96,6 +96,7 @@ class ResetModal(discord.ui.Modal, title="Reset Welcome to Hell"):
         was = engine.status
         async with self.cog.monitor.lock:
             engine.reset()
+            self.cog.monitor.alive_checks.reset()
         self.cog.announcer.forget_progress_message()
         log.warning("Event data reset by %s (previous status: %s)", interaction.user, was.value)
         await interaction.response.send_message(
@@ -172,6 +173,9 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             await interaction.followup.send(f"❌ {exc}", ephemeral=True)
             return
 
+        # Schedule the first roll call 1-6 hours from now.
+        self.monitor.alive_checks.bind(self.engine.event_uid, now=now_ts())
+
         self.announcer.forget_progress_message()
         snap = self.engine.snapshot(participants=len(humans))
         await self.announcer.announce_start(snap, interaction.user, humans)
@@ -209,7 +213,10 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             if collected is not None:
                 count = len(collected[0])
         snap = self.engine.snapshot(participants=count)
-        await interaction.followup.send(embed=self.announcer.build_status(snap))
+        alive_line = self.monitor.alive_checks.status_line(now_ts()) if self.engine.is_running else None
+        await interaction.followup.send(
+            embed=self.announcer.build_status(snap, alive_line=alive_line)
+        )
 
     # ----------------------------------------------------------- leaderboard
 
@@ -252,6 +259,43 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
                 inline=False,
             )
         await interaction.followup.send(embed=embed)
+
+    # ----------------------------------------------------------- alive check
+
+    @app_commands.command(
+        name="alivecheck",
+        description="Run an alive check right now (normally random every 1-6h).",
+    )
+    @is_host()
+    @app_commands.guild_only()
+    async def alivecheck(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        if not self.engine.is_running:
+            await interaction.followup.send(
+                f"❌ No event is running (status `{self.engine.status.value}`).", ephemeral=True
+            )
+            return
+        if not self.config.alive_check_enabled:
+            await interaction.followup.send(
+                "❌ Alive checks are disabled (`ALIVE_CHECK_ENABLED=false`).", ephemeral=True
+            )
+            return
+        if self.monitor.alive_checks.pending is not None:
+            await interaction.followup.send("❌ An alive check is already running.", ephemeral=True)
+            return
+        started = await self.monitor.force_alive_check()
+        if not started:
+            await interaction.followup.send(
+                "❌ Could not start it — the VC is empty or the check channel is unreachable.",
+                ephemeral=True,
+            )
+            return
+        minutes = int(self.config.alive_check_timeout_minutes)
+        await interaction.followup.send(
+            f"🚨 Alive check posted in <#{self.monitor.alive_io.channel_id()}>. "
+            f"Everyone in the VC has {minutes} minutes to reply `Yes`.",
+            ephemeral=True,
+        )
 
     # ------------------------------------------------------------------ stop
 

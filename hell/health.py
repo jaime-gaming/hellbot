@@ -120,6 +120,36 @@ async def preflight(bot: discord.Client, config: Config) -> HealthReport:
             message = f"Missing '{label}' in the announcement channel."
             (report.errors if fatal else report.warnings).append(message)
 
+    # --- alive-check channel ------------------------------------------------
+    if config.alive_check_enabled:
+        check_id = config.alive_check_channel_id or config.voice_channel_id
+        chan = guild.get_channel(check_id)
+        if chan is None:
+            report.errors.append(
+                f"Alive-check channel {check_id} not found (ALIVE_CHECK_CHANNEL_ID)."
+            )
+        elif not isinstance(chan, discord.abc.Messageable):
+            report.errors.append(
+                f"Alive-check channel {check_id} cannot receive messages — pick a text channel "
+                "or a voice channel with text chat enabled."
+            )
+        else:
+            where = "the VC's own text chat" if check_id == config.voice_channel_id else f"#{chan.name}"
+            report.info.append(f"Alive checks post in {where} every "
+                               f"{config.alive_check_min_hours:g}-{config.alive_check_max_hours:g}h")
+            perms = chan.permissions_for(me)  # type: ignore[arg-type]
+            if not perms.send_messages:
+                report.errors.append(f"Missing 'Send Messages' in the alive-check channel ({check_id}).")
+            if not perms.read_message_history:
+                report.warnings.append(
+                    "Missing 'Read Message History' in the alive-check channel — replies sent while "
+                    "the bot is restarting cannot be recovered."
+                )
+            if not perms.add_reactions:
+                report.warnings.append(
+                    "Missing 'Add Reactions' in the alive-check channel — answers will not be ticked."
+                )
+
     # --- roles -------------------------------------------------------------
     host = _role_name(guild, config.gamenight_host_role_id)
     if host is None:

@@ -123,6 +123,16 @@ class HellBot(commands.Bot):
         if self.monitor.is_clanker(member):
             await self.monitor.kick_clankers([member])
 
+    async def on_message(self, message: discord.Message) -> None:
+        """Alive-check answers arrive as ordinary chat messages."""
+        if message.guild is None or message.author.bot:
+            return
+        try:
+            await self.monitor.handle_message(message)
+        except Exception:  # pragma: no cover - never break on a chat message
+            log.exception("Failed to handle a message for the alive check")
+        await self.process_commands(message)
+
     async def on_error(self, event_method: str, *args, **kwargs) -> None:  # pragma: no cover
         log.exception("Unhandled exception in %s", event_method)
 

@@ -183,6 +183,8 @@ class LauncherApp(tk.Tk):
         self.pb.pack(fill="x", pady=8)
         self.lbl_progress = ttk.Label(progress, text="0h 00m / 160h 00m — 0.0%", style="Card.TLabel")
         self.lbl_progress.pack(anchor="w")
+        self.lbl_alive = ttk.Label(progress, text="", style="Muted.TLabel")
+        self.lbl_alive.pack(anchor="w", pady=(4, 0))
 
         health = ttk.Frame(self.tab_dash, style="Card.TFrame", padding=14)
         health.pack(fill="both", expand=True)
@@ -464,6 +466,8 @@ class LauncherApp(tk.Tk):
         self.lbl_progress.configure(
             text=f"{stats.elapsed_text} — {stats.percent_text} — {format_hm(stats.remaining)} remaining"
         )
+
+        self.lbl_alive.configure(text=stats.alive_check.replace("**", ""))
 
         if stats.uptime:
             self.lbl_uptime.configure(text=f"Bot uptime: {format_hm(stats.uptime)}   ")

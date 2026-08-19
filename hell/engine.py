@@ -131,6 +131,9 @@ class HellEngine:
         self._last_participants: tuple[ParticipantRef, ...] = tuple(
             store.get_presence(self.state.event_uid) if self.state.event_uid else []
         )
+        self._presence_signature: frozenset[int] = frozenset(
+            p.user_id for p in self._last_participants
+        )
 
     # ------------------------------------------------------------- accessors
 
@@ -216,6 +219,7 @@ class HellEngine:
         self.store.save_state(self.state)
         participants = tuple(initial_participants)
         self._last_participants = participants
+        self._presence_signature = frozenset(p.user_id for p in participants)
         self.store.replace_presence(uid, participants, now)
         self.store.touch_users(uid, participants, now)
         log.info("Event %s started at %.3f by %s", uid, now, started_by)
@@ -240,6 +244,7 @@ class HellEngine:
         self.store.reset_all()
         self.state = self.store.load_state()
         self._last_participants = ()
+        self._presence_signature = frozenset()
         log.warning("Event data reset")
 
     def set_progress_message(self, channel_id: Optional[int], message_id: Optional[int]) -> None:
@@ -291,7 +296,13 @@ class HellEngine:
 
         self.state.last_tick_ts = effective_now
         self.store.set_last_tick(effective_now)
-        self.store.replace_presence(uid, obs.participants, obs.now)
+
+        # Persist the participant list only when it actually changes: over a
+        # 160h run that is ~576k avoided writes.
+        signature = frozenset(p.user_id for p in obs.participants)
+        if signature != self._presence_signature:
+            self._presence_signature = signature
+            self.store.replace_presence(uid, obs.participants, obs.now)
 
         # 2) Failure check — an empty VC before the deadline ends the run.
         #    (Once the 160h deadline is reached the run is already won, so

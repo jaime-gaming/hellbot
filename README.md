@@ -1,59 +1,106 @@
 # 🔥 Welcome to Hell — Discord event bot
 
-A production-ready Discord bot that runs the **Welcome to Hell** event: keep at least
-one real human in a single voice channel, **continuously, for 160 hours**. The moment
-that VC is empty of valid humans, the run is dead.
+A production-ready Discord bot that runs the **Welcome to Hell** event: keep at least one real
+human in a single voice channel, **continuously, for 160 hours**. The moment that VC is empty of
+valid humans, the run is dead.
 
-* Target VC: `1539756705997652079` (configurable)
-* Duration: **160 consecutive hours**
-* Milestones: **32h · 64h · 96h · 128h · 160h**
+* Target VC: `1539756705997652079` (configurable) · Duration: **160 consecutive hours**
+* Milestones: **32h · 64h · 96h · 128h · 160h**, each with its own reward and announcement
 * Started manually with `/hell start` by `@gamenight host`
 * Bots never count · `@clanker` users are kicked from the VC on sight · AFK still counts
 * Everything is timestamp-based and persisted in SQLite — **restarting the bot never resets the timer**
+* Ships with a **desktop control panel** (no console) and a one-file **`.exe`** build
 
 ---
 
 ## Quick start
 
+### Windows — double-click, no console
+
+1. Download/clone this folder.
+2. Double-click **`run_bot.bat`** (or `run_bot_silent.vbs` if you don't even want the setup window
+   to flash). First run creates a virtual environment and installs the dependencies automatically.
+3. The **control panel** opens. Fill in the Settings tab → **Save settings** → **Start bot**.
+
+Prefer a single file to hand to someone else? Run **`build_exe.bat`** once and you get
+`dist\WelcomeToHellBot.exe` — no Python required on the target machine, no console window, and it
+keeps `.env`, `data\` and `logs\` next to itself.
+
+For debugging with visible output there is **`run_bot_console.bat`**.
+
+### Any OS — console
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
-cp .env.example .env      # then fill in the token, channel IDs and role IDs
+cp .env.example .env      # fill in the token, channel IDs and role IDs
 python bot.py
 ```
 
-### Discord setup checklist
+### Docker
+
+```bash
+cp .env.example .env      # fill it in
+docker compose up -d      # state lives in the hell-data volume
+```
+
+A systemd unit is in [`deploy/hellbot.service`](deploy/hellbot.service).
+
+---
+
+## The control panel
+
+`launcher_main.py` (what the `.bat` and the `.exe` start) is a small Tk desktop app:
+
+| Tab | What you get |
+|---|---|
+| **Dashboard** | Bot state, event state, live VC headcount, next milestone, a progress bar for the 160 h, and the result of the Discord-side configuration checks. |
+| **Log** | The same lines that go to `logs/hellbot.log`, colour-coded and live, with a button to open the folder. |
+| **Settings** | Every `.env` value with inline help, the token masked behind a *show* toggle, validation before saving, and an atomic write so a crash can't corrupt the file. |
+
+The bot runs on its own asyncio loop in a background thread, so the window never freezes; closing
+it asks for confirmation and shuts the bot down cleanly. Errors (bad token, missing intent, no
+network) appear as pop-ups and on the dashboard instead of vanishing into a console nobody sees.
+
+---
+
+## Discord setup checklist
 
 1. **Developer Portal → Bot → Privileged Gateway Intents**: enable **Server Members Intent**.
-   (`voice_states` and `guilds` are non-privileged and enabled in code.)
-2. **Bot permissions** in the server:
-   | Permission | Why |
-   |---|---|
-   | View Channel + Connect on the target VC | to see who is inside |
-   | **Move Members** | to disconnect `@clanker` users |
-   | Send Messages / Embed Links / Read Message History in the announcement channel | announcements + editing the progress message |
-   | **Mention @everyone** | milestone / start / failure / completion pings |
-3. Fill in `.env`:
+2. Invite the bot with these permissions:
+
+| Permission | Why |
+|---|---|
+| View Channel + Connect on the target VC | to see who is inside |
+| **Move Members** | to disconnect `@clanker` users |
+| Send Messages / Embed Links / Read Message History in the announcement channel | announcements + editing the progress message |
+| **Mention @everyone** | milestone / start / failure / completion pings |
+| Manage Messages *(optional)* | lets the bot pin the live progress message |
+
+The bot verifies all of this on startup (`hell/health.py`) and tells you exactly what is missing —
+in the log, and in the launcher's Dashboard.
+
+### Configuration
 
 | Variable | Required | Meaning |
 |---|---|---|
 | `DISCORD_TOKEN` | ✅ | bot token |
-| `GUILD_ID` | ✅ | server ID (slash commands are synced to this guild instantly) |
-| `VOICE_CHANNEL_ID` | ✅ (defaults to `1539756705997652079`) | the Hell VC |
-| `ANNOUNCE_CHANNEL_ID` | ✅ | text channel for all announcements + the live progress message |
+| `GUILD_ID` | ✅ | server ID (slash commands sync to this guild instantly) |
+| `VOICE_CHANNEL_ID` | ✅ (default `1539756705997652079`) | the Hell VC |
+| `ANNOUNCE_CHANNEL_ID` | ✅ | text channel for announcements + the live progress message |
 | `GAMENIGHT_HOST_ROLE_ID` | ✅ | `@gamenight host` — the only role allowed to start/stop/reset |
 | `CLANKER_ROLE_ID` | ✅ | `@clanker` — auto-disconnected, never earns leaderboard time |
 | `HELL_ROLE_ID`, `HELLIST_ROLE_ID`, `HELL_MASTER_ROLE_ID`, `COOL_PEOPLE_ROLE_ID` | optional | only used to render real role mentions in reward messages |
 | `DATABASE_PATH` | optional | default `data/hell.sqlite3` |
 | `MONITOR_INTERVAL` / `PROGRESS_INTERVAL` | optional | default `1` s / `10` s |
-| `STARTUP_GRACE_SECONDS` | optional | default `15` — VC reads right after boot are observed but can't fail the event (cold cache guard) |
-| `MAX_TICK_CREDIT_SECONDS` | optional | default `5` — max leaderboard credit per tick, so downtime is never silently credited |
+| `STARTUP_GRACE_SECONDS` | optional | default `15` — VC reads right after boot are observed but cannot fail the event (cold-cache guard) |
+| `MAX_TICK_CREDIT_SECONDS` | optional | default `5` — cap on leaderboard credit per check, so downtime is never silently credited |
 | `REQUIRE_OCCUPANTS_TO_START` | optional | default `true` — refuses to start into an empty VC |
+| `HEARTBEAT_MINUTES` | optional | default `15` — proof-of-life line in the log |
+| `LOG_LEVEL` | optional | default `INFO` |
 
-> **Rewards are announcement-only.** The bot never assigns roles; it posts exactly who is
-> eligible at each milestone so a human can hand them out. (Everything needed to flip this
-> on later lives in `Announcer`.)
+> **Rewards are announcement-only.** The bot never assigns roles; it posts exactly who is eligible
+> at each milestone so a human can hand them out.
 
 ---
 
@@ -61,11 +108,15 @@ python bot.py
 
 | Command | Who | What |
 |---|---|---|
-| `/hell start` | `@gamenight host` | Starts the event: status → `RUNNING`, records the absolute start timestamp, starts the 160h timer, begins VC monitoring + per-user tracking, posts the start announcement. Rejected if an event is already running. |
-| `/hell status` | everyone | Status, elapsed, remaining, % complete, progress bar, live VC population, current + next milestone, and the milestones already reached. |
-| `/hell leaderboard` | everyone | Current (or frozen final) leaderboard, Top 3 highlighted, everyone else listed below. |
+| `/hell start` | `@gamenight host` | Starts the event: status → `RUNNING`, records the absolute start timestamp, starts the 160 h timer, begins VC monitoring + per-user tracking, posts the start announcement. Rejected if one is already running or the VC is empty. |
+| `/hell status` | everyone | Status, elapsed, remaining, % complete, progress bar, live VC headcount, current + next milestone, and the milestones already reached. |
+| `/hell leaderboard` | everyone | Current (or frozen final) leaderboard: Top 3 on the podium, everyone else below. |
+| `/hell milestones` | everyone | All five milestones, their rewards, when each was reached and how many users were eligible. |
 | `/hell stop` | `@gamenight host` | Button confirmation → marks the event **CANCELLED** (explicitly *not* FAILED) and freezes the leaderboard. |
-| `/hell reset` | `@gamenight host` | Modal that requires typing `RESET WELCOME TO HELL` → wipes all event data for a brand new run. |
+| `/hell reset` | `@gamenight host` | Modal requiring the exact phrase `RESET WELCOME TO HELL` → wipes all event data for a fresh run. |
+
+All output is embeds. Mentions inside an embed never ping, so a milestone can list 250 eligible
+users without 250 notifications — while the `@everyone` ping stays in the message content.
 
 ---
 
@@ -73,59 +124,54 @@ python bot.py
 
 ```
 hell/
-├── models.py       # EventStatus, Milestone, ParticipantRef, LeaderboardEntry, EventState
-├── timeutil.py     # absolute-timestamp helpers, "142h 38m", progress bars
-├── config.py       # env/.env loading, role + channel IDs, tuning knobs
-├── storage.py      # ← 7. persistence (SQLite, WAL, atomic milestone claims)
-├── engine.py       # ← 1./3./4. event state machine, user time tracking, milestone detection
-├── leaderboard.py  # ← 6. ranking, tie handling, Top-3 rendering
-├── milestones.py   # milestone table + reward definitions
-├── monitor.py      # ← 2. VC monitoring: 1s tick, clanker kicks, 10s progress edit
-├── announcer.py    # ← 5. every message the bot posts
-├── cog.py          # ← 8. /hell slash commands, confirmations, permission checks
-└── bot.py          # entrypoint / wiring
+├── models.py         EventStatus, Milestone, ParticipantRef, LeaderboardEntry, EventState
+├── timeutil.py       absolute-timestamp helpers, "142h 38m", progress bars
+├── paths.py          where .env / data / logs live (source checkout *and* frozen .exe)
+├── config.py         env/.env loading, role + channel IDs, tuning knobs
+├── logging_setup.py  rotating file log; safe when there is no console (pythonw / --noconsole)
+├── storage.py        ← 7. persistence (SQLite, WAL, atomic milestone claims)
+├── engine.py         ← 1./3./4. state machine, user time tracking, milestone detection
+├── leaderboard.py    ← 6. ranking, tie handling, Top-3 rendering
+├── milestones.py     the five milestones + reward definitions
+├── monitor.py        ← 2. VC monitoring: 1 s tick, clanker kicks, 10 s progress edit, heartbeat
+├── announcer.py      ← 5. every message the bot posts (embeds, length-safe)
+├── health.py         startup preflight: IDs, channels, roles, permissions, intents
+├── cog.py            ← 8. /hell slash commands, confirmations, permission checks
+└── bot.py            entrypoint / wiring
+launcher/             desktop control panel (envfile · runtime supervisor · tkinter GUI)
+tools/simulate.py     offline dry-run of a whole 160 h event
 ```
 
 `engine.py` and everything below it import **zero Discord code**. The monitor feeds it plain
 `Observation(now, participants)` values (bots and `@clanker` already filtered out) and gets back
-plain domain events (`MilestoneReached`, `EventFailed`, `EventCompleted`, `EventCancelled`)
-that the announcer turns into messages. That's why the whole rulebook is unit-testable.
+plain domain events (`MilestoneReached`, `EventFailed`, `EventCompleted`, `EventCancelled`) that
+the announcer turns into messages. That is why the entire rulebook is unit-testable.
 
 ### The 1-second loop
 
 1. Read the target VC members.
 2. Drop bots.
-3. `@clanker` → `member.move_to(None)` immediately (plus an instant `on_voice_state_update`
-   fast path), and they never appear in the participant list.
-4. The remaining humans are the valid participants; each gets credited for the observed interval.
+3. `@clanker` → `member.move_to(None)` immediately (plus an instant `on_voice_state_update` fast
+   path), and they never appear in the participant list.
+4. The remaining humans are the valid participants; each is credited for the observed interval.
 5. `valid_human_count == 0` → **FAILED**, timer stopped permanently, leaderboard frozen and saved,
    announcement posted. The event can never resume automatically.
 
 ### The 10-second progress message
 
-One message, created once and **edited** afterwards (its ID is persisted, so it keeps being edited
-after a restart; if someone deletes it, it is recreated once):
-
-```
-🔥 WELCOME TO HELL — RUNNING
-█████████░░░░░░░░░░░ 73h 24m / 160h 00m
-45.9% complete
-👥 Currently in Hell: 7
-✅ Current milestone: 64h cleared
-🔥 Next milestone: 96h (in 22h 36m)
-⏳ 86h 36m remaining of the 160h challenge
-```
+One embed, created once and **edited** afterwards (its ID is persisted, so it keeps being edited
+after a restart; if someone deletes it, it is recreated). It shows status, `73h 24m / 160h 00m`,
+percentage, a `█████████░░░░░░░░░░░` bar, live headcount, current milestone, next milestone with a
+live countdown, and time remaining. Identical renders are skipped, and once the event ends the
+final state is written once and the loop stops editing.
 
 ### Milestones
 
-Driven purely by the **global** timer (`now - start_ts`), never by individual user time.
-Each one is claimed with an `INSERT OR IGNORE` in SQLite: only the writer that actually inserted
-the row announces, so a milestone can never fire twice — including if the bot restarts in the very
-second it lands. The announcement is marked `announced` only after Discord accepts the message; a
-crash in between makes the bot re-post it on the next startup instead of losing it.
-
-Each milestone records **who was in the VC at that exact tick** and the reached timestamp, and each
-has its own distinct message:
+Driven purely by the **global** timer (`now - start_ts`), never by individual user time. Each is
+claimed with an `INSERT OR IGNORE` in SQLite: only the writer that actually inserted the row
+announces, so a milestone can never fire twice — including if the bot restarts in the very second
+it lands. The `announced` flag is only set after Discord accepts the message, so a crash in
+between re-posts it on the next startup instead of losing it.
 
 | Milestone | Reward |
 |---|---|
@@ -135,9 +181,9 @@ has its own distinct message:
 | 128h | Music permissions for everyone, provided they are not abused |
 | 160h | `@hell master` — limited |
 
-At **160h** the event also becomes `COMPLETED`: the timer stops (it never counts past 160h),
-leaderboard accumulation stops, the final rankings are frozen and displayed, and the final Top 3
-are announced as receiving **every milestone reward + `@cool people :D`**.
+At **160 h** the event also becomes `COMPLETED`: the timer stops (it never counts past 160 h),
+leaderboard accumulation stops, the rankings are frozen and displayed, and the final Top 3 are
+announced as receiving **every milestone reward + `@cool people :D`**.
 
 ### Leaderboard
 
@@ -160,15 +206,18 @@ CANCELLED.
 | Rapid join/leave churn | 1-second sampling keeps per-user totals correct |
 | Bot restarts mid-event | State reloaded from SQLite; elapsed = `now - start_ts`; nothing resets |
 | Bot restarts around a milestone | Atomic DB claim prevents duplicates; unsent announcements are re-posted on boot |
-| 160h hits during a 10s update | The 1s tick clamps everything to `start_ts + 160h`; completion wins over an empty VC at the deadline |
+| 160 h hits during a 10 s update | The 1 s tick clamps everything to `start_ts + 160h`; completion wins over an empty VC at the deadline |
 | User leaves and returns | Totals continue accumulating |
 | Identical total times | Shared rank, deterministic display order |
+| 250 people in the VC at a milestone | Message split across embed fields; never exceeds Discord's limits |
 | Bot offline for a while | Timer keeps running (timestamps), the unobserved window is **not** credited to anyone and is reported in the progress message |
+| Discord API hiccup on a message | Logged and retried on the next cycle; the event state is untouched |
 
 Two deliberate policy calls worth knowing:
 
-* **Downtime does not fail the event** (the bot can't prove the VC emptied while it was blind), but
-  nobody earns leaderboard time for that window, and the gap is shown in the progress/status output.
+* **Downtime does not fail the event** (the bot cannot prove the VC emptied while it was blind),
+  but nobody earns leaderboard time for that window, and the gap is shown in the progress/status
+  output.
 * If the VC is empty **in the same tick** a milestone would land, the failure wins — nobody was
   present to claim the reward.
 
@@ -178,10 +227,13 @@ Two deliberate policy calls worth knowing:
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest                 # 63 tests, no Discord connection required
-python tools/simulate.py         # dry-run a full 160h event and print every message
+python -m pytest                        # 86 tests, no Discord connection required
+python -m pyflakes hell launcher tests  # lint
+python tools/simulate.py                # dry-run a full 160h event, printing every message
 python tools/simulate.py --fail-at 40   # dry-run a run that dies after 40 hours
 ```
 
-`tools/simulate.py` drives the real engine and the real message renderers offline, which is the
-fastest way to review wording or verify a rule change end to end.
+`tools/simulate.py` drives the real engine and the real message renderers offline — the fastest way
+to review wording or verify a rule change end to end. A ready-made GitHub Actions workflow (tests on Python
+3.10–3.12, lint, and both simulation paths) is in `deploy/github-actions-ci.yml` — copy it to
+`.github/workflows/ci.yml` to enable it.

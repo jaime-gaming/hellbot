@@ -27,7 +27,7 @@ def test_command_group_exposes_the_expected_subcommands(bot, config, engine):
     cog = HellCommands(bot, config, engine, monitor)
 
     names = {cmd.name for cmd in cog.app_command.commands}  # type: ignore[union-attr]
-    assert names == {"start", "status", "leaderboard", "stop", "reset"}
+    assert names == {"start", "status", "leaderboard", "milestones", "stop", "reset"}
     assert cog.app_command.name == "hell"  # type: ignore[union-attr]
 
 
@@ -38,8 +38,8 @@ def test_restricted_commands_carry_a_check(bot, config, engine):
     by_name = {c.name: c for c in cog.app_command.commands}  # type: ignore[union-attr]
     for restricted in ("start", "stop", "reset"):
         assert by_name[restricted].checks, f"/hell {restricted} must be host-restricted"
-    assert not by_name["status"].checks
-    assert not by_name["leaderboard"].checks
+    for public in ("status", "leaderboard", "milestones"):
+        assert not by_name[public].checks
 
 
 def test_reset_phrase_is_strong():

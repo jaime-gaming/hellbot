@@ -11,10 +11,9 @@ from discord.ext import commands
 
 from .config import Config
 from .engine import HellEngine, StartError
-from .leaderboard import render_leaderboard
-from .milestones import TOTAL_SECONDS
+from .milestones import MILESTONES, TOTAL_SECONDS
 from .models import EventStatus
-from .monitor import VoiceMonitor, participant_ref
+from .monitor import VoiceMonitor
 from .timeutil import discord_ts, format_hm, now_ts
 
 log = logging.getLogger("hell.commands")
@@ -192,7 +191,15 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         await interaction.response.defer(thinking=True)
         if self.engine.status is EventStatus.IDLE:
             await interaction.followup.send(
-                "💤 **Welcome to Hell is not running.** A `@gamenight host` can start it with `/hell start`."
+                embed=discord.Embed(
+                    title="💤 Welcome to Hell is not running",
+                    description=(
+                        "No event has been started yet.\n"
+                        f"A <@&{self.config.gamenight_host_role_id}> can start one with `/hell start`.\n\n"
+                        f"Target VC: <#{self.config.voice_channel_id}> • Duration: **160 hours**"
+                    ),
+                    color=0x2F3136,
+                )
             )
             return
 
@@ -202,7 +209,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             if collected is not None:
                 count = len(collected[0])
         snap = self.engine.snapshot(participants=count)
-        await interaction.followup.send(self.announcer.render_status(snap))
+        await interaction.followup.send(embed=self.announcer.build_status(snap))
 
     # ----------------------------------------------------------- leaderboard
 
@@ -212,12 +219,39 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         await interaction.response.defer(thinking=True)
         entries = self.engine.leaderboard()
         frozen = self.engine.status.is_terminal
-        if not entries:
-            await interaction.followup.send(
-                render_leaderboard([], empty_note="_No participant has earned VC time yet._")
+        title = "🏆 WELCOME TO HELL — FINAL LEADERBOARD" if frozen else "🏆 WELCOME TO HELL — LEADERBOARD"
+        embeds = self.announcer.build_leaderboard_embeds(entries, title=title)
+        if frozen and embeds:
+            embeds[-1].set_footer(text="These rankings are frozen; the event is over.")
+        await interaction.followup.send(embeds=embeds)
+
+    # ------------------------------------------------------------ milestones
+
+    @app_commands.command(name="milestones", description="Show every milestone, its reward and who claimed it.")
+    @app_commands.guild_only()
+    async def milestones(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(thinking=True)
+        records = {r.hours: r for r in self.engine.milestone_records()}
+        elapsed = self.engine.elapsed()
+        embed = discord.Embed(
+            title="🏁 WELCOME TO HELL — MILESTONES",
+            description="Milestones follow the **global event timer**, not individual user time.",
+            color=0xFF4500,
+        )
+        for m in MILESTONES:
+            record = records.get(m.hours)
+            if record:
+                state = f"✅ reached {discord_ts(record.reached_ts, 'f')} — {len(record.members)} eligible"
+            elif self.engine.is_running:
+                state = f"⏳ in {format_hm(max(0.0, m.seconds - elapsed))}"
+            else:
+                state = "—"
+            embed.add_field(
+                name=f"{m.hours}h — {m.short_reward or m.reward}",
+                value=f"{self.config.reward_text(m.hours, m.reward)}\n{state}",
+                inline=False,
             )
-            return
-        await interaction.followup.send(self.announcer.render_leaderboard_message(entries, frozen))
+        await interaction.followup.send(embed=embed)
 
     # ------------------------------------------------------------------ stop
 

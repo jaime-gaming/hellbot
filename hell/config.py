@@ -9,6 +9,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .paths import env_path, resolve
+
 try:  # optional dependency, only needed for local .env files
     from dotenv import load_dotenv
 except Exception:  # pragma: no cover - dotenv is in requirements but stay safe
@@ -78,12 +80,15 @@ class Config:
     startup_grace: float = 15.0          # ignore VC observations right after boot
     max_tick_credit: float = 5.0         # cap per-tick leaderboard credit (downtime guard)
     require_occupants_to_start: bool = True
+    heartbeat_minutes: float = 15.0
     log_level: str = "INFO"
 
     @classmethod
-    def from_env(cls, env_file: str | os.PathLike[str] | None = ".env") -> "Config":
-        if env_file:
-            load_dotenv(env_file, override=False)
+    def from_env(cls, env_file: str | os.PathLike[str] | None = None) -> "Config":
+        """Load configuration from the environment (and `.env` next to the app)."""
+        target = Path(env_file) if env_file is not None else env_path()
+        if target and target.exists():
+            load_dotenv(target, override=False)
 
         token = os.getenv("DISCORD_TOKEN", "").strip()
         if not token:
@@ -100,12 +105,13 @@ class Config:
             hellist_role_id=_int_env("HELLIST_ROLE_ID"),
             hell_master_role_id=_int_env("HELL_MASTER_ROLE_ID"),
             cool_people_role_id=_int_env("COOL_PEOPLE_ROLE_ID"),
-            database_path=Path(os.getenv("DATABASE_PATH", "data/hell.sqlite3").strip() or "data/hell.sqlite3"),
+            database_path=resolve(os.getenv("DATABASE_PATH", "").strip() or "data/hell.sqlite3"),
             monitor_interval=_float_env("MONITOR_INTERVAL", 1.0),
             progress_interval=_float_env("PROGRESS_INTERVAL", 10.0),
             startup_grace=_float_env("STARTUP_GRACE_SECONDS", 15.0),
             max_tick_credit=_float_env("MAX_TICK_CREDIT_SECONDS", 5.0),
             require_occupants_to_start=_bool_env("REQUIRE_OCCUPANTS_TO_START", True),
+            heartbeat_minutes=_float_env("HEARTBEAT_MINUTES", 15.0),
             log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO",
         )
 

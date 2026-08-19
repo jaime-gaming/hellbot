@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from hell.models import EventStatus, LeaderboardEntry, ParticipantRef
 from hell.storage import Store
 from tests.conftest import T0, obs, start
@@ -71,3 +69,22 @@ def test_reset_all_clears_the_database(store, engine):
     assert store.load_state().status is EventStatus.IDLE
     assert store.get_user_times(uid) == []
     assert store.get_presence(uid) == []
+
+
+def test_presence_is_only_rewritten_when_it_changes(engine, store, monkeypatch):
+    """Over a 160h run this saves ~576k pointless writes."""
+    calls = {"n": 0}
+    original = store.replace_presence
+
+    def counting(*args, **kwargs):
+        calls["n"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(store, "replace_presence", counting)
+    start(engine, T0, 1, 2)
+    baseline = calls["n"]                        # the initial snapshot at /hell start
+    for i in range(1, 31):
+        engine.tick(obs(T0 + i, 1, 2))          # stable membership -> no writes
+    assert calls["n"] == baseline
+    engine.tick(obs(T0 + 31, 1))                 # someone leaves -> one write
+    assert calls["n"] == baseline + 1

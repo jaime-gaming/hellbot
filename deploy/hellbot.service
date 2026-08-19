@@ -1,0 +1,29 @@
+# Copy to /etc/systemd/system/hellbot.service, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now hellbot
+#   journalctl -u hellbot -f
+
+[Unit]
+Description=Welcome to Hell — Discord event bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hellbot
+WorkingDirectory=/opt/hellbot
+EnvironmentFile=/opt/hellbot/.env
+ExecStart=/opt/hellbot/.venv/bin/python /opt/hellbot/bot.py
+Restart=always
+RestartSec=10
+# The event timer is timestamp-based, so restarts never lose progress.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/opt/hellbot/data /opt/hellbot/logs
+
+[Install]
+WantedBy=multi-user.target

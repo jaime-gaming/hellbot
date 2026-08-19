@@ -9,3 +9,8 @@ data/
 *.sqlite3-shm
 .pytest_cache/
 .mypy_cache/
+logs/
+build/
+dist/
+*.spec.bak
+.deps-ok

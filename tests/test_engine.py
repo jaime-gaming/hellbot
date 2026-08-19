@@ -7,7 +7,7 @@ import pytest
 from hell.engine import EventCompleted, EventFailed, HellEngine, MilestoneReached, Observation, StartError
 from hell.milestones import TOTAL_SECONDS
 from hell.models import EventStatus
-from tests.conftest import HOUR, T0, obs, start, users
+from tests.conftest import HOUR, T0, obs, start
 
 
 # ------------------------------------------------------------------- start

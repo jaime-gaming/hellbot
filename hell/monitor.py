@@ -53,6 +53,10 @@ class VoiceMonitor:
         self._ready_at: Optional[float] = None
         self._kick_attempts: dict[int, float] = {}
         self._lock = asyncio.Lock()  # serialises ticks; no milestone can race
+        self._blind_since: Optional[float] = None
+        self._blind_logged = False
+        self._last_heartbeat = 0.0
+        self._terminal_rendered = False
         self._monitor_loop.change_interval(seconds=max(0.25, config.monitor_interval))
         self._progress_loop.change_interval(seconds=max(1.0, config.progress_interval))
 
@@ -98,11 +102,13 @@ class VoiceMonitor:
     async def collect(self) -> Optional[tuple[list[ParticipantRef], list[discord.Member]]]:
         """Return `(valid humans, clankers to kick)` or None if untrusted."""
         if not self.bot.is_ready() or self.bot.is_closed():
+            self._note_blind("gateway not ready")
             return None
         channel = self.voice_channel()
         if channel is None:
-            log.warning("Target voice channel %s not in cache yet", self.config.voice_channel_id)
+            self._note_blind(f"voice channel {self.config.voice_channel_id} not visible")
             return None
+        self._note_sighted()
 
         humans: list[ParticipantRef] = []
         clankers: list[discord.Member] = []
@@ -115,9 +121,37 @@ class VoiceMonitor:
             humans.append(participant_ref(member))
         return humans, clankers
 
+    def _note_blind(self, reason: str) -> None:
+        """Remember that the bot currently cannot observe the VC."""
+        now = now_ts()
+        if self._blind_since is None:
+            self._blind_since = now
+        elif not self._blind_logged and (now - self._blind_since) > 30:
+            self._blind_logged = True
+            log.error(
+                "Cannot observe the target VC for %.0fs (%s). The event timer keeps running, "
+                "but presence is not being verified.",
+                now - self._blind_since,
+                reason,
+            )
+
+    def _note_sighted(self) -> None:
+        if self._blind_since is not None:
+            blind_for = now_ts() - self._blind_since
+            if blind_for > 5:
+                log.info("Voice channel visible again after %.0fs", blind_for)
+            self._blind_since = None
+            self._blind_logged = False
+
+    @property
+    def blind_seconds(self) -> float:
+        return 0.0 if self._blind_since is None else now_ts() - self._blind_since
+
     async def kick_clankers(self, members: Sequence[discord.Member]) -> None:
         """Disconnect `@clanker` users from the VC immediately."""
         now = now_ts()
+        if len(self._kick_attempts) > 256:  # keep the cooldown map from growing forever
+            self._kick_attempts = {k: v for k, v in self._kick_attempts.items() if now - v < 60}
         for member in members:
             last = self._kick_attempts.get(member.id, 0.0)
             if now - last < 3.0:  # avoid hammering the API if a kick is failing
@@ -165,14 +199,38 @@ class VoiceMonitor:
         events = self.engine.tick(Observation(now=now_ts(), participants=tuple(humans)))
         for event in events:
             await self.dispatch(event)
+        self._heartbeat(len(humans))
+
+    def _heartbeat(self, participants: int) -> None:
+        """Periodic proof-of-life in the log file, useful when running headless."""
+        interval = max(60.0, self.config.heartbeat_minutes * 60.0)
+        now = now_ts()
+        if now - self._last_heartbeat < interval:
+            return
+        self._last_heartbeat = now
+        snap = self.engine.snapshot(now=now, participants=participants)
+        log.info(
+            "Heartbeat: %s | %s / %s (%.1f%%) | %d in VC | next milestone: %s",
+            snap.status.value,
+            format_hm(snap.elapsed),
+            format_hm(snap.total),
+            snap.fraction * 100,
+            participants,
+            f"{snap.upcoming.hours}h" if snap.upcoming else "none",
+        )
 
     @tasks.loop(seconds=10.0)
     async def _progress_loop(self) -> None:
         state = self.engine.state
         if state.status is EventStatus.IDLE:
             return
-        if state.status.is_terminal and state.progress_message_id is None:
-            return
+        if state.status.is_terminal:
+            # Render the final state exactly once, then stop burning API calls.
+            if self._terminal_rendered or state.progress_message_id is None:
+                return
+            self._terminal_rendered = True
+        else:
+            self._terminal_rendered = False
         count = len(self.engine.last_participants)
         await self.announcer.update_progress(self.engine.snapshot(participants=count))
 
@@ -202,7 +260,10 @@ class VoiceMonitor:
             await self._final_progress()
 
     async def _final_progress(self) -> None:
-        await self.announcer.update_progress(self.engine.snapshot(participants=len(self.engine.last_participants)))
+        self._terminal_rendered = True
+        await self.announcer.update_progress(
+            self.engine.snapshot(participants=len(self.engine.last_participants)), force=True
+        )
 
     # -------------------------------------------------------------- recovery
 
@@ -224,4 +285,5 @@ class VoiceMonitor:
             log.warning("Re-announcing %d milestone(s) that were never posted", len(pending))
             await self.announcer.announce_pending(pending)
         self.announcer.forget_progress_message()
-        await self.announcer.update_progress(self.engine.snapshot())
+        self._terminal_rendered = False
+        await self.announcer.update_progress(self.engine.snapshot(), force=True)

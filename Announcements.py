@@ -66,6 +66,8 @@ DIVIDER = "━━━━━━━━━━━━━━━━━━━━━━━
 #  flavour      : italic closing line (optional, use "" for none)
 #  reward       : full reward text shown in the announcement
 #  short_reward : compact version used in lists and summaries
+#  role_token   : the exact text to swap for a real @role mention (optional)
+#  role_env     : which role ID in .env that mention comes from (optional)
 
 VERITIES_URL = "https://www.roblox.com/games/138268356635577/Find-the-Verities"
 
@@ -77,6 +79,8 @@ MILESTONES = (
         "flavour": "The first gate is behind you. 128 hours to go — the easy part is over.",
         "reward": "@hell (limited)",
         "short_reward": "@hell",
+        "role_token": "@hell",
+        "role_env": "HELL_ROLE_ID",
     },
     {
         "hours": 64,
@@ -95,6 +99,8 @@ MILESTONES = (
         "flavour": "Three gates cleared. Quitting now would be a tragedy for everyone involved.",
         "reward": "@hell-ist (limited)",
         "short_reward": "@hell-ist",
+        "role_token": "@hell-ist",
+        "role_env": "HELLIST_ROLE_ID",
     },
     {
         "hours": 128,
@@ -113,6 +119,8 @@ MILESTONES = (
         "flavour": "There is nothing left to survive. Hell has been conquered.",
         "reward": "@hell master (limited)",
         "short_reward": "@hell master",
+        "role_token": "@hell master",
+        "role_env": "HELL_MASTER_ROLE_ID",
     },
 )
 

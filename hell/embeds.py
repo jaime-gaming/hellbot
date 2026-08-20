@@ -30,7 +30,7 @@ from .engine import (
     Snapshot,
 )
 from .leaderboard import format_entry, top_n
-from .milestones import MILESTONES, get_milestone
+from .milestones import MILESTONES
 from .models import EventStatus, LeaderboardEntry, MilestoneRecord, ParticipantRef
 from .texts import TEXT, say
 from .timeutil import discord_ts, format_hm, format_hms, milestone_bar
@@ -189,6 +189,17 @@ class EmbedFactory:
 
     def __init__(self, config: Config):
         self.config = config
+
+    # ------------------------------------------------------------- rewards
+
+    def reward(self, milestone, *, short: bool = False) -> str:
+        """Reward text with the role rendered as a real mention when possible."""
+        text = (milestone.short_reward or milestone.reward) if short else milestone.reward
+        token, env = milestone.role_token, milestone.role_env
+        if not token or not env or token not in text:
+            return text
+        role_id = self.config.role_id(env)
+        return text.replace(token, f"<@&{role_id}>") if role_id else text
 
     # ------------------------------------------------------------- styling
 
@@ -352,7 +363,7 @@ class EmbedFactory:
                 say(
                     TEXT.START_MILESTONE_LINE,
                     hours=m.hours,
-                    reward=self.config.reward_text(m.hours, m.reward),
+                    reward=self.reward(m),
                 )
                 for m in MILESTONES
             ),
@@ -425,7 +436,7 @@ class EmbedFactory:
         fields = dict(
             hours=m.hours,
             remaining_hours=160 - m.hours,
-            reward=self.config.reward_text(m.hours, m.reward),
+            reward=self.reward(m),
             member_count=len(event.members),
             reached_at=discord_ts(event.reached_ts, "F"),
             reached_relative=discord_ts(event.reached_ts, "R"),
@@ -557,9 +568,9 @@ class EmbedFactory:
         fields = dict(
             vc=f"<#{self.config.voice_channel_id}>",
             completed_at=discord_ts(event.completed_ts, "F"),
-            final_reward=self.config.reward_text(160, get_milestone(160).reward),
+            final_reward=self.reward(MILESTONES[-1]),
             all_rewards=", ".join(
-                self.config.reward_text(m.hours, m.short_reward or m.reward) for m in MILESTONES
+                self.reward(m, short=True) for m in MILESTONES
             ),
             bonus_role=self.config.role_mention(
                 self.config.cool_people_role_id, TEXT.TOP3_BONUS_ROLE

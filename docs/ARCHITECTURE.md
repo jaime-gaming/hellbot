@@ -93,7 +93,7 @@ Migrations are additive and run at startup (`Store._migrate`).
 
 ## Testing
 
-`tests/` mirrors the layers — 319 tests, 88% statement coverage, no network:
+`tests/` mirrors the layers — no network, no Discord token, no display needed:
 
 | Test file | Covers |
 |---|---|
@@ -103,6 +103,8 @@ Migrations are additive and run at startup (`Store._migrate`).
 | `test_announcer`, `test_announcements_file` | embed limits, and that `Announcements.py` really drives every message |
 | `test_integration`, `test_command_flows`, `test_bot`, `test_monitor` | the Discord edge through fakes: monitor → engine → announcer → channel, every slash command callback, event routing |
 | `test_gui`, `test_launcher`, `test_logging`, `test_logsink` | the desktop launcher (headless via `tests/faketk.py`) and logging |
+| `test_deployment`, `test_consistency` | the container actually starts from the files it copies; config, commands and docs cannot drift apart |
+| `test_resilience` | the "Discord said no" paths: forbidden channels, rate limits, deleted messages, restarts mid-roll-call |
 
 ```bash
 ./tools/check.sh          # compile, pyflakes, ruff, mypy, pytest, simulations

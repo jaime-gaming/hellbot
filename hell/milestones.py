@@ -66,6 +66,8 @@ def _build() -> list[Milestone]:
                 blurb=str(entry["blurb"]),
                 short_reward=str(entry.get("short_reward", "")),
                 flavour=str(entry.get("flavour", "")),
+                role_token=str(entry.get("role_token", "")),
+                role_env=str(entry.get("role_env", "")),
             )
         )
     return sorted(out, key=lambda m: m.hours)

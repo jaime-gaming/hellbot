@@ -179,16 +179,17 @@ class Config:
         """Mention a reward role if its ID is configured, else show plain text."""
         return f"<@&{role_id}>" if role_id else fallback
 
-    def reward_text(self, hours: int, default: str) -> str:
-        """Swap the plain `@role` text of a milestone reward for a real mention."""
-        mapping = {
-            32: (self.hell_role_id, "@hell"),
-            96: (self.hellist_role_id, "@hell-ist"),
-            160: (self.hell_master_role_id, "@hell master"),
-        }
-        if hours not in mapping:
-            return default
-        role_id, plain = mapping[hours]
-        if not role_id:
-            return default
-        return default.replace(plain, f"<@&{role_id}>")
+    def role_id(self, env_name: str) -> int | None:
+        """Look a configured role ID up by its .env name.
+
+        Lets the milestone table in Announcements.py say which role a reward
+        maps to, instead of the wording being duplicated in code.
+        """
+        return {
+            "GAMENIGHT_HOST_ROLE_ID": self.gamenight_host_role_id,
+            "CLANKER_ROLE_ID": self.clanker_role_id,
+            "HELL_ROLE_ID": self.hell_role_id,
+            "HELLIST_ROLE_ID": self.hellist_role_id,
+            "HELL_MASTER_ROLE_ID": self.hell_master_role_id,
+            "COOL_PEOPLE_ROLE_ID": self.cool_people_role_id,
+        }.get(env_name)

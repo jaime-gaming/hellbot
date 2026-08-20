@@ -189,7 +189,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
                     hours=m.hours,
                     short_reward=m.short_reward or m.reward,
                 ),
-                value=f"{self.config.reward_text(m.hours, m.reward)}\n{state}",
+                value=f"{self.announcer.embeds.reward(m)}\n{state}",
                 inline=False,
             )
         await interaction.followup.send(embed=embed)

@@ -325,3 +325,45 @@ def test_event_length_cannot_change_mid_run(tmp_path, monkeypatch, caplog):
     assert ok                                          # the wording still loads
     assert milestones.TOTAL_SECONDS == before          # …but the clock does not move
     assert "restart the bot to change the event length" in caplog.text.lower()
+
+
+# --------------------------------------------------- rewards and mentions
+
+def test_renaming_a_reward_keeps_its_role_mention(tmp_path, config):
+    """Regression: the mention swap used to be hardcoded against the wording.
+
+    Rename a reward in Announcements.py and the role mention must follow.
+    """
+    from hell.embeds import EmbedFactory
+
+    write_override(
+        tmp_path,
+        'MILESTONES = ({"hours": 32, "title": "t", "blurb": "b", "flavour": "",'
+        ' "reward": "@brand-new-role for everyone", "short_reward": "@brand-new-role",'
+        ' "role_token": "@brand-new-role", "role_env": "HELL_ROLE_ID"},)\n'
+        'TOP3_BONUS_ROLE = "@cool people :D"\n',
+    )
+    config.hell_role_id = 12345
+    factory = EmbedFactory(config)
+
+    assert factory.reward(milestones.get_milestone(32)) == "<@&12345> for everyone"
+    assert factory.reward(milestones.get_milestone(32), short=True) == "<@&12345>"
+
+
+def test_a_reward_without_a_role_stays_plain_text(tmp_path, config):
+    from hell.embeds import EmbedFactory
+
+    write_override(
+        tmp_path,
+        'MILESTONES = ({"hours": 64, "title": "t", "blurb": "b", "flavour": "",'
+        ' "reward": "a limited Verity", "short_reward": "Verity"},)\n'
+        'TOP3_BONUS_ROLE = "@cool people :D"\n',
+    )
+    assert EmbedFactory(config).reward(milestones.get_milestone(64)) == "a limited Verity"
+
+
+def test_an_unconfigured_role_id_falls_back_to_the_text(config):
+    from hell.embeds import EmbedFactory
+
+    config.hell_role_id = None
+    assert "@hell" in EmbedFactory(config).reward(milestones.get_milestone(32))

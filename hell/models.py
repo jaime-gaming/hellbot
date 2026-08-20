@@ -35,6 +35,8 @@ class Milestone:
     blurb: str
     short_reward: str = ""
     flavour: str = ""
+    role_token: str = ""     # text to replace with a real mention
+    role_env: str = ""       # which .env role ID that mention uses
 
     @property
     def seconds(self) -> float:

@@ -12,7 +12,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10%20|%203.11%20|%203.12-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/discord.py-2.3+-5865F2?logo=discord&logoColor=white" alt="discord.py 2.3+">
-  <img src="https://img.shields.io/badge/tests-332%20passing-3fb950" alt="332 tests">
+  <img src="https://img.shields.io/badge/tests-passing-3fb950" alt="tests passing">
   <img src="https://img.shields.io/badge/coverage-88%25-3fb950" alt="88% coverage">
   <img src="https://img.shields.io/badge/ruff%20·%20mypy-clean-e25822" alt="ruff and mypy clean">
 </p>
@@ -37,7 +37,7 @@ empties and nobody returns within the grace period, the run is dead — permanen
 * **Live log stream** DM'd to the operator: joins, leaves, kicks, milestones, errors
 * **All wording in one file** — [`Announcements.py`](Announcements.py) — hot-reloadable
 * A **desktop control panel** (no console) and a one-file **`.exe`** build
-* 332 tests, 88% coverage, ruff + mypy clean
+* A large test suite (engine, persistence, Discord edge, GUI, deployment) — ruff + mypy clean
 
 ### What it looks like in Discord
 
@@ -179,6 +179,7 @@ in the log, and in the launcher's Dashboard.
 | `/hell leaderboard` | everyone | Current (or frozen final) leaderboard: Top 3 on the podium, everyone else below. |
 | `/hell alivecheck` | `@gamenight host` | Runs a roll call immediately instead of waiting for the random timer. |
 | `/hell reloadmessages` | `@gamenight host` | Re-read `Announcements.py` so edited wording applies immediately. |
+| `/hell doctor` | `@gamenight host` | Self-check: preflight results, live state, background tasks and the (redacted) configuration. |
 | `/hell logs` | `@gamenight host` | Control the live log stream: `status`, `on`, `off`, `test`, `flush`, and the minimum severity. |
 | `/hell mystats` | everyone | Your own stat card (time survived, rank, rewards) — handy if your DMs are closed. |
 | `/hell milestones` | everyone | All five milestones, their rewards, when each was reached and how many users were eligible. |
@@ -445,9 +446,9 @@ Two deliberate policy calls worth knowing:
 ```bash
 pip install -r requirements-dev.txt
 
-./tools/check.sh          # compile + pyflakes + ruff + mypy + 319 tests + simulations
+./tools/check.sh          # compile + pyflakes + ruff + mypy + tests + simulations
 ./tools/check.sh --fast   # same, without the simulations
-python -m pytest          # tests only — no Discord connection required (88% coverage)
+python -m pytest          # tests only — no Discord connection required
 
 python tools/simulate.py              # print every message of a full 160h run, offline
 python tools/simulate.py --fail-at 40 # …of a run that dies after 40 hours

@@ -382,6 +382,10 @@ CANCELLED.
 | Restart mid-grace-window | Window resumes from the persisted `grace_started_ts` |
 | Event ends while some DMs are unsent | `dm_log` resumes delivery on the next start, without duplicates |
 | Contestant has DMs closed | Recorded as blocked, reported in the summary, `/hell mystats` still works |
+| Slow Discord API during a roll call | Kicks/announcements run off the 1-second loop, so VC monitoring never stalls |
+| A milestone edited into a broken shape | Rejected with a readable reason; the previous table stays live |
+| Event length edited mid-run | Refused and logged — the running clock is never reshaped |
+| No internet / bad token / missing intent | Clean one-line error and a distinct exit code, full traceback in `logs/` |
 | Rapid join/leave churn | 1-second sampling keeps per-user totals correct |
 | Bot restarts mid-event | State reloaded from SQLite; elapsed = `now - start_ts`; nothing resets |
 | Bot restarts around a milestone | Atomic DB claim prevents duplicates; unsent announcements are re-posted on boot |
@@ -409,7 +413,8 @@ Two deliberate policy calls worth knowing:
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest                        # 197 tests, no Discord connection required
+python -m pytest                        # 223 tests, no Discord connection required
+python -m mypy --ignore-missing-imports hell launcher   # type check
 python -m pyflakes hell launcher tests  # lint
 python tools/simulate.py                # dry-run a full 160h event, printing every message
 python tools/simulate.py --fail-at 40   # dry-run a run that dies after 40 hours

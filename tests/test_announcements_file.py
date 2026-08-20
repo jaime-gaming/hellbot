@@ -145,7 +145,7 @@ def test_editing_the_progress_message(tmp_path, announcer, engine):
 def test_editing_the_leaderboard_format(tmp_path):
     write_override(
         tmp_path,
-        'MILESTONES = ()\n'
+        'MILESTONES = ({"hours": 160, "title": "t", "blurb": "b", "flavour": "", "reward": "r", "short_reward": "r"},)\n'
         'LEADERBOARD_ENTRY = "{medal} {who} :: {time}"\n'
         'LEADERBOARD_MEDALS = {1: "[1st]", 2: "[2nd]", 3: "[3rd]"}\n'
         'LEADERBOARD_RANK = "[{rank}]"\n',
@@ -158,7 +158,7 @@ def test_editing_the_leaderboard_format(tmp_path):
 def test_editing_the_stat_card(tmp_path):
     write_override(
         tmp_path,
-        'MILESTONES = ()\n'
+        'MILESTONES = ({"hours": 160, "title": "t", "blurb": "b", "flavour": "", "reward": "r", "short_reward": "r"},)\n'
         'TOP3_BONUS_ROLE = "@bonus"\n'
         'CARD_BODY = "SURVIVED {survived} / RANK {rank} / {reward_count}"\n'
         'CARD_REWARD_LINE = "- {reward}"\n'
@@ -187,7 +187,7 @@ def test_editing_the_alive_check_headline(tmp_path, config, store):
 
     write_override(
         tmp_path,
-        'MILESTONES = ()\n'
+        'MILESTONES = ({"hours": 160, "title": "t", "blurb": "b", "flavour": "", "reward": "r", "short_reward": "r"},)\n'
         'ALIVE_CHECK_TEXT = "WAKE UP! Type Yes"\n'
         'ALIVE_CHECK_INSTRUCTIONS = "you have {minutes} minutes"\n',
     )
@@ -273,3 +273,55 @@ def test_bad_placeholder_does_not_raise():
 def test_message_count_and_source_are_reportable():
     assert texts.message_count() > 50
     assert "Announcements.py" in texts.source()
+
+
+# --------------------------------------------------- milestone table safety
+
+def test_empty_milestone_table_is_rejected(tmp_path, monkeypatch):
+    broken = tmp_path / "Announcements.py"
+    broken.write_text("MILESTONES = ()\n", encoding="utf-8")
+    monkeypatch.setattr(texts, "_candidates", lambda: [broken])
+    ok, detail = texts.reload()
+    assert not ok and "empty" in detail
+    assert milestones.MILESTONES                      # previous table intact
+
+
+@pytest.mark.parametrize(
+    "table,expected",
+    [
+        ('({"hours": "soon", "title": "t", "blurb": "b", "reward": "r"},)', "non-numeric"),
+        ('({"title": "t", "blurb": "b", "reward": "r"},)', "no 'hours'"),
+        ('({"hours": 32, "blurb": "b", "reward": "r"},)', "missing 'title'"),
+        ('({"hours": 32, "title": "t", "blurb": "b", "reward": ""},)', "missing 'reward'"),
+        ('({"hours": -5, "title": "t", "blurb": "b", "reward": "r"},)', "hours > 0"),
+        ('({"hours": 32, "title": "a", "blurb": "b", "reward": "r"},'
+         ' {"hours": 32, "title": "c", "blurb": "d", "reward": "e"},)', "twice"),
+        ('("just a string",)', "must be a"),
+    ],
+)
+def test_broken_milestone_entries_are_explained(tmp_path, monkeypatch, table, expected):
+    broken = tmp_path / "Announcements.py"
+    broken.write_text(f"MILESTONES = {table}\n", encoding="utf-8")
+    monkeypatch.setattr(texts, "_candidates", lambda: [broken])
+    ok, detail = texts.reload()
+    assert not ok
+    assert expected in detail
+    assert len(milestones.MILESTONES) == 5            # the real table survived
+
+
+def test_event_length_cannot_change_mid_run(tmp_path, monkeypatch, caplog):
+    """Editing the last milestone must not silently reshape a running event."""
+    import logging
+
+    before = milestones.TOTAL_SECONDS
+    override = tmp_path / "Announcements.py"
+    override.write_text(
+        'MILESTONES = ({"hours": 12, "title": "t", "blurb": "b", "reward": "r"},)\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(texts, "_candidates", lambda: [override])
+    with caplog.at_level(logging.ERROR, logger="hell.milestones"):
+        ok, _ = texts.reload()
+    assert ok                                          # the wording still loads
+    assert milestones.TOTAL_SECONDS == before          # …but the clock does not move
+    assert "restart the bot to change the event length" in caplog.text.lower()

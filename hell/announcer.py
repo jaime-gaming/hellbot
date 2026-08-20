@@ -59,8 +59,13 @@ MAX_EMBEDS_PER_MESSAGE = 10
 # the bot can be tuned from that one file.
 
 
-def color(name: str, fallback: int = 0xE25822) -> int:
-    return int(getattr(TEXT, f"COLOR_{name.upper()}", fallback))
+def theme_color(name: str, fallback: int = 0xE25822) -> int:
+    """Look a colour up in Announcements.py (`COLOR_<NAME>`)."""
+    try:
+        return int(getattr(TEXT, f"COLOR_{name.upper()}", fallback))
+    except (TypeError, ValueError):  # someone typed a colour name instead of a number
+        log.warning("COLOR_%s in Announcements.py is not a number — using the default", name.upper())
+        return fallback
 
 
 def status_emoji(status: EventStatus) -> str:
@@ -68,7 +73,7 @@ def status_emoji(status: EventStatus) -> str:
 
 
 def status_color(status: EventStatus) -> int:
-    return color(status.value, color("RUNNING"))
+    return theme_color(status.value, theme_color("RUNNING"))
 
 # --------------------------------------------------------------- text tools
 
@@ -204,6 +209,9 @@ class Announcer:
         mention_everyone: bool = False,
     ) -> Optional[discord.Message]:
         """Post one or more embeds, chunked into as many messages as needed."""
+        batch = list(embeds)
+        if not batch and not content:
+            return None  # Discord rejects a message with neither content nor embeds
         chan = await self.channel()
         if chan is None:
             return None
@@ -211,7 +219,6 @@ class Announcer:
             everyone=mention_everyone, users=False, roles=False, replied_user=False
         )
         first: Optional[discord.Message] = None
-        batch = list(embeds) or []
         try:
             for index in range(0, max(1, len(batch)), MAX_EMBEDS_PER_MESSAGE):
                 slice_ = batch[index : index + MAX_EMBEDS_PER_MESSAGE]
@@ -314,7 +321,7 @@ class Announcer:
                 inline=False,
             )
         if snap.grace_open:
-            embed.colour = discord.Colour(color("GRACE"))
+            embed.colour = discord.Colour(theme_color("GRACE"))
             embed.add_field(
                 name=TEXT.PROGRESS_GRACE_FIELD,
                 value=say(
@@ -428,7 +435,7 @@ class Announcer:
         embed = discord.Embed(
             title=say(TEXT.START_TITLE, **fields),
             description=say(TEXT.START_DESCRIPTION, **fields),
-            color=color("RUNNING"),
+            color=theme_color("RUNNING"),
         )
         embed.add_field(
             name=say(TEXT.START_RULES_FIELD, **fields),
@@ -486,7 +493,7 @@ class Announcer:
         embed = discord.Embed(
             title=say(TEXT.GRACE_WARNING_TITLE, **fields),
             description=say(TEXT.GRACE_WARNING_DESCRIPTION, **fields),
-            color=color("GRACE"),
+            color=theme_color("GRACE"),
         )
         embed.add_field(
             name=say(TEXT.GRACE_WARNING_DEADLINE_FIELD, **fields),
@@ -517,7 +524,7 @@ class Announcer:
         embed = discord.Embed(
             title=say(TEXT.GRACE_RECOVERED_TITLE, **fields),
             description=say(TEXT.GRACE_RECOVERED_DESCRIPTION, **fields),
-            color=color("RUNNING"),
+            color=theme_color("RUNNING"),
         )
         add_chunked_field(
             embed,
@@ -551,7 +558,7 @@ class Announcer:
         embed = discord.Embed(
             title=m.title,
             description=description.strip(),
-            color=color("COMPLETED") if m.hours == 160 else color("MILESTONE"),
+            color=theme_color("COMPLETED") if m.hours == 160 else theme_color("MILESTONE"),
         )
         embed.add_field(
             name=say(TEXT.MILESTONE_REWARD_FIELD, **fields),
@@ -629,7 +636,7 @@ class Announcer:
         embed = discord.Embed(
             title=say(TEXT.FAILURE_TITLE, **fields),
             description=say(TEXT.FAILURE_DESCRIPTION, **fields),
-            color=color("FAILED"),
+            color=theme_color("FAILED"),
         )
         embed.add_field(
             name=say(TEXT.FAILURE_SURVIVED_FIELD, **fields),
@@ -651,7 +658,7 @@ class Announcer:
         )
         embed.set_footer(text=say(TEXT.FAILURE_FOOTER, **fields))
         return [embed] + self.build_leaderboard_embeds(
-            event.leaderboard, title=TEXT.FAILURE_LEADERBOARD_TITLE, color=color("FAILED")
+            event.leaderboard, title=TEXT.FAILURE_LEADERBOARD_TITLE, color=theme_color("FAILED")
         )
 
     def render_failure(self, event: EventFailed) -> str:
@@ -669,7 +676,7 @@ class Announcer:
         embed = discord.Embed(
             title=say(TEXT.CANCELLED_TITLE, **fields),
             description=say(TEXT.CANCELLED_DESCRIPTION, **fields),
-            color=color("CANCELLED"),
+            color=theme_color("CANCELLED"),
         )
         embed.add_field(
             name=say(TEXT.CANCELLED_CLOCK_FIELD, **fields),
@@ -681,7 +688,7 @@ class Announcer:
         )
         embed.set_footer(text=say(TEXT.CANCELLED_FOOTER, **fields))
         return [embed] + self.build_leaderboard_embeds(
-            event.leaderboard, title=TEXT.CANCELLED_LEADERBOARD_TITLE, color=color("CANCELLED")
+            event.leaderboard, title=TEXT.CANCELLED_LEADERBOARD_TITLE, color=theme_color("CANCELLED")
         )
 
     def render_cancelled(self, event: EventCancelled) -> str:
@@ -707,7 +714,7 @@ class Announcer:
         embed = discord.Embed(
             title=say(TEXT.COMPLETION_TITLE, **fields),
             description=say(TEXT.COMPLETION_DESCRIPTION, **fields),
-            color=color("COMPLETED"),
+            color=theme_color("COMPLETED"),
         )
         embed.add_field(
             name=say(TEXT.COMPLETION_REWARD_FIELD, **fields),
@@ -726,7 +733,7 @@ class Announcer:
         )
         embed.set_footer(text=say(TEXT.COMPLETION_FOOTER, **fields))
         return [embed] + self.build_leaderboard_embeds(
-            board, title=TEXT.COMPLETION_LEADERBOARD_TITLE, color=color("COMPLETED")
+            board, title=TEXT.COMPLETION_LEADERBOARD_TITLE, color=theme_color("COMPLETED")
         )
 
     def render_completion(self, event: EventCompleted) -> str:
@@ -763,13 +770,12 @@ class Announcer:
         entries: Sequence[LeaderboardEntry],
         *,
         title: Optional[str] = None,
-        color_value: Optional[int] = None,
+        color: Optional[int] = None,
         limit: int = 50,
-        **legacy,
     ) -> list[discord.Embed]:
         """Podium + the rest, split across as many embeds as needed."""
         title = title if title is not None else TEXT.LEADERBOARD_TITLE
-        colour = color_value if color_value is not None else legacy.get("color", color("RUNNING"))
+        colour = color if color is not None else theme_color("RUNNING")
 
         if not entries:
             return [discord.Embed(title=title, description=TEXT.LEADERBOARD_EMPTY, color=colour)]

@@ -93,9 +93,11 @@ class DiscordLogHandler(logging.Handler):
             line = line[: MAX_LINE - 1] + "…"
         return line
 
-    @staticmethod
-    def format_time(record: logging.LogRecord) -> str:
-        return logging.Formatter(datefmt="%H:%M:%S").formatTime(record, "%H:%M:%S")
+    _time_formatter = logging.Formatter(datefmt="%H:%M:%S")
+
+    @classmethod
+    def format_time(cls, record: logging.LogRecord) -> str:
+        return cls._time_formatter.formatTime(record, "%H:%M:%S")
 
     def drain(self) -> tuple[list[str], int]:
         """Take everything buffered so far plus the dropped-line count."""
@@ -114,7 +116,7 @@ class DiscordLogStream:
         self.handler = DiscordLogHandler()
         self.handler.setLevel(self._level(config.log_dm_level))
         self._task: Optional[asyncio.Task] = None
-        self._user: Optional[discord.abc.User] = None
+        self._user: Optional[discord.User] = None
         self._sent = 0
         self._failures = 0
         self.disabled_reason: Optional[str] = None
@@ -235,10 +237,12 @@ class DiscordLogStream:
             return 0
 
         posted = 0
-        for chunk in self.chunks(lines):
+        chunks = self.chunks(lines)
+        for index, chunk in enumerate(chunks):
             if posted >= MAX_MESSAGES_PER_FLUSH:
-                remaining = len(lines) - posted
-                await self._send(f"… {remaining} more line(s) suppressed to avoid rate limits")
+                # Count the *lines* we are dropping, not the chunks.
+                suppressed = sum(c.count("\n") + 1 for c in chunks[index:])
+                await self._send(f"… {suppressed} more line(s) suppressed to avoid rate limits")
                 break
             if await self._send(f"```ansi\n{chunk}\n```"):
                 posted += 1

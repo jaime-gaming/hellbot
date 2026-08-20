@@ -270,3 +270,15 @@ def test_engine_activity_reaches_the_stream(config, engine):
     text = "\n".join(lines)
     assert "VC is EMPTY" in text
     assert "FAILED" in text
+
+
+def test_suppressed_count_reports_lines_not_chunks(stream):
+    """Regression: the overflow notice used to mix up chunks and lines."""
+    stream, user = stream
+    for i in range(300):
+        stream.handler.emit(record(f"{'w' * 150} {i}"))
+    run(stream.flush())
+    notice = user.sent[-1]
+    assert "suppressed" in notice
+    count = int(notice.split()[1])
+    assert count > 3          # lines, not the 1-3 chunks that were skipped

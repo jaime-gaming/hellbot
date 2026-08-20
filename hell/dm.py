@@ -81,7 +81,16 @@ class FinalReportDM:
             return
         if self._task is not None and not self._task.done():
             return
-        self._task = asyncio.create_task(self.send_all())
+        self._task = asyncio.create_task(self.send_all(), name="hell-stat-cards")
+        self._task.add_done_callback(self._log_task_result)
+
+    @staticmethod
+    def _log_task_result(task: "asyncio.Task") -> None:
+        if task.cancelled():  # pragma: no cover - shutdown
+            return
+        exc = task.exception()
+        if exc is not None:  # pragma: no cover - defensive
+            log.error("Stat card delivery crashed: %s", exc, exc_info=exc)
 
     async def send_all(self) -> dict[str, int]:
         """Send every pending stat card.  Returns a small summary."""
@@ -100,9 +109,13 @@ class FinalReportDM:
 
             log.info("Sending %d end-of-event stat card(s)", len(pending))
             for report in pending:
-                status = await self._send_one(report)
+                try:
+                    status = await self._send_one(report)
+                    self.engine.store.record_dm(uid, report.user_id, status)
+                except Exception:  # noqa: BLE001 - one bad card must not stop the rest
+                    log.exception("Could not deliver the stat card for %s", report.user_id)
+                    status = "failed"
                 summary[status] = summary.get(status, 0) + 1
-                self.engine.store.record_dm(uid, report.user_id, status)
                 await asyncio.sleep(max(0.0, self.config.dm_delay_seconds))
 
             log.info(

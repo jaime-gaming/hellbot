@@ -63,6 +63,7 @@ class VoiceMonitor:
         self._kick_attempts: dict[int, float] = {}
         self._lock = asyncio.Lock()  # serialises ticks; no milestone can race
         self._known_presence: dict[int, str] = {}
+        self._alive_task: Optional[asyncio.Task] = None
         self._blind_since: Optional[float] = None
         self._blind_logged = False
         self._last_heartbeat = 0.0
@@ -82,6 +83,8 @@ class VoiceMonitor:
     def stop(self) -> None:
         self._monitor_loop.cancel()
         self._progress_loop.cancel()
+        if self._alive_task is not None and not self._alive_task.done():
+            self._alive_task.cancel()
 
     @property
     def lock(self) -> asyncio.Lock:
@@ -229,13 +232,27 @@ class VoiceMonitor:
             await self.dispatch(event)
 
         if self.engine.is_running:
-            # Roll call: random every 1-6h, resolved 5 minutes later. Kicked
-            # users keep their leaderboard time and may rejoin immediately.
+            self._pump_alive_check(now, humans)
+        self._heartbeat(len(humans))
+
+    def _pump_alive_check(self, now: float, humans: Sequence[ParticipantRef]) -> None:
+        """Advance the roll call **off** the monitor's critical path.
+
+        Posting a roll call and disconnecting silent members are network calls
+        that can take seconds. Running them inline would stall the 1-second VC
+        loop, delaying empty-VC detection and costing people leaderboard time,
+        so they run in their own task while the monitor keeps ticking.
+        """
+        if self._alive_task is not None and not self._alive_task.done():
+            return  # a previous roll call step is still in flight
+
+        async def runner() -> None:
             try:
-                await self.alive_checks.tick(now, humans)
+                await self.alive_checks.tick(now, list(humans))
             except Exception:  # pragma: no cover - never break the event loop
                 log.exception("Alive check tick failed")
-        self._heartbeat(len(humans))
+
+        self._alive_task = asyncio.create_task(runner(), name="hell-alive-check")
 
     def _heartbeat(self, participants: int) -> None:
         """Periodic proof-of-life in the log file, useful when running headless."""
@@ -365,25 +382,27 @@ class VoiceMonitor:
         # A roll call interrupted by the restart is cancelled, never enforced:
         # nobody gets disconnected because the bot was offline.
         self.alive_checks.bind(state.event_uid)
-        pending = self.alive_checks.pending
-        if pending is not None:
+        pending_check = self.alive_checks.pending
+        if pending_check is not None:
             recovered = await self.alive_checks.backfill_replies()
-            if now_ts() >= pending.deadline_ts:
-                log.warning("Alive check %s expired while offline — cancelling it", pending.check_id)
+            if now_ts() >= pending_check.deadline_ts:
+                log.warning(
+                    "Alive check %s expired while offline — cancelling it", pending_check.check_id
+                )
                 await self.alive_checks.cancel(now_ts(), "the bot restarted while it was running")
             else:
                 log.info(
                     "Resuming alive check %s (%d reply(ies) recovered, %.0fs left)",
-                    pending.check_id,
+                    pending_check.check_id,
                     recovered,
-                    pending.seconds_left(now_ts()),
+                    pending_check.seconds_left(now_ts()),
                 )
 
         # Any milestone claimed but never announced (crash between the two).
-        pending = self.engine.pending_announcements()
-        if pending:
-            log.warning("Re-announcing %d milestone(s) that were never posted", len(pending))
-            await self.announcer.announce_pending(pending)
+        unannounced = self.engine.pending_announcements()
+        if unannounced:
+            log.warning("Re-announcing %d milestone(s) that were never posted", len(unannounced))
+            await self.announcer.announce_pending(unannounced)
         self.announcer.forget_progress_message()
         self._terminal_rendered = False
         await self.announcer.update_progress(self.engine.snapshot(), force=True)

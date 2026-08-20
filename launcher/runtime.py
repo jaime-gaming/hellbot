@@ -181,7 +181,12 @@ class BotSupervisor:
 
                 bot = build_bot(config)
             self._bot = bot
-            self._set_status(RUNNING, "connected")
+            if hasattr(bot, "wait_until_ready"):
+                # Flip to RUNNING only when Discord actually accepts us, so the
+                # dashboard cannot claim "Running" while a bad token is failing.
+                loop.create_task(self._mark_ready_when_connected(bot))
+            else:  # pragma: no cover - test doubles
+                self._set_status(RUNNING, "connected")
             loop.run_until_complete(bot.start(config.token))
             self._set_status(STOPPED, "stopped")
         except Exception as exc:  # noqa: BLE001 - surfaced in the UI
@@ -204,6 +209,14 @@ class BotSupervisor:
             self._started_at = None
             if self._status not in (ERROR,):
                 self._set_status(STOPPED, "stopped")
+
+    async def _mark_ready_when_connected(self, bot: Any) -> None:
+        try:
+            await bot.wait_until_ready()
+        except Exception:  # pragma: no cover - shutdown races
+            return
+        if self._status in (STARTING, RUNNING):
+            self._set_status(RUNNING, "connected")
 
     @staticmethod
     def _humanise(exc: BaseException) -> str:

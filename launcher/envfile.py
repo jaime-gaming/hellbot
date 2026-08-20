@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, MutableMapping
 
 
 @dataclass(frozen=True)
@@ -178,7 +178,7 @@ def validate(values: Mapping[str, str]) -> list[str]:
     return problems
 
 
-def apply_to_environ(values: Mapping[str, str], environ: dict[str, str]) -> None:
+def apply_to_environ(values: Mapping[str, str], environ: MutableMapping[str, str]) -> None:
     """Push config values into an environment mapping (used before loading Config)."""
     for key, value in values.items():
         text = str(value).strip()

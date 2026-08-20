@@ -334,6 +334,13 @@ class AliveCheckManager:
             kicked_ids = await self.io.kick(
                 to_kick, "Welcome to Hell: no answer to the alive check"
             )
+        if to_kick and not kicked_ids and not cancelled:
+            log.error(
+                "Alive check %s: %d user(s) ignored it but none could be disconnected "
+                "(missing 'Move Members'?)",
+                check.check_id,
+                len(to_kick),
+            )
         kicked = [ParticipantRef(uid, check.required[uid]) for uid in kicked_ids]
 
         result = CheckResult(

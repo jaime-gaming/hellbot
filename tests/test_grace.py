@@ -231,3 +231,20 @@ def test_event_timeline_arithmetic():
     assert timeline.is_finished(T0 + 160 * HOUR)
     assert timeline.elapsed(T0 + 99 * HOUR, frozen_at=T0 + 3600) == 3600
     assert timeline.at_hours(32) == T0 + 32 * HOUR
+
+
+def test_terminating_clears_the_persisted_grace_window(engine, store):
+    """Regression: a half-open window must not outlive its run."""
+    start(engine, T0, 1)
+    engine.tick(obs(T0 + 60))                        # window opens, persisted
+    assert store.load_state().grace_started_ts is not None
+    engine.tick(obs(T0 + 60 + GRACE))                # expires -> FAILED
+    assert store.load_state().grace_started_ts is None
+    assert not engine.grace.is_open
+
+
+def test_cancelling_clears_the_grace_window(engine, store):
+    start(engine, T0, 1)
+    engine.tick(obs(T0 + 60))
+    engine.cancel(now=T0 + 65, by_user_id=1)
+    assert store.load_state().grace_started_ts is None

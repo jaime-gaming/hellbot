@@ -107,6 +107,11 @@ class DiscordAliveCheckIO:
         guild = self.bot.get_guild(self.config.guild_id)
         channel = self.bot.get_channel(self.config.voice_channel_id)
         if guild is None or not isinstance(channel, (discord.VoiceChannel, discord.StageChannel)):
+            log.error(
+                "Alive check wanted to disconnect %d user(s) but the guild or VC is not "
+                "visible — nobody was removed",
+                len(user_ids),
+            )
             return []
 
         in_vc = {m.id: m for m in channel.members}

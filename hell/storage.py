@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import time
 import threading
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
@@ -491,14 +492,12 @@ class Store:
     # ------------------------------------------------------- end-of-run DMs
 
     def record_dm(self, event_uid: str, user_id: int, status: str, ts: Optional[float] = None) -> None:
-        import time as _time
-
         with self._lock:
             self._conn.execute(
                 "INSERT INTO dm_log(event_uid, user_id, sent_ts, status) VALUES (?, ?, ?, ?) "
                 "ON CONFLICT(event_uid, user_id) DO UPDATE SET sent_ts = excluded.sent_ts, "
                 "status = excluded.status",
-                (event_uid, user_id, ts if ts is not None else _time.time(), status),
+                (event_uid, user_id, ts if ts is not None else time.time(), status),
             )
 
     def dm_recipients(self, event_uid: str) -> set[int]:

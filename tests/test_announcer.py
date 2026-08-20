@@ -157,3 +157,26 @@ def test_chunk_lines_respects_discord_limit():
     chunks = chunk_lines(lines)
     assert len(chunks) > 1
     assert all(len(c) <= 1900 for c in chunks)
+
+
+def test_send_refuses_an_empty_payload(announcer):
+    """Discord rejects a message with neither content nor embeds."""
+    import asyncio
+
+    assert asyncio.run(announcer.send([])) is None
+
+
+def test_a_broken_colour_falls_back_instead_of_crashing(announcer, monkeypatch):
+    from hell import announcer as announcer_module
+
+    monkeypatch.setattr(announcer_module.TEXT, "COLOR_RUNNING", "bright orange", raising=False)
+    assert announcer_module.theme_color("RUNNING") == 0xE25822
+
+
+def test_leaderboard_embeds_take_a_plain_color_kwarg(announcer):
+    from hell.leaderboard import build_leaderboard
+
+    embeds = announcer.build_leaderboard_embeds(
+        build_leaderboard([(1, "A", 60.0)]), title="X", color=0x123456
+    )
+    assert embeds[0].colour.value == 0x123456

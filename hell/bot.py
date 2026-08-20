@@ -18,6 +18,7 @@ import signal
 import sys
 from typing import Optional
 
+import aiohttp
 import discord
 from discord.ext import commands
 
@@ -195,14 +196,26 @@ def main() -> None:
     except KeyboardInterrupt:  # pragma: no cover
         pass
     except discord.LoginFailure:
-        log.error("Discord rejected the token — check DISCORD_TOKEN in your .env")
-        raise SystemExit(3)
+        _fail(3, "Discord rejected the token — check DISCORD_TOKEN in your .env")
     except discord.PrivilegedIntentsRequired:
-        log.error(
-            "The Server Members intent is not enabled for this application. "
-            "Enable it at Developer Portal -> Bot -> Privileged Gateway Intents."
+        _fail(
+            4,
+            "The Server Members intent is not enabled for this application. Enable it at "
+            "Developer Portal -> Bot -> Privileged Gateway Intents, then start the bot again.",
         )
-        raise SystemExit(4)
+    except (aiohttp.ClientConnectorError, OSError) as exc:
+        # No internet, DNS failure, blocked egress… a stack trace helps nobody.
+        log.error("Could not reach Discord: %s", exc)
+        _fail(5, "Could not reach Discord. Check the internet connection and try again.")
+    except Exception as exc:  # noqa: BLE001 - last resort, keep it readable
+        log.exception("The bot stopped with an unexpected error")
+        _fail(1, f"Unexpected error: {type(exc).__name__}: {exc} (full traceback in logs/)")
+
+
+def _fail(code: int, message: str) -> None:
+    log.error("%s", message)
+    print(message, file=sys.stderr)
+    raise SystemExit(code)
 
 
 if __name__ == "__main__":

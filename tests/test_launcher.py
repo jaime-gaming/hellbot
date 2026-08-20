@@ -230,3 +230,30 @@ def test_shipped_env_example_parses_cleanly():
     values = envfile.read_env(example)
     values.update(GOOD)
     assert envfile.validate(values) == []
+
+
+class ReadyAwareBot(FakeBot):
+    """A bot that only becomes ready when told to (like the real gateway)."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self._ready = asyncio.Event()
+
+    async def wait_until_ready(self):
+        await self._ready.wait()
+
+    async def start(self, token):
+        await asyncio.sleep(0.05)
+        self._ready.set()
+        await self._closed.wait()
+
+
+def test_status_only_says_running_once_discord_accepts_us(tmp_path):
+    """Regression: the dashboard used to claim RUNNING while still connecting."""
+    path = write_good_env(tmp_path)
+    sup = BotSupervisor(env_file=path, bot_factory=ReadyAwareBot)
+    sup.start()
+    assert sup.status == "STARTING"
+    assert wait_for(lambda: sup.status == RUNNING), "never reached RUNNING"
+    sup.stop(timeout=5)
+    assert sup.status == STOPPED

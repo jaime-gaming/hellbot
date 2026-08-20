@@ -77,6 +77,7 @@ def load(force: bool = False) -> ModuleType:
             errors.append(f"{path}: {type(exc).__name__}: {exc}")
             continue
         _module, _source, _last_error = module, str(path), None
+        sys.modules.setdefault(MODULE_NAME, module)
         log.info("Loaded messages from %s", path)
         return module
 

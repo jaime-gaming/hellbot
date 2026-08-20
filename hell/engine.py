@@ -494,6 +494,9 @@ class HellEngine:
         self.state.status = status
         self.state.end_ts = ts
         self.state.end_reason = reason
+        # A half-open grace window must not survive the run it belonged to.
+        self.grace.restore(None)
+        self.state.grace_started_ts = None
         self.store.save_state(self.state)
         self.freeze_leaderboard()
 

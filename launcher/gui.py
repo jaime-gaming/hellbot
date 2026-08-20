@@ -78,16 +78,25 @@ class LauncherApp(tk.Tk):
         self.after(600, self._first_run_check)
 
     def _load_logo(self):
-        """A small version of the app icon for the header (optional)."""
-        png = Path(__file__).resolve().parent.parent / "assets" / "hellbot.png"
-        if not png.exists():
-            return None
-        try:
-            image = tk.PhotoImage(file=str(png))
-            factor = max(1, image.width() // 48)
-            return image.subsample(factor, factor)
-        except Exception:  # pragma: no cover - purely cosmetic
-            return None
+        """The header logo (optional, never fatal).
+
+        Prefers the pre-rendered 48px file: Tk downscales with
+        nearest-neighbour, which makes a big logo look ragged.
+        """
+        assets = Path(__file__).resolve().parent.parent / "assets"
+        for name in ("hellbot-48.png", "hellbot.png"):
+            png = assets / name
+            if not png.exists():
+                continue
+            try:
+                image = tk.PhotoImage(file=str(png))
+                if image.width() > 64:
+                    factor = max(1, image.width() // 48)
+                    image = image.subsample(factor, factor)
+                return image
+            except Exception:  # pragma: no cover - purely cosmetic
+                continue
+        return None
 
     def _set_icon(self) -> None:
         """Window/taskbar icon; silently ignored if the assets are missing."""

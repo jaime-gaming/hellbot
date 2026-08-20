@@ -189,16 +189,38 @@ def test_the_build_context_excludes_secrets_and_state():
 
 def test_the_logo_assets_are_present_and_usable():
     """The launcher window, the taskbar and the built .exe all need these."""
+    master = ROOT / "assets" / "hellbotlogo.png"
     png = ROOT / "assets" / "hellbot.png"
+    header_png = ROOT / "assets" / "hellbot-48.png"
     ico = ROOT / "assets" / "hellbot.ico"
-    assert png.is_file() and ico.is_file()
 
-    header = png.read_bytes()[:8]
-    assert header == b"\x89PNG\r\n\x1a\n", "hellbot.png is not a PNG"
+    assert master.is_file(), "the master artwork is missing"
+    for image in (master, png, header_png):
+        assert image.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", f"{image.name} is not a PNG"
     assert ico.read_bytes()[:4] == b"\x00\x00\x01\x00", "hellbot.ico is not an ICO"
+
     # Windows shows the icon at many sizes; a single-resolution .ico looks bad.
     icon_count = int.from_bytes(ico.read_bytes()[4:6], "little")
     assert icon_count >= 4, f"hellbot.ico only contains {icon_count} size(s)"
+
+    # The header image must be small: Tk downscaling looks ragged.
+    assert header_png.stat().st_size < 20_000
+
+
+def test_the_icons_can_be_rebuilt_from_the_master(tmp_path):
+    """`python tools/make_icon.py` is the documented way to change the logo."""
+    pytest.importorskip("PIL")
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("mk", ROOT / "tools" / "make_icon.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    assert module.MASTER.is_file()
+    assert [path.name for path in module.build(module.MASTER)] == [
+        "hellbot.png",
+        "hellbot-48.png",
+        "hellbot.ico",
+    ]
 
 
 def test_the_spec_and_readme_use_the_logo():

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/hellbot.png" width="120" alt="Welcome to Hell">
+  <img src="assets/hellbot.png" width="140" alt="Welcome to Hell">
 </p>
 
 <h1 align="center">Welcome to Hell</h1>
@@ -455,6 +455,10 @@ python tools/simulate.py --fail-at 40 # …of a run that dies after 40 hours
 ```
 
 Tooling lives in `pyproject.toml` (pytest, mypy and ruff are configured there).
+
+**Branding.** `assets/hellbotlogo.png` is the master artwork. After changing it, run
+`python tools/make_icon.py` to regenerate the window icon, the header logo and the
+multi-size Windows `.ico` used by the built executable.
 
 `tools/simulate.py` drives the real engine and the real message renderers offline — the fastest way
 to review wording or verify a rule change end to end. A ready-made GitHub Actions workflow (tests on Python

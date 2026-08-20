@@ -21,6 +21,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Optional
 
+from hell import __version__
 from hell.config import ConfigError
 from hell.paths import log_file
 from hell.timeutil import format_hm
@@ -28,14 +29,20 @@ from hell.timeutil import format_hm
 from . import envfile
 from .runtime import ERROR, RUNNING, STARTING, STOPPED, STOPPING, BotSupervisor
 
-BG = "#17181d"
-CARD = "#20222a"
-FG = "#e8e6e3"
-MUTED = "#9aa0a6"
+# Palette — a dark, ember-lit theme that matches the bot's embeds.
+BG = "#131419"
+CARD = "#1c1e26"
+CARD_HI = "#242733"
+FG = "#eceaf0"
+MUTED = "#8b909c"
 ACCENT = "#e25822"
+ACCENT_DARK = "#b8420f"
 OK = "#3fb950"
 WARN = "#d29922"
 BAD = "#f85149"
+
+FONT = "Segoe UI"
+MONO = "Consolas"
 
 STATUS_COLORS = {
     STOPPED: MUTED,
@@ -70,6 +77,18 @@ class LauncherApp(tk.Tk):
         self.after(400, self._tick)
         self.after(600, self._first_run_check)
 
+    def _load_logo(self):
+        """A small version of the app icon for the header (optional)."""
+        png = Path(__file__).resolve().parent.parent / "assets" / "hellbot.png"
+        if not png.exists():
+            return None
+        try:
+            image = tk.PhotoImage(file=str(png))
+            factor = max(1, image.width() // 48)
+            return image.subsample(factor, factor)
+        except Exception:  # pragma: no cover - purely cosmetic
+            return None
+
     def _set_icon(self) -> None:
         """Window/taskbar icon; silently ignored if the assets are missing."""
         base = Path(__file__).resolve().parent.parent
@@ -94,30 +113,59 @@ class LauncherApp(tk.Tk):
             pass
         style.configure(".", background=BG, foreground=FG, fieldbackground=CARD, borderwidth=0)
         style.configure("TFrame", background=BG)
-        style.configure("Card.TFrame", background=CARD)
-        style.configure("TLabel", background=BG, foreground=FG)
-        style.configure("Card.TLabel", background=CARD, foreground=FG)
-        style.configure("Muted.TLabel", background=CARD, foreground=MUTED)
-        style.configure("Title.TLabel", background=BG, foreground=FG, font=("Segoe UI", 16, "bold"))
-        style.configure("Big.TLabel", background=CARD, foreground=FG, font=("Segoe UI", 20, "bold"))
-        style.configure("TNotebook", background=BG, borderwidth=0)
-        style.configure("TNotebook.Tab", background=CARD, foreground=MUTED, padding=(16, 8))
-        style.map("TNotebook.Tab", background=[("selected", BG)], foreground=[("selected", FG)])
-        style.configure("TButton", background=CARD, foreground=FG, padding=(14, 8))
-        style.map("TButton", background=[("active", "#2c2f3a")])
-        style.configure("Accent.TButton", background=ACCENT, foreground="#ffffff", padding=(18, 9))
-        style.map("Accent.TButton", background=[("active", "#c9491a"), ("disabled", "#5c4034")])
-        style.configure("TEntry", fieldbackground=CARD, foreground=FG, insertcolor=FG, padding=6)
-        style.configure("TCheckbutton", background=CARD, foreground=FG)
-        style.configure("Hell.Horizontal.TProgressbar", troughcolor=CARD, background=ACCENT, thickness=18)
+        style.configure("Card.TFrame", background=CARD, relief="flat")
+        style.configure("TLabel", background=BG, foreground=FG, font=(FONT, 10))
+        style.configure("Card.TLabel", background=CARD, foreground=FG, font=(FONT, 10))
+        style.configure("Muted.TLabel", background=CARD, foreground=MUTED, font=(FONT, 9))
+        style.configure("Caption.TLabel", background=CARD, foreground=MUTED, font=(FONT, 8))
+        style.configure("Title.TLabel", background=BG, foreground=FG, font=(FONT, 17, "bold"))
+        style.configure("Sub.TLabel", background=BG, foreground=MUTED, font=(FONT, 9))
+        style.configure("Big.TLabel", background=CARD, foreground=FG, font=(FONT, 22, "bold"))
+        style.configure("Metric.TLabel", background=CARD, foreground=ACCENT, font=(FONT, 22, "bold"))
+        style.configure("TNotebook", background=BG, borderwidth=0, tabmargins=(2, 6, 2, 0))
+        style.configure("TNotebook.Tab", background=BG, foreground=MUTED,
+                        padding=(18, 9), font=(FONT, 10))
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", CARD)],
+            foreground=[("selected", FG), ("active", FG)],
+        )
+        style.configure("TButton", background=CARD_HI, foreground=FG, padding=(14, 8),
+                        font=(FONT, 10), borderwidth=0)
+        style.map("TButton", background=[("active", "#2f3342"), ("disabled", CARD)],
+                  foreground=[("disabled", MUTED)])
+        style.configure("Accent.TButton", background=ACCENT, foreground="#ffffff",
+                        padding=(18, 9), font=(FONT, 10, "bold"), borderwidth=0)
+        style.map("Accent.TButton", background=[("active", ACCENT_DARK), ("disabled", "#5c4034")],
+                  foreground=[("disabled", "#c9c4c0")])
+        style.configure("TEntry", fieldbackground=CARD_HI, foreground=FG, insertcolor=FG,
+                        padding=7, borderwidth=0)
+        style.configure("TCheckbutton", background=CARD, foreground=FG, font=(FONT, 9))
+        style.map("TCheckbutton", background=[("active", CARD)])
+        style.configure("Hell.Horizontal.TProgressbar", troughcolor=CARD_HI, background=ACCENT,
+                        thickness=16, borderwidth=0, lightcolor=ACCENT, darkcolor=ACCENT)
+        style.configure("TScrollbar", background=CARD_HI, troughcolor=BG, borderwidth=0,
+                        arrowcolor=MUTED)
 
     # -------------------------------------------------------------- header
 
     def _build_header(self) -> None:
-        header = ttk.Frame(self, padding=(18, 14, 18, 8))
+        header = ttk.Frame(self, padding=(20, 16, 20, 10))
         header.pack(fill="x")
 
-        ttk.Label(header, text="🔥  WELCOME TO HELL", style="Title.TLabel").pack(side="left")
+        logo = self._load_logo()
+        if logo is not None:
+            self._logo_image = logo
+            tk.Label(header, image=logo, bg=BG, borderwidth=0).pack(side="left", padx=(0, 14))
+
+        title_box = ttk.Frame(header)
+        title_box.pack(side="left")
+        ttk.Label(title_box, text="🔥  WELCOME TO HELL", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(
+            title_box,
+            text=f"160-hour voice channel challenge · bot v{__version__}",
+            style="Sub.TLabel",
+        ).pack(anchor="w")
 
         self.btn_start = ttk.Button(header, text="▶  Start bot", style="Accent.TButton", command=self.on_start)
         self.btn_start.pack(side="right", padx=(8, 0))
@@ -146,8 +194,8 @@ class LauncherApp(tk.Tk):
         self._build_settings()
 
     def _card(self, parent, title: str) -> ttk.Frame:
-        outer = ttk.Frame(parent, style="Card.TFrame", padding=14)
-        ttk.Label(outer, text=title.upper(), style="Muted.TLabel").pack(anchor="w")
+        outer = ttk.Frame(parent, style="Card.TFrame", padding=16)
+        ttk.Label(outer, text=title.upper(), style="Caption.TLabel").pack(anchor="w")
         return outer
 
     def _build_dashboard(self) -> None:
@@ -163,21 +211,21 @@ class LauncherApp(tk.Tk):
 
         self.card_vc = self._card(top, "In the VC")
         self.card_vc.pack(side="left", fill="both", expand=True, padx=8)
-        self.lbl_people = ttk.Label(self.card_vc, text="0", style="Big.TLabel")
+        self.lbl_people = ttk.Label(self.card_vc, text="0", style="Metric.TLabel")
         self.lbl_people.pack(anchor="w", pady=(6, 0))
         self.lbl_people_sub = ttk.Label(self.card_vc, text="valid humans", style="Muted.TLabel")
         self.lbl_people_sub.pack(anchor="w")
 
         self.card_next = self._card(top, "Next milestone")
         self.card_next.pack(side="left", fill="both", expand=True, padx=(8, 0))
-        self.lbl_next = ttk.Label(self.card_next, text="—", style="Big.TLabel")
+        self.lbl_next = ttk.Label(self.card_next, text="—", style="Metric.TLabel")
         self.lbl_next.pack(anchor="w", pady=(6, 0))
         self.lbl_next_sub = ttk.Label(self.card_next, text="", style="Muted.TLabel")
         self.lbl_next_sub.pack(anchor="w")
 
-        progress = ttk.Frame(self.tab_dash, style="Card.TFrame", padding=14)
-        progress.pack(fill="x", pady=12)
-        ttk.Label(progress, text="PROGRESS", style="Muted.TLabel").pack(anchor="w")
+        progress = ttk.Frame(self.tab_dash, style="Card.TFrame", padding=16)
+        progress.pack(fill="x", pady=14)
+        ttk.Label(progress, text="PROGRESS", style="Caption.TLabel").pack(anchor="w")
         self.pb = ttk.Progressbar(progress, style="Hell.Horizontal.TProgressbar", maximum=100.0)
         self.pb.pack(fill="x", pady=8)
         self.lbl_progress = ttk.Label(progress, text="0h 00m / 160h 00m — 0.0%", style="Card.TLabel")
@@ -185,12 +233,12 @@ class LauncherApp(tk.Tk):
         self.lbl_alive = ttk.Label(progress, text="", style="Muted.TLabel")
         self.lbl_alive.pack(anchor="w", pady=(4, 0))
 
-        health = ttk.Frame(self.tab_dash, style="Card.TFrame", padding=14)
+        health = ttk.Frame(self.tab_dash, style="Card.TFrame", padding=16)
         health.pack(fill="both", expand=True)
-        ttk.Label(health, text="CHECKS", style="Muted.TLabel").pack(anchor="w")
+        ttk.Label(health, text="CHECKS", style="Caption.TLabel").pack(anchor="w")
         self.txt_health = tk.Text(
             health, height=8, bg=CARD, fg=FG, relief="flat", wrap="word",
-            insertbackground=FG, highlightthickness=0,
+            insertbackground=FG, highlightthickness=0, font=(FONT, 9), padx=2, pady=4,
         )
         self.txt_health.pack(fill="both", expand=True, pady=(8, 0))
         self.txt_health.insert("1.0", "Start the bot to run the configuration checks.")
@@ -208,8 +256,8 @@ class LauncherApp(tk.Tk):
         wrapper = ttk.Frame(self.tab_log, style="Card.TFrame")
         wrapper.pack(fill="both", expand=True)
         self.txt_log = tk.Text(
-            wrapper, bg="#0f1014", fg="#d5d8dd", relief="flat", wrap="none",
-            insertbackground=FG, highlightthickness=0, font=("Consolas", 9),
+            wrapper, bg="#0d0e12", fg="#cfd3da", relief="flat", wrap="none",
+            insertbackground=FG, highlightthickness=0, font=(MONO, 9), padx=10, pady=8,
         )
         scroll = ttk.Scrollbar(wrapper, command=self.txt_log.yview)
         self.txt_log.configure(yscrollcommand=scroll.set, state="disabled")

@@ -49,6 +49,35 @@ def format_clock(seconds: float) -> str:
     return f"{hours}:{minutes:02d}:{secs:02d}"
 
 
+def milestone_bar(
+    fraction: float,
+    *,
+    blocks: int = 5,
+    cells_per_block: int = 4,
+    full: str = "▰",
+    empty: str = "▱",
+    separator: str = "┃",
+) -> str:
+    """A progress bar split into one segment per milestone.
+
+    `▰▰▰▰┃▰▰▱▱┃▱▱▱▱┃▱▱▱▱┃▱▱▱▱` — at a glance you can see both the overall
+    progress and which milestone block the event is currently inside.
+    """
+    total_cells = max(1, blocks * cells_per_block)
+    fraction = min(1.0, max(0.0, float(fraction)))
+    filled = round(fraction * total_cells)
+    if filled >= total_cells and fraction < 1.0:
+        filled = total_cells - 1          # never look finished early
+    if filled == 0 and fraction > 0:
+        filled = 1                        # …or empty once it has started
+
+    cells = [full if i < filled else empty for i in range(total_cells)]
+    segments = [
+        "".join(cells[i : i + cells_per_block]) for i in range(0, total_cells, cells_per_block)
+    ]
+    return separator.join(segments)
+
+
 def progress_bar(fraction: float, width: int = 20, full: str = "█", empty: str = "░") -> str:
     """Visual progress bar, e.g. `██████████░░░░░░░░░░`."""
     fraction = min(1.0, max(0.0, float(fraction)))

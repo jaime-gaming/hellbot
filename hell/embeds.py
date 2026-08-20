@@ -18,6 +18,7 @@ from typing import Optional
 
 import discord
 
+from . import assets
 from .config import Config
 from .engine import (
     EventCancelled,
@@ -32,7 +33,7 @@ from .leaderboard import format_entry, top_n
 from .milestones import MILESTONES, get_milestone
 from .models import EventStatus, LeaderboardEntry, MilestoneRecord, ParticipantRef
 from .texts import TEXT, say
-from .timeutil import discord_ts, format_hm, format_hms, progress_bar
+from .timeutil import discord_ts, format_hm, format_hms, milestone_bar
 
 log = logging.getLogger("hell.embeds")
 
@@ -60,6 +61,31 @@ def status_emoji(status: EventStatus) -> str:
 
 def status_color(status: EventStatus) -> int:
     return theme_color(status.value, theme_color("RUNNING"))
+
+
+def bar(fraction: float) -> str:
+    """The milestone-segmented progress bar, styled from Announcements.py."""
+    return milestone_bar(
+        fraction,
+        blocks=max(1, len(MILESTONES)),
+        cells_per_block=int(getattr(TEXT, "BAR_CELLS_PER_MILESTONE", 4)),
+        full=str(getattr(TEXT, "BAR_FULL", "▰")),
+        empty=str(getattr(TEXT, "BAR_EMPTY", "▱")),
+        separator=str(getattr(TEXT, "BAR_SEPARATOR", "┃")),
+    )
+
+
+def dots(reached: int, total: Optional[int] = None) -> str:
+    """Milestone tally, e.g. `🔥🔥🔥◦◦`."""
+    total = len(MILESTONES) if total is None else total
+    reached = max(0, min(reached, total))
+    return str(getattr(TEXT, "DOT_REACHED", "🔥")) * reached + str(
+        getattr(TEXT, "DOT_PENDING", "◦")
+    ) * (total - reached)
+
+
+def reached_count(elapsed: float) -> int:
+    return sum(1 for m in MILESTONES if elapsed >= m.seconds)
 
 
 def split_text(text: str, limit: int) -> list[str]:
@@ -125,8 +151,14 @@ def add_chunked_field(embed: discord.Embed, name: str, value: str, *, inline: bo
 
 
 def embed_to_text(embed: discord.Embed) -> str:
-    """Flatten an embed to plain text (used by tests and the offline simulator)."""
+    """Flatten an embed to plain text (used by tests and the offline simulator).
+
+    Mirrors what a reader actually sees, author line included — otherwise the
+    simulator and the tests would be blind to part of every message.
+    """
     lines: list[str] = []
+    if embed.author and embed.author.name:
+        lines.append(str(embed.author.name))
     if embed.title:
         lines.append(f"**{embed.title}**")
     if embed.description:
@@ -158,18 +190,43 @@ class EmbedFactory:
     def __init__(self, config: Config):
         self.config = config
 
+    # ------------------------------------------------------------- styling
+
+    def _brand(
+        self,
+        embed: discord.Embed,
+        *,
+        thumbnail: Optional[str] = None,
+        image: Optional[str] = None,
+        timestamp: bool = True,
+    ) -> discord.Embed:
+        """Apply the shared look: author line, artwork and a timestamp."""
+        icon = assets.resolve(getattr(TEXT, "BRAND_ICON", ""))
+        embed.set_author(name=str(getattr(TEXT, "BRAND_NAME", "Welcome to Hell")), icon_url=icon)
+        thumb = assets.resolve(thumbnail)
+        if thumb:
+            embed.set_thumbnail(url=thumb)
+        picture = assets.resolve(image)
+        if picture:
+            embed.set_image(url=picture)
+        if timestamp:
+            embed.timestamp = discord.utils.utcnow()
+        return embed
+
     def progress(self, snap: Snapshot) -> discord.Embed:
         embed = discord.Embed(
             title=say(TEXT.PROGRESS_TITLE, emoji=status_emoji(snap.status)),
             description=say(
                 TEXT.PROGRESS_DESCRIPTION,
-                bar=progress_bar(snap.fraction),
+                bar=bar(snap.fraction),
                 elapsed=format_hm(snap.elapsed),
                 total=format_hm(snap.total),
                 percent=f"{snap.fraction * 100:.1f}%",
+                dots=dots(reached_count(snap.elapsed)),
             ),
             color=status_color(snap.status),
         )
+        self._brand(embed, thumbnail=getattr(TEXT, "PROGRESS_THUMBNAIL", ""))
         template = (
             TEXT.PROGRESS_STATUS_VALUE_EMPTY_VC if snap.grace_open else TEXT.PROGRESS_STATUS_VALUE
         )
@@ -312,6 +369,7 @@ class EmbedFactory:
             inline=False,
         )
         embed.set_footer(text=say(TEXT.START_FOOTER, **fields))
+        self._brand(embed, thumbnail=getattr(TEXT, "PROGRESS_THUMBNAIL", ""))
         return embed
 
     def grace_warning(self, event: GraceStarted) -> discord.Embed:
@@ -339,6 +397,7 @@ class EmbedFactory:
             inline=True,
         )
         embed.set_footer(text=say(TEXT.GRACE_WARNING_FOOTER, **fields))
+        self._brand(embed)
         return embed
 
     def grace_recovered(self, event: GraceRecovered) -> discord.Embed:
@@ -358,6 +417,7 @@ class EmbedFactory:
             format_members(event.participants, empty=TEXT.GRACE_RECOVERED_NOBODY),
         )
         embed.set_footer(text=say(TEXT.GRACE_RECOVERED_FOOTER, **fields))
+        self._brand(embed)
         return embed
 
     def milestone(self, event: MilestoneReached) -> discord.Embed:
@@ -370,9 +430,16 @@ class EmbedFactory:
             reached_at=discord_ts(event.reached_ts, "F"),
             reached_relative=discord_ts(event.reached_ts, "R"),
         )
-        description = m.blurb
+        index = next((i for i, entry in enumerate(MILESTONES, 1) if entry.hours == m.hours), 1)
+        tally = say(
+            getattr(TEXT, "MILESTONE_TALLY", "{dots}"),
+            dots=dots(index),
+            index=index,
+            count=len(MILESTONES),
+        )
+        description = f"{m.blurb}\n\n{tally}"
         if m.flavour:
-            description = f"{m.blurb}\n\n*{m.flavour}*"
+            description = f"{m.blurb}\n\n*{m.flavour}*\n\n{tally}"
         embed = discord.Embed(
             title=m.title,
             description=description.strip(),
@@ -406,6 +473,7 @@ class EmbedFactory:
             )
         footer = TEXT.MILESTONE_FOOTER_FINAL if m.hours == 160 else TEXT.MILESTONE_FOOTER
         embed.set_footer(text=say(footer, **fields))
+        self._brand(embed, image=getattr(TEXT, "MILESTONE_IMAGE", ""))
         return embed
 
     def failure(self, event: EventFailed) -> list[discord.Embed]:
@@ -445,6 +513,7 @@ class EmbedFactory:
             inline=False,
         )
         embed.set_footer(text=say(TEXT.FAILURE_FOOTER, **fields))
+        self._brand(embed)
         return [
             embed,
             *self.leaderboard(
@@ -472,6 +541,7 @@ class EmbedFactory:
             name=say(TEXT.CANCELLED_WHEN_FIELD, **fields), value=fields["cancelled_at"], inline=True
         )
         embed.set_footer(text=say(TEXT.CANCELLED_FOOTER, **fields))
+        self._brand(embed)
         return [
             embed,
             *self.leaderboard(
@@ -516,6 +586,7 @@ class EmbedFactory:
             "\n".join(format_entry(e) for e in podium) or TEXT.COMPLETION_PODIUM_NONE,
         )
         embed.set_footer(text=say(TEXT.COMPLETION_FOOTER, **fields))
+        self._brand(embed, image=getattr(TEXT, "COMPLETION_IMAGE", ""))
         return [
             embed,
             *self.leaderboard(
@@ -549,6 +620,7 @@ class EmbedFactory:
         )
         total = len(entries)
         head.set_footer(text=say(TEXT.LEADERBOARD_FOOTER, total=total))
+        self._brand(head, timestamp=False)
         embeds = [head]
         if rest:
             body = "\n".join(format_entry(e) for e in rest)

@@ -128,6 +128,15 @@ class PhotoImage:
     def __init__(self, *args, **kwargs):
         pass
 
+    def width(self):
+        return 256
+
+    def height(self):
+        return 256
+
+    def subsample(self, *_factors):
+        return self
+
 
 class Canvas(_Widget):
     def __init__(self, master=None, **kwargs):

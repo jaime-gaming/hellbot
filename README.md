@@ -1,21 +1,80 @@
-# 🔥 Welcome to Hell — Discord event bot
+<p align="center">
+  <img src="assets/hellbot.png" width="120" alt="Welcome to Hell">
+</p>
 
-A production-ready Discord bot that runs the **Welcome to Hell** event: keep at least one real
-human in a single voice channel, **continuously, for 160 hours**. The moment that VC is empty of
-valid humans, the run is dead.
+<h1 align="center">Welcome to Hell</h1>
 
-* Target VC: `1539756705997652079` (configurable) · Duration: **160 consecutive hours**
-* Milestones: **32h · 64h · 96h · 128h · 160h**, each with its own reward and announcement
-* Started manually with `/hell start` by `@gamenight host`
-* Bots never count · `@clanker` users are kicked from the VC on sight · AFK still counts
-* **Random alive checks** every 1–6 h: reply `Yes` in 5 minutes or you are disconnected
-* **15-second grace period** when the VC empties — a no-ping warning goes out, and the run only
-  dies if nobody comes back
-* Everyone gets a **personal stat card by DM** when the run ends
-* **Live log stream** DM'd to the operator: joins, leaves, kicks, milestones, errors, in real time
-* **All wording in one file** — [`Announcements.py`](Announcements.py) — reloadable without a restart
-* Everything is timestamp-based and persisted in SQLite — **restarting the bot never resets the timer**
-* Ships with a **desktop control panel** (no console) and a one-file **`.exe`** build
+<p align="center">
+  <b>160 hours · one voice channel · no gaps</b><br>
+  A production-ready Discord bot that runs the <i>Welcome to Hell</i> endurance event.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.10%20|%203.11%20|%203.12-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/discord.py-2.3+-5865F2?logo=discord&logoColor=white" alt="discord.py 2.3+">
+  <img src="https://img.shields.io/badge/tests-319%20passing-3fb950" alt="319 tests">
+  <img src="https://img.shields.io/badge/coverage-88%25-3fb950" alt="88% coverage">
+  <img src="https://img.shields.io/badge/ruff%20·%20mypy-clean-e25822" alt="ruff and mypy clean">
+</p>
+
+---
+
+Keep at least one real human in a single voice channel, **continuously, for 160 hours**. If that VC
+empties and nobody returns within the grace period, the run is dead — permanently.
+
+<table>
+<tr><td width="55%" valign="top">
+
+**The event**
+
+* Duration **160 consecutive hours**, five milestones: **32h · 64h · 96h · 128h · 160h**
+* Started by hand with `/hell start`, restricted to `@gamenight host`
+* Bots never count · `@clanker` is kicked on sight · AFK still counts
+* **15-second grace period** when the VC empties, with a no-ping warning
+* **Random alive checks** every 1–6 h: reply `Yes` in 5 minutes or get disconnected
+* A **personal stat card by DM** for every contestant when the run ends
+
+**The bot**
+
+* Timestamp-based and persisted in SQLite — **a restart never resets the timer**
+* **Live log stream** DM'd to the operator: joins, leaves, kicks, milestones, errors
+* **All wording in one file** — [`Announcements.py`](Announcements.py) — hot-reloadable
+* A **desktop control panel** (no console) and a one-file **`.exe`** build
+* 319 tests, 88% coverage, ruff + mypy clean
+
+</td><td width="45%" valign="top">
+
+<img src="assets/hell-o-meter.png" width="100%" alt="Milestone thermometer">
+
+</td></tr>
+</table>
+
+### What it looks like in Discord
+
+```
+WELCOME TO HELL
+🔥 THE 160 HOUR CHALLENGE
+▰▰▰▰┃▰▰▰▰┃▰▱▱▱┃▱▱▱▱┃▱▱▱▱
+73h 24m of 160h 00m  ·  45.9%  ·  🔥🔥◦◦◦
+
+Status              👥 Currently in Hell   ⏳ Time remaining
+RUNNING             7                      86h 36m
+
+✅ Current milestone  🔥 Next milestone      🕛 Started
+64h cleared          96h · in 22h 36m       in 3 days
+
+Live · updates every 10s · /hell status · /hell leaderboard
+```
+
+```
+🏆 WELCOME TO HELL — LEADERBOARD
+🥇  @Ash   ·  128h 42m
+🥈  @Vera  ·  117h 09m
+🥉  @Milo  ·  104h 31m
+
+#4  @Juno  ·  83h 22m
+#5  @Kai   ·  61h 14m
+```
 
 ---
 

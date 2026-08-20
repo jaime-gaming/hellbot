@@ -22,6 +22,7 @@ from typing import Optional
 
 import discord
 
+from . import assets
 from .config import Config
 from .embeds import (  # re-exported for callers and tests
     MAX_CONTENT,
@@ -126,6 +127,7 @@ class Announcer:
                 msg = await chan.send(
                     content=(content if index == 0 else None),
                     embeds=slice_,
+                    files=assets.files_for(slice_),   # local artwork, if any
                     allowed_mentions=allowed,
                 )
                 first = first or msg
@@ -298,7 +300,12 @@ class Announcer:
         if chan is None:
             return
         try:
-            new_msg = await chan.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+            # Artwork is uploaded once, with the message; later edits keep it.
+            new_msg = await chan.send(
+                embed=embed,
+                files=assets.files_for([embed]),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
         except discord.HTTPException as exc:
             log.error("Could not create the progress message: %s", exc)
             return

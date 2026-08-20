@@ -28,6 +28,34 @@ read your changes without starting the bot.
 """
 
 # =============================================================================
+#  0. LOOK AND FEEL — branding, artwork and the shapes used in every message
+# =============================================================================
+#  Images may be an https:// URL or a file inside the project (dropped in
+#  assets/). Local files are uploaded with the message automatically; set a
+#  value to "" to leave that image out.
+
+BRAND_NAME = "WELCOME TO HELL"
+BRAND_TAGLINE = "160 hours · one voice channel · no gaps"
+BRAND_ICON = "assets/hellbot.png"          # small icon on every embed
+PROGRESS_THUMBNAIL = "assets/hell-o-meter.png"   # beside the live progress card
+MILESTONE_IMAGE = ""                       # big image under a milestone post
+COMPLETION_IMAGE = ""                      # big image under the 160h post
+
+# The progress bar is split into one segment per milestone, e.g.
+#   ▰▰▰▰┃▰▰▱▱┃▱▱▱▱┃▱▱▱▱┃▱▱▱▱
+BAR_FULL = "▰"
+BAR_EMPTY = "▱"
+BAR_SEPARATOR = "┃"
+BAR_CELLS_PER_MILESTONE = 4
+
+# Milestone tally shown on announcements, e.g. 🔥🔥🔥◦◦
+DOT_REACHED = "🔥"
+DOT_PENDING = "◦"
+
+DIVIDER = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+
+# =============================================================================
 #  1. MILESTONES — the five checkpoints and their rewards
 # =============================================================================
 #  hours        : the mark on the 0 → 160h event timeline (do not change unless
@@ -112,8 +140,9 @@ MILESTONE_LATE_TEXT = (
     "The bot was offline at the exact milestone second; this list is the first "
     "verified snapshot taken afterwards."
 )
-MILESTONE_FOOTER = "Milestone {hours}h of 160h • {remaining_hours}h left"
-MILESTONE_FOOTER_FINAL = "Milestone {hours}h of 160h • FINAL MILESTONE"
+MILESTONE_TALLY = "{dots}  ·  milestone **{index} of {count}**"
+MILESTONE_FOOTER = "{hours}h of 160h cleared · {remaining_hours}h to go"
+MILESTONE_FOOTER_FINAL = "160h of 160h cleared · FINAL MILESTONE"
 MILESTONE_NOBODY = "*nobody — the VC was empty*"
 
 
@@ -141,12 +170,12 @@ START_RULES = (
     "**FAILED**, forever."
 )
 START_MILESTONES_FIELD = "🏁 Milestones"
-START_MILESTONE_LINE = "**{hours}h** — {reward}"
+START_MILESTONE_LINE = "`{hours:>4}h`  {reward}"
 START_PARTICIPANTS_FIELD = "👥 In Hell right now ({participant_count})"
 START_NOBODY = "*nobody yet*"
 START_FINISH_FIELD = "🕛 Finish line"
 START_FINISH_TEXT = "{ends_at}\n({ends_relative})"
-START_FOOTER = "Good luck. You are going to need it. • /hell status • /hell leaderboard"
+START_FOOTER = "Good luck. You are going to need it. · /hell status · /hell leaderboard"
 
 
 # =============================================================================
@@ -157,8 +186,11 @@ START_FOOTER = "Good luck. You are going to need it. • /hell status • /hell 
 #  {next_relative} {started_at} {started_relative} {unverified}
 #  {grace_left} {vc}
 
-PROGRESS_TITLE = "{emoji} WELCOME TO HELL"
-PROGRESS_DESCRIPTION = "`{bar}`\n**{elapsed} / {total}** — **{percent}** complete"
+PROGRESS_TITLE = "{emoji} THE 160 HOUR CHALLENGE"
+PROGRESS_DESCRIPTION = (
+    "`{bar}`\n"
+    "**{elapsed}** of {total}  ·  **{percent}**  ·  {dots}"
+)
 PROGRESS_STATUS_FIELD = "Status"
 PROGRESS_STATUS_VALUE = "`{status}`"
 PROGRESS_STATUS_VALUE_EMPTY_VC = "`{status}` ⚠️ **VC EMPTY**"
@@ -175,8 +207,8 @@ PROGRESS_NEXT_VALUE_RUNNING = "**{next_milestone}h**\nin {time_to_next}\n({next_
 PROGRESS_NEXT_NONE = "*all milestones cleared*"
 PROGRESS_STARTED_FIELD = "🕛 Started"
 PROGRESS_STARTED_VALUE = "{started_at}\n{started_relative}"
-PROGRESS_FOOTER_LIVE = "Live • updates every 10 seconds • leave the VC empty and it all ends"
-PROGRESS_FOOTER_FINAL = "Final state • this message is no longer updating"
+PROGRESS_FOOTER_LIVE = "Live · updates every 10s · /hell status · /hell leaderboard"
+PROGRESS_FOOTER_FINAL = "Final state · this message is no longer updating"
 
 PROGRESS_FAILED_FIELD = "💀 FAILED"
 PROGRESS_FAILED_DEFAULT = "The VC became empty of valid participants."
@@ -294,12 +326,12 @@ LEADERBOARD_EMPTY = "*Nobody has spent time in Hell yet.*"
 LEADERBOARD_NO_PODIUM = "*No podium yet.*"
 LEADERBOARD_REST_TITLE = "Everyone else"
 LEADERBOARD_REST_TITLE_CONT = "Everyone else (cont.)"
-LEADERBOARD_FOOTER = "{total} participant(s) • times count only while the event is running"
+LEADERBOARD_FOOTER = "{total} participant(s) · time counts only while the event is running"
 LEADERBOARD_FROZEN_FOOTER = "These rankings are frozen; the event is over."
 LEADERBOARD_MORE = "and {hidden} more participant(s)"
-LEADERBOARD_ENTRY = "{medal} {who} — **{time}**"
+LEADERBOARD_ENTRY = "{medal}  {who}  ·  `{time}`"
 LEADERBOARD_MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
-LEADERBOARD_RANK = "**{rank}.**"      # used from 4th place down
+LEADERBOARD_RANK = "`#{rank}`"        # used from 4th place down
 
 
 # =============================================================================

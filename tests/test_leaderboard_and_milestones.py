@@ -67,11 +67,11 @@ def test_render_highlights_top3_and_lists_the_rest():
         rows((1, 128 * HOUR), (2, 117 * HOUR), (3, 104 * HOUR), (4, 83 * HOUR), (5, 61 * HOUR))
     )
     text = render_leaderboard(entries)
-    assert "🥇 <@1> — **128h 00m**" in text
-    assert "🥈 <@2>" in text and "🥉 <@3>" in text
-    assert "**4.** <@4>" in text and "**5.** <@5>" in text
+    assert "🥇" in text and "<@1>" in text and "128h 00m" in text
+    assert "🥈" in text and "🥉" in text
+    assert "#4" in text and "<@4>" in text
     # Top 3 are separated from the rest by a blank line
-    assert text.index("🥉") < text.index("**4.**")
+    assert text.index("🥉") < text.index("#4")
 
 
 def test_render_empty():

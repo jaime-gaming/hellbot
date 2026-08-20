@@ -276,7 +276,7 @@ def test_status_shows_the_live_numbers(wired, host, engine):
 
     text = interaction.text()
     assert "RUNNING" in text
-    assert "1h 00m / 160h 00m" in text
+    assert "1h 00m" in text and "160h 00m" in text
     assert "Alive checks" in text
 
 

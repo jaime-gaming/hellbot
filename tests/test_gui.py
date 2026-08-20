@@ -344,3 +344,36 @@ def test_first_run_without_a_config_opens_settings(gui, tmp_path):
 
     assert app.nb.selected is app.tab_cfg
     assert "First run" in recorder.titles()
+
+
+def test_header_shows_the_logo_and_version(gui, tmp_path):
+    """The window is the product's face: logo, title, version."""
+    from hell import __version__
+
+    module, _recorder = gui
+    app, _sup = make_app(module, tmp_path)
+
+    labels = _all_text(app)
+    assert any("WELCOME TO HELL" in text for text in labels)
+    assert any(__version__ in text for text in labels)
+    assert getattr(app, "_logo_image", None) is not None
+
+
+def test_palette_is_a_complete_set_of_hex_colours(gui):
+    """A missing/typo'd colour is a crash on a real Tk, not a wrong shade."""
+    import re
+
+    module, _recorder = gui
+    for name in ("BG", "CARD", "CARD_HI", "FG", "MUTED", "ACCENT", "ACCENT_DARK", "OK", "WARN", "BAD"):
+        value = getattr(module, name)
+        assert re.fullmatch(r"#[0-9a-fA-F]{6}", value), f"{name}={value!r} is not a hex colour"
+
+
+def _all_text(widget, found=None):
+    found = [] if found is None else found
+    text = widget.kwargs.get("text") if hasattr(widget, "kwargs") else None
+    if isinstance(text, str):
+        found.append(text)
+    for child in getattr(widget, "children", []):
+        _all_text(child, found)
+    return found

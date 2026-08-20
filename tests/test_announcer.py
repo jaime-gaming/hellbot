@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import discord
 import pytest
 
 from hell.announcer import Announcer, split_text
@@ -31,9 +32,10 @@ def test_progress_message_contains_every_required_field(announcer, engine):
 
     assert "WELCOME TO HELL" in text
     assert "RUNNING" in text                      # status
-    assert "73h 24m / 160h 00m" in text           # elapsed / total
+    assert "73h 24m" in text and "160h 00m" in text   # elapsed / total
     assert "45.9%" in text                        # percentage
-    assert "█" in text and "░" in text            # progress bar
+    assert "▰" in text and "▱" in text            # milestone-segmented bar
+    assert "🔥🔥◦◦◦" in text                       # milestone tally
     assert "Currently in Hell" in text and "**7**" in text   # VC population
     assert "Current milestone" in text and "**64h** cleared" in text
     assert "Next milestone" in text and "**96h**" in text
@@ -86,7 +88,7 @@ def test_completion_message_lists_top3_bonus(announcer, engine):
     assert "COMPLETED" in text
     assert "@cool people :D" in text
     assert "every milestone reward" in text
-    assert "🥇 <@1>" in text and "**4.** <@4>" in text
+    assert "🥇" in text and "<@1>" in text and "<@4>" in text
 
 
 def test_failure_message_mentions_reason_and_leaderboard(announcer, engine):
@@ -97,7 +99,7 @@ def test_failure_message_mentions_reason_and_leaderboard(announcer, engine):
     assert "CHALLENGE FAILED" in text
     assert "completely empty" in text
     assert "**32h**" in text          # milestones secured
-    assert "🥇 <@1> — **1h 00m**" in text
+    assert "🥇" in text and "<@1>" in text and "1h 00m" in text
 
 
 def test_milestone_with_a_huge_vc_stays_within_discord_limits(announcer):
@@ -179,3 +181,75 @@ def test_leaderboard_embeds_take_a_plain_color_kwarg(announcer):
         build_leaderboard([(1, "A", 60.0)]), title="X", color=0x123456
     )
     assert embeds[0].colour.value == 0x123456
+
+
+@pytest.mark.parametrize(
+    "builder",
+    ["start", "progress", "milestone", "grace_warning", "grace_recovered", "failure",
+     "cancelled", "completion", "leaderboard"],
+)
+def test_every_card_carries_the_brand(announcer, engine, builder):
+    """One visual identity: author line on every embed the bot posts."""
+    from hell.engine import EventCancelled, GraceRecovered, GraceStarted
+    from hell.leaderboard import build_leaderboard
+    from hell.milestones import get_milestone
+    from hell.texts import TEXT
+
+    start(engine, T0, 1)
+    snap = engine.snapshot(now=T0 + 3600, participants=2)
+    board = build_leaderboard([(1, "A", 3600.0)])
+    made = {
+        "start": lambda: [announcer.build_start(snap, "<@1>", [])],
+        "progress": lambda: [announcer.build_progress(snap)],
+        "milestone": lambda: [
+            announcer.build_milestone(
+                MilestoneReached(milestone=get_milestone(32), reached_ts=T0, members=[])
+            )
+        ],
+        "grace_warning": lambda: [
+            announcer.build_grace_warning(
+                GraceStarted(started_ts=T0, deadline_ts=T0 + 15, seconds=15, elapsed=60)
+            )
+        ],
+        "grace_recovered": lambda: [
+            announcer.build_grace_recovered(
+                GraceRecovered(started_ts=T0, recovered_ts=T0 + 5, empty_for=5, participants=[])
+            )
+        ],
+        "failure": lambda: announcer.build_failure(
+            EventFailed(failed_ts=T0, elapsed=3600, leaderboard=board)
+        ),
+        "cancelled": lambda: announcer.build_cancelled(
+            EventCancelled(cancelled_ts=T0, elapsed=3600, by_user_id=1, leaderboard=board)
+        ),
+        "completion": lambda: announcer.build_completion(
+            EventCompleted(completed_ts=T0, leaderboard=board, top3=[])
+        ),
+        "leaderboard": lambda: announcer.build_leaderboard_embeds(board),
+    }[builder]()
+
+    head = made[0]
+    assert head.author and head.author.name == TEXT.BRAND_NAME
+    assert head.colour is not None
+
+
+def test_artwork_is_attached_when_it_is_referenced(announcer, engine):
+    """Local images become uploads; nothing is attached when none are used."""
+    from hell import assets
+
+    start(engine, T0, 1)
+    progress = announcer.build_progress(engine.snapshot(now=T0 + 60, participants=1))
+    files = assets.files_for([progress])
+    assert sorted(f.filename for f in files) == ["hell-o-meter.png", "hellbot.png"]
+
+    bare = discord.Embed(title="no art")
+    assert assets.files_for([bare]) == []
+
+
+def test_missing_artwork_is_skipped_quietly(monkeypatch):
+    from hell import assets
+
+    assert assets.resolve("") is None
+    assert assets.resolve("assets/does-not-exist.png") is None
+    assert assets.resolve("https://example.com/x.png") == "https://example.com/x.png"
+    assert assets.resolve("assets/hellbot.png") == "attachment://hellbot.png"

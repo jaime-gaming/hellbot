@@ -12,7 +12,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10%20|%203.11%20|%203.12-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/discord.py-2.3+-5865F2?logo=discord&logoColor=white" alt="discord.py 2.3+">
-  <img src="https://img.shields.io/badge/tests-319%20passing-3fb950" alt="319 tests">
+  <img src="https://img.shields.io/badge/tests-332%20passing-3fb950" alt="332 tests">
   <img src="https://img.shields.io/badge/coverage-88%25-3fb950" alt="88% coverage">
   <img src="https://img.shields.io/badge/ruff%20·%20mypy-clean-e25822" alt="ruff and mypy clean">
 </p>
@@ -21,9 +21,6 @@
 
 Keep at least one real human in a single voice channel, **continuously, for 160 hours**. If that VC
 empties and nobody returns within the grace period, the run is dead — permanently.
-
-<table>
-<tr><td width="55%" valign="top">
 
 **The event**
 
@@ -40,14 +37,7 @@ empties and nobody returns within the grace period, the run is dead — permanen
 * **Live log stream** DM'd to the operator: joins, leaves, kicks, milestones, errors
 * **All wording in one file** — [`Announcements.py`](Announcements.py) — hot-reloadable
 * A **desktop control panel** (no console) and a one-file **`.exe`** build
-* 319 tests, 88% coverage, ruff + mypy clean
-
-</td><td width="45%" valign="top">
-
-<img src="assets/hell-o-meter.png" width="100%" alt="Milestone thermometer">
-
-</td></tr>
-</table>
+* 332 tests, 88% coverage, ruff + mypy clean
 
 ### What it looks like in Discord
 

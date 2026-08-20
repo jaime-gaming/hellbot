@@ -30,14 +30,15 @@ read your changes without starting the bot.
 # =============================================================================
 #  0. LOOK AND FEEL — branding, artwork and the shapes used in every message
 # =============================================================================
-#  Images may be an https:// URL or a file inside the project (dropped in
-#  assets/). Local files are uploaded with the message automatically; set a
-#  value to "" to leave that image out.
+#  Images are OFF by default: the messages are clean text, and nothing is
+#  uploaded with every post. To use artwork, set a value below to either an
+#  https:// URL (nothing is uploaded, recommended) or a file inside the project
+#  such as "assets/hellbot.png" (uploaded with the message). Leave "" for none.
 
 BRAND_NAME = "WELCOME TO HELL"
 BRAND_TAGLINE = "160 hours · one voice channel · no gaps"
-BRAND_ICON = "assets/hellbot.png"          # small icon on every embed
-PROGRESS_THUMBNAIL = "assets/hell-o-meter.png"   # beside the live progress card
+BRAND_ICON = ""                            # small icon beside the brand line
+PROGRESS_THUMBNAIL = ""                    # beside the live progress card
 MILESTONE_IMAGE = ""                       # big image under a milestone post
 COMPLETION_IMAGE = ""                      # big image under the 160h post
 

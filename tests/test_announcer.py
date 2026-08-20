@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import discord
 import pytest
 
 from hell.announcer import Announcer, split_text
@@ -233,17 +232,27 @@ def test_every_card_carries_the_brand(announcer, engine, builder):
     assert head.colour is not None
 
 
-def test_artwork_is_attached_when_it_is_referenced(announcer, engine):
-    """Local images become uploads; nothing is attached when none are used."""
+def test_messages_upload_nothing_by_default(announcer, engine):
+    """Out of the box the bot posts clean text — no attachments, no clutter."""
     from hell import assets
 
     start(engine, T0, 1)
     progress = announcer.build_progress(engine.snapshot(now=T0 + 60, participants=1))
-    files = assets.files_for([progress])
-    assert sorted(f.filename for f in files) == ["hell-o-meter.png", "hellbot.png"]
+    assert progress.thumbnail.url is None
+    assert assets.files_for([progress]) == []
 
-    bare = discord.Embed(title="no art")
-    assert assets.files_for([bare]) == []
+
+def test_artwork_is_attached_only_when_configured(announcer, engine, monkeypatch):
+    from hell import assets
+    from hell import embeds as embeds_module
+
+    monkeypatch.setattr(embeds_module.TEXT, "PROGRESS_THUMBNAIL", "assets/hellbot.png",
+                        raising=False)
+    start(engine, T0, 1)
+    progress = announcer.build_progress(engine.snapshot(now=T0 + 60, participants=1))
+
+    assert progress.thumbnail.url == "attachment://hellbot.png"
+    assert [f.filename for f in assets.files_for([progress])] == ["hellbot.png"]
 
 
 def test_missing_artwork_is_skipped_quietly(monkeypatch):

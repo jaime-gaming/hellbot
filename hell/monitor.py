@@ -234,8 +234,21 @@ class VoiceMonitor:
             await self.dispatch(event)
 
         if self.engine.is_running:
+            self._ensure_alive_checks_bound(now)
             self._pump_alive_check(now, humans)
         self._heartbeat(len(humans))
+
+    def _ensure_alive_checks_bound(self, now: float) -> None:
+        """Keep the roll-call manager attached to the current event.
+
+        Binding normally happens in `/hell start` and on restart recovery. If
+        anything ever skips that (a new event created another way, a manual
+        reset), an unbound manager would silently never run a check again —
+        so the monitor re-binds it here instead of trusting the caller.
+        """
+        if self.alive_checks.bound_uid != self.engine.event_uid:
+            log.info("Binding alive checks to event %s", self.engine.event_uid)
+            self.alive_checks.bind(self.engine.event_uid, now=now)
 
     def _pump_alive_check(self, now: float, humans: Sequence[ParticipantRef]) -> None:
         """Advance the roll call **off** the monitor's critical path.
@@ -353,6 +366,7 @@ class VoiceMonitor:
         """Trigger a roll call immediately (used by /hell alivecheck)."""
         if not self.engine.is_running or self.alive_checks.pending is not None:
             return False
+        self._ensure_alive_checks_bound(now_ts())
         collected = await self.collect()
         if collected is None or not collected[0]:
             return False

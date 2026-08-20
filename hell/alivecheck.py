@@ -178,6 +178,11 @@ class AliveCheckManager:
         if self.store.get_next_alive_check(event_uid) is None:
             self.schedule_next(now if now is not None else now_ts())
 
+    @property
+    def bound_uid(self) -> Optional[str]:
+        """Which event this manager is currently attached to."""
+        return self._event_uid
+
     def reset(self) -> None:
         self.pending = None
         self._event_uid = None

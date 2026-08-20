@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+import discord
 import pytest
 
 from hell.announcer import Announcer
@@ -27,11 +28,26 @@ class FakeMember:
         self.moved_to.append(target)
 
 
-class FakeVoiceChannel:
+class FakeVoiceChannel(discord.abc.Messageable):
+    """Voice channels have their own text chat in Discord — so does this one."""
+
+    async def _get_channel(self):
+        return self
+
     def __init__(self, members):
         self.id = 1539756705997652079
         self.name = "hell"
         self.members = list(members)
+        self.sent: list[dict] = []
+
+    async def send(self, content=None, **kwargs):
+        message = type(
+            "FakeVCMessage",
+            (),
+            {"id": 900 + len(self.sent), "channel": self, "content": content},
+        )()
+        self.sent.append({"content": content, **kwargs})
+        return message
 
 
 class FakeBot:

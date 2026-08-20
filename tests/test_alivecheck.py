@@ -370,3 +370,23 @@ def test_status_line_never_reveals_the_next_check_time(alive, store):
     store.set_next_alive_check("uid", T0)
     run(manager.tick(T0 + 1, users(1)))
     assert "0/1 answered" in manager.status_line(T0 + 2).replace("**", "")
+
+
+def test_manager_rebinds_itself_to_a_new_event(config, store, engine, monkeypatch):
+    """An unbound manager used to mean 'no roll calls, ever, silently'."""
+    from hell.announcer import Announcer
+    from hell.monitor import VoiceMonitor
+    from hell.timeutil import now_ts
+    from tests.test_monitor import FakeBot, FakeMember, FakeVoiceChannel
+
+    voice = FakeVoiceChannel([FakeMember(1, "Alice")])
+    bot = FakeBot(voice)
+    monitor = VoiceMonitor(bot, config, engine, Announcer(bot, config, engine))
+    monkeypatch.setattr(monitor, "voice_channel", lambda: voice)
+    assert monitor.alive_checks.bound_uid is None      # no event at construction
+
+    start(engine, now_ts(), 1)                          # started without the command
+    monitor._ensure_alive_checks_bound(now_ts())
+
+    assert monitor.alive_checks.bound_uid == engine.event_uid
+    assert store.get_next_alive_check(engine.event_uid) is not None

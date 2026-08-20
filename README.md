@@ -396,9 +396,9 @@ Two deliberate policy calls worth knowing:
 ```bash
 pip install -r requirements-dev.txt
 
-./tools/check.sh          # compile + pyflakes + ruff + mypy + 225 tests + simulations
+./tools/check.sh          # compile + pyflakes + ruff + mypy + 319 tests + simulations
 ./tools/check.sh --fast   # same, without the simulations
-python -m pytest          # tests only — no Discord connection required
+python -m pytest          # tests only — no Discord connection required (88% coverage)
 
 python tools/simulate.py              # print every message of a full 160h run, offline
 python tools/simulate.py --fail-at 40 # …of a run that dies after 40 hours

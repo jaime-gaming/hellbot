@@ -93,9 +93,16 @@ Migrations are additive and run at startup (`Store._migrate`).
 
 ## Testing
 
-`tests/` mirrors the layers: the pure core is tested directly, the Discord edge
-through fakes (`tests/test_integration.py` drives monitor → engine → announcer →
-channel and asserts no message ever ships an unrendered `{placeholder}`).
+`tests/` mirrors the layers — 319 tests, 88% statement coverage, no network:
+
+| Test file | Covers |
+|---|---|
+| `test_engine`, `test_grace`, `test_properties` | the state machine, the grace rule, and randomised chaos runs asserting the invariants above |
+| `test_storage`, `test_reports`, `test_leaderboard_and_milestones` | persistence, stat cards, ranking |
+| `test_alivecheck`, `test_health_and_aliveio` | roll calls end to end, preflight diagnostics |
+| `test_announcer`, `test_announcements_file` | embed limits, and that `Announcements.py` really drives every message |
+| `test_integration`, `test_command_flows`, `test_bot`, `test_monitor` | the Discord edge through fakes: monitor → engine → announcer → channel, every slash command callback, event routing |
+| `test_gui`, `test_launcher`, `test_logging`, `test_logsink` | the desktop launcher (headless via `tests/faketk.py`) and logging |
 
 ```bash
 ./tools/check.sh          # compile, pyflakes, ruff, mypy, pytest, simulations

@@ -7,7 +7,6 @@ individual user time never influences them.
 from __future__ import annotations
 
 import logging
-
 from typing import Optional
 
 from .models import Milestone
@@ -106,9 +105,8 @@ def refresh() -> list[Milestone]:
 refresh()
 
 
-# Kept as module attributes for readability at call sites.
+# Kept as a module attribute for readability at call sites.
 TOP3_BONUS_ROLE = TEXT.TOP3_BONUS_ROLE
-VERITIES_URL = TEXT.VERITIES_URL
 
 
 def get_milestone(hours: int) -> Milestone:

@@ -14,13 +14,12 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tkinter as tk
 import traceback
 import webbrowser
 from pathlib import Path
-from typing import Optional
-
-import tkinter as tk
 from tkinter import messagebox, ttk
+from typing import Optional
 
 from hell.config import ConfigError
 from hell.paths import log_file
@@ -300,7 +299,7 @@ class LauncherApp(tk.Tk):
             messagebox.showerror("Configuration error", str(exc), parent=self)
         except RuntimeError as exc:
             messagebox.showwarning("Already running", str(exc), parent=self)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             messagebox.showerror("Could not start", f"{type(exc).__name__}: {exc}", parent=self)
 
     def on_stop(self) -> None:
@@ -369,7 +368,7 @@ class LauncherApp(tk.Tk):
                 subprocess.Popen(["open", str(folder)])
             else:
                 subprocess.Popen(["xdg-open", str(folder)])
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             messagebox.showinfo("Log folder", f"{folder}\n\n({exc})", parent=self)
 
     def on_clear_log(self) -> None:

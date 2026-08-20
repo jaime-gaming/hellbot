@@ -7,9 +7,9 @@ field table below, so a file saved by the GUI still looks like the shipped
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping, MutableMapping
 
 
 @dataclass(frozen=True)
@@ -186,13 +186,6 @@ def apply_to_environ(values: Mapping[str, str], environ: MutableMapping[str, str
             environ[key] = text
         else:
             environ.pop(key, None)
-
-
-def mask(value: str, keep: int = 4) -> str:
-    value = str(value or "")
-    if len(value) <= keep:
-        return "•" * len(value)
-    return value[:keep] + "•" * min(24, len(value) - keep)
 
 
 def fields_for(section: str) -> Iterable[Field]:

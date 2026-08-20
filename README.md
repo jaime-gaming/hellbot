@@ -174,34 +174,16 @@ each block lists the `{placeholders}` it accepts.
 
 ## How it works
 
+See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the full module map, the
+invariants each layer guarantees, and the database schema.
+
 ```
-hell/
-├── models.py         EventStatus, Milestone, ParticipantRef, LeaderboardEntry, EventState
-├── timeutil.py       absolute-timestamp helpers, "142h 38m", progress bars
-├── paths.py          where .env / data / logs live (source checkout *and* frozen .exe)
-├── config.py         env/.env loading, role + channel IDs, tuning knobs
-├── logging_setup.py  rotating file log; safe when there is no console (pythonw / --noconsole)
-├── logsink.py        live log stream mirrored to the operator's DMs
-├── storage.py        ← 7. persistence (SQLite, WAL, atomic milestone claims)
-├── engine.py         ← 1./3./4. state machine, user time tracking, milestone detection
-├── leaderboard.py    ← 6. ranking, tie handling, Top-3 rendering
-├── milestones.py     milestone structure (wording comes from Announcements.py)
-├── texts.py          loader for Announcements.py: hot reload, crash-safe fallbacks
-├── timeline.py       ← timeline #1: the global 0 → 160h event clock
-├── tracking.py       ← timeline #2: per-user 0 → Xh session clocks
-├── grace.py          ← the empty-VC grace window (pure state machine)
-├── reports.py        ← per-user end-of-event stat cards (pure)
-├── dm.py             delivery of those cards, resumable and rate-limited
-├── alivecheck.py     ← 9. roll-call scheduling/resolution (Discord-free, like the engine)
-├── aliveio.py        Discord side of the roll call: pings, kicks, reply backfill
-├── monitor.py        ← 2. VC monitoring: 1 s tick, clanker kicks, 10 s progress edit, heartbeat
-├── announcer.py      ← 5. every message the bot posts (embeds, length-safe)
-├── health.py         startup preflight: IDs, channels, roles, permissions, intents
-├── cog.py            ← 8. /hell slash commands, confirmations, permission checks
-└── bot.py            entrypoint / wiring
-Announcements.py      ← every message the bot sends, in one editable file
-launcher/             desktop control panel (envfile · runtime supervisor · tkinter GUI)
-tools/simulate.py     offline dry-run of a whole 160 h event
+Announcements.py   every message the bot sends, in one editable file
+hell/              the bot: pure core (engine, timelines, grace, leaderboard…)
+                   + Discord edge (monitor, embeds, announcer, commands…)
+launcher/          desktop control panel (config editor, supervisor, tkinter UI)
+tools/             check.sh (lint+types+tests) and simulate.py (offline dry-run)
+docs/              architecture notes
 ```
 
 `engine.py` and everything below it import **zero Discord code**. The monitor feeds it plain
@@ -413,12 +395,16 @@ Two deliberate policy calls worth knowing:
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest                        # 223 tests, no Discord connection required
-python -m mypy --ignore-missing-imports hell launcher   # type check
-python -m pyflakes hell launcher tests  # lint
-python tools/simulate.py                # dry-run a full 160h event, printing every message
-python tools/simulate.py --fail-at 40   # dry-run a run that dies after 40 hours
+
+./tools/check.sh          # compile + pyflakes + ruff + mypy + 225 tests + simulations
+./tools/check.sh --fast   # same, without the simulations
+python -m pytest          # tests only — no Discord connection required
+
+python tools/simulate.py              # print every message of a full 160h run, offline
+python tools/simulate.py --fail-at 40 # …of a run that dies after 40 hours
 ```
+
+Tooling lives in `pyproject.toml` (pytest, mypy and ruff are configured there).
 
 `tools/simulate.py` drives the real engine and the real message renderers offline — the fastest way
 to review wording or verify a rule change end to end. A ready-made GitHub Actions workflow (tests on Python

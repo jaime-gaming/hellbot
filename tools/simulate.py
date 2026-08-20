@@ -11,27 +11,28 @@ from __future__ import annotations
 
 import argparse
 import sys
-from dataclasses import replace
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from hell.announcer import Announcer  # noqa: E402
-from hell.config import Config  # noqa: E402
-from hell.engine import (  # noqa: E402
+from hell.alivecheck import AliveCheckManager
+from hell.announcer import Announcer
+from hell.config import Config
+from hell.engine import (
     EventCancelled,
     EventCompleted,
     EventFailed,
+    GraceRecovered,
+    GraceStarted,
     HellEngine,
     MilestoneReached,
     Observation,
 )
-from hell.alivecheck import AliveCheckManager  # noqa: E402
-from hell.engine import GraceRecovered, GraceStarted  # noqa: E402
-from hell.milestones import TOTAL_SECONDS  # noqa: E402
-from hell.models import ParticipantRef  # noqa: E402
-from hell.storage import Store  # noqa: E402
+from hell.milestones import TOTAL_SECONDS
+from hell.models import ParticipantRef
+from hell.storage import Store
 
 HOUR = 3600.0
 T0 = 1_760_000_000.0

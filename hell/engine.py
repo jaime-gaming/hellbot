@@ -37,8 +37,9 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Optional, Sequence
+from typing import Optional
 
 from .config import Config
 from .grace import EmptyVcGracePeriod

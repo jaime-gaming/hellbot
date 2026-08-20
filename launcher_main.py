@@ -61,7 +61,7 @@ def main() -> int:
         from launcher.gui import run_gui
 
         return run_gui()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         _popup(
             "Welcome to Hell — crash",
             f"The launcher hit an unexpected error:\n\n{type(exc).__name__}: {exc}\n\n"

@@ -104,7 +104,7 @@ class Config:
     log_level: str = "INFO"
 
     @classmethod
-    def from_env(cls, env_file: str | os.PathLike[str] | None = None) -> "Config":
+    def from_env(cls, env_file: str | os.PathLike[str] | None = None) -> Config:
         """Load configuration from the environment (and `.env` next to the app)."""
         target = Path(env_file) if env_file is not None else env_path()
         if target and target.exists():
@@ -147,6 +147,33 @@ class Config:
             log_dm_flush_seconds=_float_env("LOG_DM_FLUSH_SECONDS", 3.0),
             log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO",
         )
+
+    def summary(self) -> list[tuple[str, str]]:
+        """Human-readable settings for logs and `/hell doctor` (no secrets)."""
+        return [
+            ("Guild", str(self.guild_id)),
+            ("Voice channel", str(self.voice_channel_id)),
+            ("Announcements", str(self.announce_channel_id)),
+            ("Host role", str(self.gamenight_host_role_id)),
+            ("Clanker role", str(self.clanker_role_id)),
+            ("Database", str(self.database_path)),
+            ("Monitor / progress", f"{self.monitor_interval:g}s / {self.progress_interval:g}s"),
+            ("Empty-VC grace", f"{self.empty_vc_grace_seconds:g}s"),
+            (
+                "Alive checks",
+                (
+                    f"every {self.alive_check_min_hours:g}-{self.alive_check_max_hours:g}h, "
+                    f"{self.alive_check_timeout_minutes:g} min to answer"
+                    if self.alive_check_enabled
+                    else "disabled"
+                ),
+            ),
+            ("Final DMs", "on" if self.send_final_dms else "off"),
+            (
+                "Live log stream",
+                f"{self.log_dm_level} -> {self.log_dm_user_id}" if self.log_dm_enabled else "off",
+            ),
+        ]
 
     def role_mention(self, role_id: int | None, fallback: str) -> str:
         """Mention a reward role if its ID is configured, else show plain text."""

@@ -21,8 +21,8 @@ observations (bot downtime) can never be silently handed out as VC time.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 from .leaderboard import build_leaderboard
 from .models import LeaderboardEntry, ParticipantRef
@@ -87,9 +87,3 @@ class UserTimeTracker:
     def totals(self, event_uid: str) -> list[LeaderboardEntry]:
         """Ranked per-user totals (0 → Xh each), highest first."""
         return build_leaderboard(self.store.get_user_times(event_uid))
-
-    def seconds_for(self, event_uid: str, user_id: int) -> float:
-        for uid, _name, seconds in self.store.get_user_times(event_uid):
-            if uid == user_id:
-                return seconds
-        return 0.0

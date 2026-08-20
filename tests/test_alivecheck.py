@@ -78,7 +78,7 @@ def test_strict_mode_requires_the_exact_word():
 # ---------------------------------------------------------------- scheduling
 
 def test_delay_is_always_inside_the_configured_window(alive):
-    manager, _ = alive
+    manager, _io = alive
     for _ in range(500):
         delay = manager.pick_delay()
         assert 1 * HOUR <= delay <= 6 * HOUR
@@ -91,7 +91,6 @@ def test_delays_are_actually_random(alive):
 
 
 def test_first_check_is_scheduled_on_bind(alive, store):
-    manager, _ = alive
     when = store.get_next_alive_check("uid")
     assert when is not None
     assert T0 + 1 * HOUR <= when <= T0 + 6 * HOUR

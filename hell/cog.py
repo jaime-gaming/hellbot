@@ -9,101 +9,24 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from . import __version__
 from .config import Config
+from .embeds import add_chunked_field
 from .engine import HellEngine, StartError
+from .health import preflight
 from .milestones import MILESTONES, TOTAL_SECONDS
 from .models import EventStatus
 from .monitor import VoiceMonitor
-from .texts import TEXT, say
-from .texts import message_count, reload as reload_texts, source as texts_source
+from .tasks import active as active_tasks
+from .texts import TEXT, message_count, say
+from .texts import reload as reload_texts
+from .texts import source as texts_source
+from .ui import RESET_PHRASE, ConfirmView, NotAHost, ResetModal, is_host
+
+__all__ = ["RESET_PHRASE", "ConfirmView", "HellCommands", "NotAHost", "ResetModal", "is_host"]
 from .timeutil import discord_ts, format_hm, now_ts
 
 log = logging.getLogger("hell.commands")
-
-RESET_PHRASE = "RESET WELCOME TO HELL"
-
-
-class NotAHost(app_commands.CheckFailure):
-    """Raised when a non-host tries to run a restricted command."""
-
-
-def is_host():
-    """Restrict a command to members holding the `@gamenight host` role."""
-
-    async def predicate(interaction: discord.Interaction) -> bool:
-        config: Config = interaction.client.config  # type: ignore[attr-defined]
-        member = interaction.user
-        if not isinstance(member, discord.Member):
-            raise NotAHost("This command can only be used inside the server.")
-        if not any(r.id == config.gamenight_host_role_id for r in member.roles):
-            raise NotAHost(
-                say(TEXT.CMD_NOT_ALLOWED, host_role=f"<@&{config.gamenight_host_role_id}>")
-            )
-        return True
-
-    return app_commands.check(predicate)
-
-
-class ConfirmView(discord.ui.View):
-    """Yes/no confirmation restricted to the invoking host."""
-
-    def __init__(self, author_id: int, *, confirm_label: str = "Confirm", timeout: float = 60.0):
-        super().__init__(timeout=timeout)
-        self.author_id = author_id
-        self.value: Optional[bool] = None
-        self.confirm.label = confirm_label
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.author_id:
-            await interaction.response.send_message("This confirmation is not yours.", ephemeral=True)
-            return False
-        return True
-
-    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.danger)
-    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        self.value = True
-        for child in self.children:
-            child.disabled = True  # type: ignore[attr-defined]
-        await interaction.response.edit_message(view=self)
-        self.stop()
-
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        self.value = False
-        for child in self.children:
-            child.disabled = True  # type: ignore[attr-defined]
-        await interaction.response.edit_message(content="Cancelled.", view=self)
-        self.stop()
-
-
-class ResetModal(discord.ui.Modal, title="Reset Welcome to Hell"):
-    """Strong confirmation: the host must type the exact phrase."""
-
-    phrase: discord.ui.TextInput = discord.ui.TextInput(
-        label=f'Type "{RESET_PHRASE}" to confirm',
-        placeholder=RESET_PHRASE,
-        required=True,
-        max_length=64,
-    )
-
-    def __init__(self, cog: "HellCommands"):
-        super().__init__()
-        self.cog = cog
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        if str(self.phrase.value).strip() != RESET_PHRASE:
-            await interaction.response.send_message(TEXT.CMD_RESET_MISMATCH, ephemeral=True)
-            return
-        engine = self.cog.engine
-        was = engine.status
-        async with self.cog.monitor.lock:
-            engine.reset()
-            self.cog.monitor.alive_checks.reset()
-        self.cog.announcer.forget_progress_message()
-        log.warning("Event data reset by %s (previous status: %s)", interaction.user, was.value)
-        await interaction.response.send_message(
-            say(TEXT.CMD_RESET_DONE, previous_status=was.value), ephemeral=False
-        )
 
 
 class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell event controls"):
@@ -385,6 +308,77 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             ),
             ephemeral=True,
         )
+
+    # ---------------------------------------------------------------- doctor
+
+    @app_commands.command(
+        name="doctor",
+        description="Self-check: permissions, channels, roles, state and background tasks.",
+    )
+    @is_host()
+    @app_commands.guild_only()
+    async def doctor(self, interaction: discord.Interaction) -> None:
+        """Everything an operator needs to diagnose the bot, in one place."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        report = await preflight(self.bot, self.config)
+        ok = report.ok
+        embed = discord.Embed(
+            title=("🩺 All good" if ok else "🩺 Problems found"),
+            description=(
+                "Every check passed."
+                if ok
+                else "The bot is running, but these need attention:"
+            ),
+            color=int(TEXT.COLOR_RUNNING if ok else TEXT.COLOR_FAILED),
+        )
+        if report.errors:
+            add_chunked_field(embed, "❌ Errors", "\n".join(f"• {e}" for e in report.errors))
+        if report.warnings:
+            add_chunked_field(embed, "⚠️ Warnings", "\n".join(f"• {w}" for w in report.warnings))
+
+        state = self.engine.state
+        vc_count = len(self.engine.last_participants)
+        collected = await self.monitor.collect() if self.engine.is_running else None
+        if collected is not None:
+            vc_count = len(collected[0])
+        add_chunked_field(
+            embed,
+            "📊 State",
+            "\n".join(
+                [
+                    f"• Status: **{state.status.value}**",
+                    f"• Elapsed: **{format_hm(self.engine.elapsed())}** / {format_hm(TOTAL_SECONDS)}",
+                    f"• In the VC: **{vc_count}**",
+                    f"• Milestones reached: **{len(self.engine.milestone_records())}**",
+                    f"• Leaderboard rows: **{len(self.engine.leaderboard())}**",
+                ]
+            ),
+        )
+        alive = self.monitor.alive_checks.status_line(now_ts())
+        blind = self.monitor.blind_seconds
+        stream = getattr(self.bot, "log_stream", None)
+        add_chunked_field(
+            embed,
+            "🔧 Runtime",
+            "\n".join(
+                [
+                    f"• Version: **{__version__}**",
+                    f"• Messages loaded from: `{texts_source()}`",
+                    f"• Background tasks: **{active_tasks()}**",
+                    f"• VC visibility: {f'**blind for {blind:.0f}s**' if blind else 'ok'}",
+                    f"• Alive checks: {alive or 'disabled'}",
+                    f"• Log stream: {stream.status() if stream else 'unavailable'}",
+                ]
+            ),
+        )
+        add_chunked_field(
+            embed,
+            "⚙️ Configuration",
+            "\n".join(f"• {label}: `{value}`" for label, value in self.config.summary()),
+        )
+        embed.set_footer(text="Nothing here is a secret — the token is never shown.")
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     # ------------------------------------------------------- message reloading
 

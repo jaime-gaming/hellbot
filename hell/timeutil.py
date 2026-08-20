@@ -8,17 +8,11 @@ never reset or shift the event timer.
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
 
 
 def now_ts() -> float:
     """Current absolute UTC timestamp (seconds)."""
     return time.time()
-
-
-def to_dt(ts: float) -> datetime:
-    """Convert a POSIX timestamp into an aware UTC datetime."""
-    return datetime.fromtimestamp(ts, tz=timezone.utc)
 
 
 def discord_ts(ts: float, style: str = "f") -> str:
@@ -58,7 +52,7 @@ def format_clock(seconds: float) -> str:
 def progress_bar(fraction: float, width: int = 20, full: str = "█", empty: str = "░") -> str:
     """Visual progress bar, e.g. `██████████░░░░░░░░░░`."""
     fraction = min(1.0, max(0.0, float(fraction)))
-    filled = int(round(fraction * width))
+    filled = round(fraction * width)
     # Never show a completely full bar unless we truly are at 100%.
     if filled >= width and fraction < 1.0:
         filled = width - 1

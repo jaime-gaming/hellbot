@@ -49,7 +49,7 @@ class MilestoneRecord:
     reached_ts: float
     announced: bool = False
     late: bool = False  # reached while the bot was offline; snapshot taken on catch-up
-    members: list["ParticipantRef"] = field(default_factory=list)
+    members: list[ParticipantRef] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

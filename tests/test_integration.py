@@ -213,7 +213,7 @@ def test_every_milestone_message_renders_and_is_unique(config, engine):
 # ------------------------------------------------------------ message rules
 
 def test_only_the_right_messages_ping_everyone(wired, engine):
-    monitor, announcer, text, _voice = wired
+    _monitor, announcer, text, _voice = wired
     start(engine, T0, 1)
     run(announcer.announce_start(engine.snapshot(now=T0, participants=1), FakeUser(), users(1)))
     run(

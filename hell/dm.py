@@ -22,6 +22,7 @@ import discord
 from .config import Config
 from .engine import HellEngine
 from .reports import UserReport, build_reports, render_report
+from .tasks import spawn
 from .texts import TEXT, say
 
 log = logging.getLogger("hell.dm")
@@ -81,16 +82,7 @@ class FinalReportDM:
             return
         if self._task is not None and not self._task.done():
             return
-        self._task = asyncio.create_task(self.send_all(), name="hell-stat-cards")
-        self._task.add_done_callback(self._log_task_result)
-
-    @staticmethod
-    def _log_task_result(task: "asyncio.Task") -> None:
-        if task.cancelled():  # pragma: no cover - shutdown
-            return
-        exc = task.exception()
-        if exc is not None:  # pragma: no cover - defensive
-            log.error("Stat card delivery crashed: %s", exc, exc_info=exc)
+        self._task = spawn(self.send_all(), name="stat-cards")
 
     async def send_all(self) -> dict[str, int]:
         """Send every pending stat card.  Returns a small summary."""
@@ -112,7 +104,7 @@ class FinalReportDM:
                 try:
                     status = await self._send_one(report)
                     self.engine.store.record_dm(uid, report.user_id, status)
-                except Exception:  # noqa: BLE001 - one bad card must not stop the rest
+                except Exception:
                     log.exception("Could not deliver the stat card for %s", report.user_id)
                     status = "failed"
                 summary[status] = summary.get(status, 0) + 1

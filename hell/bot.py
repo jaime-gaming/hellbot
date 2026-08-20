@@ -22,6 +22,7 @@ import aiohttp
 import discord
 from discord.ext import commands
 
+from . import __version__
 from .announcer import Announcer
 from .cog import HellCommands
 from .config import Config, ConfigError
@@ -31,6 +32,8 @@ from .logging_setup import setup_logging
 from .logsink import DiscordLogStream
 from .monitor import VoiceMonitor
 from .storage import Store
+from .texts import source as texts_source
+from .timeutil import format_hm
 
 log = logging.getLogger("hell")
 
@@ -68,14 +71,15 @@ class HellBot(commands.Bot):
             log.error("Could not sync slash commands: %s", exc)
 
     async def on_ready(self) -> None:
-        log.info("Logged in as %s (%s)", self.user, getattr(self.user, "id", "?"))
+        log.info("Welcome to Hell v%s — logged in as %s (%s)", __version__, self.user,
+                 getattr(self.user, "id", "?"))
+        for label, value in self.config.summary():
+            log.info("  %-20s %s", label + ":", value)
         log.info(
-            "Event status: %s | elapsed %.0fs | VC %s | announcements #%s | db %s",
+            "Event status: %s | elapsed %s | messages from %s",
             self.engine.status.value,
-            self.engine.elapsed(),
-            self.config.voice_channel_id,
-            self.config.announce_channel_id,
-            self.config.database_path,
+            format_hm(self.engine.elapsed()),
+            texts_source(),
         )
 
         try:
@@ -106,8 +110,6 @@ class HellBot(commands.Bot):
     async def _update_presence(self) -> None:
         """Show the event state in the bot's Discord status."""
         try:
-            from .timeutil import format_hm
-
             if self.engine.is_running:
                 text = f"Hell: {format_hm(self.engine.elapsed())} / 160h"
             elif self.engine.status.value == "COMPLETED":
@@ -189,7 +191,7 @@ def main() -> None:
         log.error("Configuration error: %s", exc)
         print(f"Configuration error: {exc}", file=sys.stderr)
         print("Copy .env.example to .env and fill it in (or use the launcher).", file=sys.stderr)
-        raise SystemExit(2)
+        raise SystemExit(2) from None
 
     try:
         asyncio.run(run(config))
@@ -207,7 +209,7 @@ def main() -> None:
         # No internet, DNS failure, blocked egress… a stack trace helps nobody.
         log.error("Could not reach Discord: %s", exc)
         _fail(5, "Could not reach Discord. Check the internet connection and try again.")
-    except Exception as exc:  # noqa: BLE001 - last resort, keep it readable
+    except Exception as exc:
         log.exception("The bot stopped with an unexpected error")
         _fail(1, f"Unexpected error: {type(exc).__name__}: {exc} (full traceback in logs/)")
 

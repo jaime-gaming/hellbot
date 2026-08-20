@@ -13,8 +13,8 @@ from hell import milestones, texts
 from hell.announcer import Announcer
 from hell.engine import EventCompleted, MilestoneReached
 from hell.leaderboard import build_leaderboard, format_entry
-from hell.reports import build_reports, render_report
 from hell.models import EventStatus, LeaderboardEntry, ParticipantRef
+from hell.reports import build_reports, render_report
 from hell.texts import TEXT, say
 from tests.conftest import T0, start
 
@@ -67,7 +67,7 @@ def test_every_milestone_comes_from_the_file():
 
 def test_missing_message_names_explain_themselves():
     with pytest.raises(AttributeError) as excinfo:
-        TEXT.THIS_MESSAGE_DOES_NOT_EXIST
+        _ = TEXT.THIS_MESSAGE_DOES_NOT_EXIST
     assert "Announcements.py" in str(excinfo.value)
 
 

@@ -15,7 +15,6 @@ from hell.config import ConfigError
 from launcher import envfile
 from launcher.runtime import ERROR, RUNNING, STOPPED, BotSupervisor, QueueLogHandler
 
-
 # ------------------------------------------------------------------ envfile
 
 GOOD = {
@@ -79,11 +78,6 @@ def test_write_is_atomic(tmp_path):
     path = write_good_env(tmp_path)
     assert not (tmp_path / ".env.tmp").exists()
     assert path.exists()
-
-
-def test_mask_hides_the_token():
-    masked = envfile.mask("supersecrettoken")
-    assert masked.startswith("supe") and "secret" not in masked
 
 
 # ------------------------------------------------------------- log handler

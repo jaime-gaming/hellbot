@@ -13,9 +13,10 @@ import os
 import queue
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 from hell.config import Config, ConfigError
 from hell.logging_setup import setup_logging
@@ -40,7 +41,7 @@ class QueueLogHandler(logging.Handler):
 
     def __init__(self, maxsize: int = 5000):
         super().__init__()
-        self.queue: "queue.Queue[str]" = queue.Queue(maxsize=maxsize)
+        self.queue: queue.Queue[str] = queue.Queue(maxsize=maxsize)
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
@@ -116,6 +117,7 @@ class BotSupervisor:
         self._detail = ""
         self._thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._ready_task: Optional[asyncio.Task] = None
         self._bot: Any = None
         self._started_at: Optional[float] = None
         self._lock = threading.RLock()
@@ -184,12 +186,13 @@ class BotSupervisor:
             if hasattr(bot, "wait_until_ready"):
                 # Flip to RUNNING only when Discord actually accepts us, so the
                 # dashboard cannot claim "Running" while a bad token is failing.
-                loop.create_task(self._mark_ready_when_connected(bot))
+                # Keep the reference: an unreferenced task can be collected.
+                self._ready_task = loop.create_task(self._mark_ready_when_connected(bot))
             else:  # pragma: no cover - test doubles
                 self._set_status(RUNNING, "connected")
             loop.run_until_complete(bot.start(config.token))
             self._set_status(STOPPED, "stopped")
-        except Exception as exc:  # noqa: BLE001 - surfaced in the UI
+        except Exception as exc:
             message = self._humanise(exc)
             log.error("Bot stopped: %s", message)
             self._set_status(ERROR, message)

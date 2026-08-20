@@ -10,7 +10,6 @@ from hell.models import EventStatus
 from hell.timeline import EventTimeline
 from tests.conftest import GRACE, HOUR, T0, empty_out, make_config, obs, start
 
-
 # --------------------------------------------------------- the pure window
 
 def test_window_opens_and_expires():

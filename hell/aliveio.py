@@ -8,7 +8,8 @@ reading back replies that arrived while the bot was offline.
 from __future__ import annotations
 
 import logging
-from typing import Optional, Sequence
+from collections.abc import Sequence
+from typing import Optional
 
 import discord
 

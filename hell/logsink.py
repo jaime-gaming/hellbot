@@ -29,6 +29,7 @@ from typing import Optional
 import discord
 
 from .config import Config
+from .tasks import spawn
 
 log = logging.getLogger("hell.logsink")
 
@@ -192,7 +193,7 @@ class DiscordLogStream:
             log.warning("Live log stream disabled — %s", self.disabled_reason)
             return
 
-        self._task = asyncio.create_task(self._run(), name="hell-log-stream")
+        self._task = spawn(self._run(), name="log-stream")
         await self._send(
             f"📡 **Live log stream connected** — mirroring `{logging.getLevelName(self.handler.level)}`"
             f" and above from **Welcome to Hell**."
@@ -205,7 +206,7 @@ class DiscordLogStream:
             task.cancel()
             try:
                 await task
-            except (asyncio.CancelledError, Exception):  # noqa: B014 - best effort
+            except (asyncio.CancelledError, Exception):
                 pass
         try:
             await self.flush()

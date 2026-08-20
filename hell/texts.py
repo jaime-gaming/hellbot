@@ -73,7 +73,7 @@ def load(force: bool = False) -> ModuleType:
             continue
         try:
             module = _load_from_file(path)
-        except Exception as exc:  # noqa: BLE001 - reported, never fatal
+        except Exception as exc:
             errors.append(f"{path}: {type(exc).__name__}: {exc}")
             continue
         _module, _source, _last_error = module, str(path), None
@@ -86,7 +86,7 @@ def load(force: bool = False) -> ModuleType:
         module = importlib.import_module(MODULE_NAME)
         _module, _source, _last_error = module, getattr(module, "__file__", MODULE_NAME), None
         return module
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         errors.append(f"import {MODULE_NAME}: {type(exc).__name__}: {exc}")
 
     _last_error = "; ".join(errors) or f"{FILE_NAME} not found"
@@ -121,7 +121,7 @@ def reload() -> tuple[bool, str]:
         raise FileNotFoundError(
             f"{FILE_NAME} not found in: " + ", ".join(str(p) for p in _candidates())
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         _module = previous
         _last_error = f"{type(exc).__name__}: {exc}"
         log.error("Reloading %s failed, keeping the previous text: %s", FILE_NAME, _last_error)

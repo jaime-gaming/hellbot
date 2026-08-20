@@ -28,8 +28,9 @@ from __future__ import annotations
 import logging
 import random
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Optional, Protocol, Sequence
+from typing import Optional, Protocol
 
 from .config import Config
 from .models import ParticipantRef
@@ -88,7 +89,7 @@ class PendingCheck:
         }
 
     @classmethod
-    def from_row(cls, row: dict) -> "PendingCheck":
+    def from_row(cls, row: dict) -> PendingCheck:
         return cls(
             check_id=row["check_id"],
             started_ts=float(row["started_ts"]),

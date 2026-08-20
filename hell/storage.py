@@ -15,10 +15,11 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-import time
 import threading
+import time
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import Optional
 
 from .models import EventState, EventStatus, LeaderboardEntry, MilestoneRecord, ParticipantRef
 
@@ -547,25 +548,6 @@ class Store:
         return [LeaderboardEntry(r["rank"], r["user_id"], r["display_name"], r["seconds"]) for r in rows]
 
     # ------------------------------------------------------------ maintenance
-
-    def purge_event(self, event_uid: str) -> None:
-        """Wipe every row belonging to one event run (used by /hell reset)."""
-        with self._lock:
-            self._conn.execute("BEGIN IMMEDIATE")
-            try:
-                for table in (
-                    "user_time", "milestones", "milestone_members", "presence",
-                    "final_leaderboard", "alive_check", "alive_check_history", "dm_log",
-                ):
-                    self._conn.execute(f"DELETE FROM {table} WHERE event_uid = ?", (event_uid,))
-                self._conn.execute(
-                    "DELETE FROM meta WHERE key IN (?, ?)",
-                    (f"next_alive_check:{event_uid}", f"unverified:{event_uid}"),
-                )
-                self._conn.execute("COMMIT")
-            except Exception:
-                self._conn.execute("ROLLBACK")
-                raise
 
     def reset_all(self) -> None:
         with self._lock:

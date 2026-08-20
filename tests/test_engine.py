@@ -16,7 +16,6 @@ from hell.milestones import TOTAL_SECONDS
 from hell.models import EventStatus
 from tests.conftest import GRACE, HOUR, T0, empty_out, obs, start
 
-
 # ------------------------------------------------------------------- start
 
 def test_start_sets_running_state_and_timestamp(engine):
@@ -196,7 +195,7 @@ def test_milestone_missed_during_grace_fires_when_people_return(engine):
     events = engine.tick(obs(T0 + 32 * HOUR + 5, 1, 2))  # rescued in time
     kinds = [type(e).__name__ for e in events]
     assert "GraceRecovered" in kinds and "MilestoneReached" in kinds
-    milestone = [e for e in events if isinstance(e, MilestoneReached)][0]
+    milestone = next(e for e in events if isinstance(e, MilestoneReached))
     assert {m.user_id for m in milestone.members} == {1, 2}   # the rescuers claim it
     assert engine.status is EventStatus.RUNNING
 
@@ -218,7 +217,7 @@ def test_completion_at_160_hours(engine):
     events = engine.tick(obs(T0 + TOTAL_SECONDS, 1, 2))
     kinds = [type(e).__name__ for e in events]
     assert "MilestoneReached" in kinds and "EventCompleted" in kinds
-    completed = [e for e in events if isinstance(e, EventCompleted)][0]
+    completed = next(e for e in events if isinstance(e, EventCompleted))
     assert engine.status is EventStatus.COMPLETED
     assert completed.completed_ts == T0 + TOTAL_SECONDS
     assert {p.user_id for p in completed.top3} <= {1, 2}

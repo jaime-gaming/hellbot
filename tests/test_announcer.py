@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from hell.announcer import Announcer, chunk_lines
+from hell.announcer import Announcer, split_text
 from hell.engine import EventCompleted, EventFailed, MilestoneReached
 from hell.leaderboard import build_leaderboard, top_participants
 from hell.milestones import MILESTONES, get_milestone
@@ -59,7 +59,7 @@ def test_every_milestone_message_is_distinct(announcer):
         for m in MILESTONES
     ]
     assert len(set(rendered)) == 5
-    for text, m in zip(rendered, MILESTONES):
+    for text, m in zip(rendered, MILESTONES, strict=True):
         assert text.startswith("@everyone")
         assert m.title in text
         assert "the ones in the VC at this exact moment" in text
@@ -152,9 +152,8 @@ def test_progress_message_is_stable_between_identical_ticks(announcer, engine):
     assert announcer.render_progress(snap) == announcer.render_progress(snap)
 
 
-def test_chunk_lines_respects_discord_limit():
-    lines = ["x" * 100 for _ in range(60)]
-    chunks = chunk_lines(lines)
+def test_split_text_respects_discord_limits():
+    chunks = split_text("\n".join("x" * 100 for _ in range(60)), 1900)
     assert len(chunks) > 1
     assert all(len(c) <= 1900 for c in chunks)
 

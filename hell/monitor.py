@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional, Sequence
+from collections.abc import Sequence
+from typing import Optional
 
 import discord
 from discord.ext import tasks
@@ -38,6 +39,7 @@ from .engine import (
     Observation,
 )
 from .models import EventStatus, ParticipantRef
+from .tasks import spawn
 from .timeutil import format_hm, now_ts
 
 log = logging.getLogger("hell.monitor")
@@ -252,7 +254,7 @@ class VoiceMonitor:
             except Exception:  # pragma: no cover - never break the event loop
                 log.exception("Alive check tick failed")
 
-        self._alive_task = asyncio.create_task(runner(), name="hell-alive-check")
+        self._alive_task = spawn(runner(), name="alive-check")
 
     def _heartbeat(self, participants: int) -> None:
         """Periodic proof-of-life in the log file, useful when running headless."""

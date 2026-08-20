@@ -34,6 +34,7 @@ class Milestone:
     reward: str
     blurb: str
     short_reward: str = ""
+    flavour: str = ""
 
     @property
     def seconds(self) -> float:

@@ -16,9 +16,8 @@ from __future__ import annotations
 from typing import Iterable, Sequence
 
 from .models import LeaderboardEntry, ParticipantRef
+from .texts import TEXT, say
 from .timeutil import format_hm
-
-MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
 
 
 def build_leaderboard(rows: Iterable[tuple[int, str, float]]) -> list[LeaderboardEntry]:
@@ -53,23 +52,29 @@ def top_participants(entries: Sequence[LeaderboardEntry], n: int = 3) -> list[Pa
     return [ParticipantRef(e.user_id, e.display_name) for e in top_n(entries, n)]
 
 
+def medals() -> dict[int, str]:
+    """Podium markers, editable in Announcements.py."""
+    return {int(k): v for k, v in dict(TEXT.LEADERBOARD_MEDALS).items()}
+
+
 def format_entry(entry: LeaderboardEntry, use_mentions: bool = True) -> str:
     who = entry.mention() if use_mentions else entry.display_name
-    prefix = MEDALS.get(entry.rank, f"**{entry.rank}.**")
-    return f"{prefix} {who} — **{format_hm(entry.seconds)}**"
+    prefix = medals().get(entry.rank, say(TEXT.LEADERBOARD_RANK, rank=entry.rank))
+    return say(TEXT.LEADERBOARD_ENTRY, medal=prefix, who=who, time=format_hm(entry.seconds))
 
 
 def render_leaderboard(
     entries: Sequence[LeaderboardEntry],
     *,
-    title: str = "🏆 WELCOME TO HELL — LEADERBOARD",
+    title: str | None = None,
     limit: int | None = 25,
     use_mentions: bool = True,
-    empty_note: str = "_Nobody has spent time in Hell yet._",
+    empty_note: str | None = None,
 ) -> str:
     """Render the leaderboard with the Top 3 visually separated from the rest."""
+    title = title if title is not None else TEXT.LEADERBOARD_TITLE
     if not entries:
-        return f"**{title}**\n{empty_note}"
+        return f"**{title}**\n{empty_note if empty_note is not None else TEXT.LEADERBOARD_EMPTY}"
 
     shown = list(entries[:limit]) if limit else list(entries)
     podium = [e for e in shown if e.rank <= 3]
@@ -83,5 +88,5 @@ def render_leaderboard(
     hidden = len(entries) - len(shown)
     if hidden > 0:
         lines.append("")
-        lines.append(f"_…and {hidden} more participant(s)._")
+        lines.append(f"_…and {say(TEXT.LEADERBOARD_MORE, hidden=hidden)}._")
     return "\n".join(lines)

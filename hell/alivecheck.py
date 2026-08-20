@@ -34,12 +34,24 @@ from typing import Optional, Protocol, Sequence
 from .config import Config
 from .models import ParticipantRef
 from .storage import Store
+from .texts import TEXT, say
 from .timeutil import format_hm, now_ts
 
 log = logging.getLogger("hell.alivecheck")
 
-CHECK_TEXT = "🚨 ARE YOU ALIVE? Say: Yes"
 ACCEPTED_REPLY = "yes"
+
+
+def check_text() -> str:
+    """The exact roll-call headline (edit it in Announcements.py)."""
+    return TEXT.ALIVE_CHECK_TEXT
+
+
+def __getattr__(name: str):
+    """`CHECK_TEXT` stays importable but always reflects Announcements.py."""
+    if name == "CHECK_TEXT":
+        return TEXT.ALIVE_CHECK_TEXT
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # ------------------------------------------------------------------- models
@@ -366,34 +378,34 @@ class AliveCheckManager:
 
     def render_check(self, check: Optional[PendingCheck] = None) -> str:
         minutes = int(max(30.0, self.config.alive_check_timeout_minutes * 60.0) // 60)
-        return (
-            f"{CHECK_TEXT}\n"
-            f"*Reply with* `Yes` *in this channel within {minutes} minutes or you will be "
-            "disconnected from the VC. You keep all your leaderboard time and can rejoin "
-            "immediately.*"
-        )
+        return TEXT.ALIVE_CHECK_TEXT + "\n" + say(TEXT.ALIVE_CHECK_INSTRUCTIONS, minutes=minutes)
 
     def render_result(self, result: CheckResult) -> str:
         if result.cancelled:
-            return (
-                "🚨 **Alive check cancelled** — "
-                f"{result.reason or 'the bot was restarted while it was running'}. "
-                "Nobody was disconnected."
+            return say(
+                TEXT.ALIVE_CHECK_CANCELLED,
+                reason=result.reason or TEXT.ALIVE_CHECK_CANCELLED_DEFAULT_REASON,
             )
-        lines = ["🚨 **Alive check finished**"]
-        lines.append(f"✅ Answered: **{len(result.responded)}**")
+        lines = [
+            TEXT.ALIVE_CHECK_RESULT_TITLE,
+            say(TEXT.ALIVE_CHECK_RESULT_ANSWERED, answered=len(result.responded)),
+        ]
         if result.kicked:
-            names = ", ".join(k.mention() for k in result.kicked)
-            lines.append(f"❌ Disconnected for not answering: {names}")
             lines.append(
-                "*Their leaderboard time is untouched — rejoin "
-                "whenever you like and tracking resumes.*"
+                say(
+                    TEXT.ALIVE_CHECK_RESULT_KICKED,
+                    kicked=", ".join(k.mention() for k in result.kicked),
+                )
             )
+            lines.append(TEXT.ALIVE_CHECK_RESULT_KICKED_NOTE)
         else:
-            lines.append("❌ Disconnected: **nobody** — everyone answered in time.")
+            lines.append(TEXT.ALIVE_CHECK_RESULT_NOBODY_KICKED)
         if result.left_early:
             lines.append(
-                f"↩️ Already out of the VC: {', '.join(p.mention() for p in result.left_early)}"
+                say(
+                    TEXT.ALIVE_CHECK_RESULT_LEFT_EARLY,
+                    left_early=", ".join(p.mention() for p in result.left_early),
+                )
             )
         return "\n".join(lines)
 
@@ -404,10 +416,15 @@ class AliveCheckManager:
         if not self.enabled:
             return None
         if self.pending is not None:
-            answered = len(self.pending.responded)
-            total = len(self.pending.required)
-            left = int(self.pending.seconds_left(now))
-            return f"🚨 Alive check running — **{answered}/{total}** answered, {left}s left"
-        low = self.config.alive_check_min_hours
-        high = self.config.alive_check_max_hours
-        return f"🚨 Alive checks: random, every **{low:g}–{high:g}h** — reply `Yes` within 5 min"
+            return say(
+                TEXT.ALIVE_CHECK_STATUS_RUNNING,
+                answered=len(self.pending.responded),
+                total=len(self.pending.required),
+                left=int(self.pending.seconds_left(now)),
+            )
+        return say(
+            TEXT.ALIVE_CHECK_STATUS_IDLE,
+            min_hours=self.config.alive_check_min_hours,
+            max_hours=self.config.alive_check_max_hours,
+            minutes=int(self.config.alive_check_timeout_minutes),
+        )

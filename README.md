@@ -13,6 +13,7 @@ valid humans, the run is dead.
   dies if nobody comes back
 * Everyone gets a **personal stat card by DM** when the run ends
 * **Live log stream** DM'd to the operator: joins, leaves, kicks, milestones, errors, in real time
+* **All wording in one file** — [`Announcements.py`](Announcements.py) — reloadable without a restart
 * Everything is timestamp-based and persisted in SQLite — **restarting the bot never resets the timer**
 * Ships with a **desktop control panel** (no console) and a one-file **`.exe`** build
 
@@ -128,6 +129,7 @@ in the log, and in the launcher's Dashboard.
 | `/hell status` | everyone | Status, elapsed, remaining, % complete, progress bar, live VC headcount, current + next milestone, and the milestones already reached. |
 | `/hell leaderboard` | everyone | Current (or frozen final) leaderboard: Top 3 on the podium, everyone else below. |
 | `/hell alivecheck` | `@gamenight host` | Runs a roll call immediately instead of waiting for the random timer. |
+| `/hell reloadmessages` | `@gamenight host` | Re-read `Announcements.py` so edited wording applies immediately. |
 | `/hell logs` | `@gamenight host` | Control the live log stream: `status`, `on`, `off`, `test`, `flush`, and the minimum severity. |
 | `/hell mystats` | everyone | Your own stat card (time survived, rank, rewards) — handy if your DMs are closed. |
 | `/hell milestones` | everyone | All five milestones, their rewards, when each was reached and how many users were eligible. |
@@ -138,6 +140,37 @@ All output is embeds. Mentions inside an embed never ping, so a milestone can li
 users without 250 notifications — while the `@everyone` ping stays in the message content.
 
 ---
+
+## Changing what the bot says — `Announcements.py`
+
+Every message, title, footer, reward, emoji and colour lives in one file at the root of the
+project: **[`Announcements.py`](Announcements.py)**. No logic, just text.
+
+```python
+    {
+        "hours": 32,
+        "title": "🔥 32 HOURS SURVIVED",
+        "blurb": "Welcome to Hell has reached the first milestone.",
+        "flavour": "The first gate is behind you. 128 hours to go — the easy part is over.",
+        "reward": "@hell (limited)",
+        "short_reward": "@hell",
+    },
+```
+
+It is organised in numbered sections — milestones, start, live progress, grace period, failure,
+cancellation, completion, leaderboard, alive checks, stat cards, command replies, colours — and
+each block lists the `{placeholders}` it accepts.
+
+* **Edit the text between the quotes**, keep the `{placeholders}` you want, save.
+* Run **`/hell reloadmessages`** (host only) and the new wording is live — no restart, no risk to a
+  running 160-hour event.
+* If your edit has a syntax error or a missing name, the bot **keeps the previously loaded text**
+  and tells you exactly what broke (`hell/texts.py`). It never crashes on bad copy.
+* An unknown `{placeholder}` degrades to the raw template and is logged, rather than killing the
+  announcement it belongs to.
+* `python tools/simulate.py` prints every message offline, so you can proofread before going live.
+* In a frozen build the file is copied next to `WelcomeToHellBot.exe` and read from there, so
+  wording can be changed without rebuilding.
 
 ## How it works
 
@@ -152,7 +185,8 @@ hell/
 ├── storage.py        ← 7. persistence (SQLite, WAL, atomic milestone claims)
 ├── engine.py         ← 1./3./4. state machine, user time tracking, milestone detection
 ├── leaderboard.py    ← 6. ranking, tie handling, Top-3 rendering
-├── milestones.py     the five milestones + reward definitions
+├── milestones.py     milestone structure (wording comes from Announcements.py)
+├── texts.py          loader for Announcements.py: hot reload, crash-safe fallbacks
 ├── timeline.py       ← timeline #1: the global 0 → 160h event clock
 ├── tracking.py       ← timeline #2: per-user 0 → Xh session clocks
 ├── grace.py          ← the empty-VC grace window (pure state machine)
@@ -165,6 +199,7 @@ hell/
 ├── health.py         startup preflight: IDs, channels, roles, permissions, intents
 ├── cog.py            ← 8. /hell slash commands, confirmations, permission checks
 └── bot.py            entrypoint / wiring
+Announcements.py      ← every message the bot sends, in one editable file
 launcher/             desktop control panel (envfile · runtime supervisor · tkinter GUI)
 tools/simulate.py     offline dry-run of a whole 160 h event
 ```
@@ -374,7 +409,7 @@ Two deliberate policy calls worth knowing:
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest                        # 184 tests, no Discord connection required
+python -m pytest                        # 197 tests, no Discord connection required
 python -m pyflakes hell launcher tests  # lint
 python tools/simulate.py                # dry-run a full 160h event, printing every message
 python tools/simulate.py --fail-at 40   # dry-run a run that dies after 40 hours

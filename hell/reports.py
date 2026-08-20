@@ -19,15 +19,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Sequence
 
-from .milestones import MILESTONES, TOP3_BONUS_ROLE, get_milestone
+from .milestones import MILESTONES, get_milestone
 from .models import EventStatus, LeaderboardEntry, MilestoneRecord
+from .texts import TEXT, say
 from .timeutil import format_clock
-
-OUTCOME_LINE = {
-    EventStatus.COMPLETED: "The challenge was **COMPLETED** — 160 consecutive hours.",
-    EventStatus.FAILED: "The challenge **FAILED** — the VC emptied before 160 hours.",
-    EventStatus.CANCELLED: "The challenge was **CANCELLED** by a host.",
-}
 
 
 @dataclass
@@ -77,10 +72,15 @@ def build_reports(
 
         if bonus:
             # The final Top 3 receive every milestone reward plus the bonus role.
-            rewards = [f"{m.hours}h — {m.reward}" for m in MILESTONES]
-            rewards.append(f"Top 3 bonus — {TOP3_BONUS_ROLE}")
+            rewards = [
+                say(TEXT.CARD_MILESTONE_LINE, hours=m.hours, reward=m.reward) for m in MILESTONES
+            ]
+            rewards.append(say(TEXT.CARD_TOP3_BONUS_LINE, bonus_role=TEXT.TOP3_BONUS_ROLE))
         else:
-            rewards = [f"{h}h — {get_milestone(h).reward}" for h in hours]
+            rewards = [
+                say(TEXT.CARD_MILESTONE_LINE, hours=h, reward=get_milestone(h).reward)
+                for h in hours
+            ]
 
         reports.append(
             UserReport(
@@ -101,29 +101,27 @@ def build_reports(
 
 
 def render_report(report: UserReport) -> str:
-    """The DM body, in the requested shape."""
+    """The DM body — its shape is defined by `CARD_BODY` in Announcements.py."""
     lines = [
-        "**WELCOME TO HELL**",
-        "",
-        f"**{report.survived} SURVIVED**",
-        "",
-        f"**YOU WERE... TOP {report.rank}**",
-        f"*out of {report.participants} contestant(s)*",
-        "",
-        f"**YOU WON {report.reward_count} REWARD{'S' if report.reward_count != 1 else ''}**",
+        say(
+            TEXT.CARD_BODY,
+            survived=report.survived,
+            rank=report.rank,
+            participants=report.participants,
+            reward_count=report.reward_count,
+            reward_plural="S" if report.reward_count != 1 else "",
+        )
     ]
     if report.rewards:
-        lines.extend(f"• {reward}" for reward in report.rewards)
-        if report.bonus:
-            lines.append("*Top 3: every milestone reward is yours.*")
-        else:
-            lines.append("*Claimable because you were in the VC when the milestone hit.*")
+        lines.extend(say(TEXT.CARD_REWARD_LINE, reward=reward) for reward in report.rewards)
+        lines.append(TEXT.CARD_REWARD_TOP3_NOTE if report.bonus else TEXT.CARD_REWARD_NOTE)
     else:
-        lines.append("*You were not in the VC at any milestone moment — no rewards this time.*")
+        lines.append(TEXT.CARD_NO_REWARDS)
 
+    outcome = dict(TEXT.CARD_OUTCOME).get(report.status.value, TEXT.CARD_OUTCOME_DEFAULT)
     lines += [
         "",
-        OUTCOME_LINE.get(report.status, "The event has ended."),
-        f"Event clock: **{format_clock(report.event_elapsed)}** of 160:00:00.",
+        outcome,
+        say(TEXT.CARD_EVENT_CLOCK, event_clock=format_clock(report.event_elapsed)),
     ]
     return "\n".join(lines)

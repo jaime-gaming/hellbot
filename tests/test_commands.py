@@ -29,7 +29,7 @@ def test_command_group_exposes_the_expected_subcommands(bot, config, engine):
     names = {cmd.name for cmd in cog.app_command.commands}  # type: ignore[union-attr]
     assert names == {
         "start", "status", "leaderboard", "milestones", "mystats",
-        "alivecheck", "logs", "stop", "reset",
+        "alivecheck", "logs", "reloadmessages", "stop", "reset",
     }
     assert cog.app_command.name == "hell"  # type: ignore[union-attr]
 
@@ -39,7 +39,7 @@ def test_restricted_commands_carry_a_check(bot, config, engine):
     monitor = VoiceMonitor(bot, config, engine, announcer)
     cog = HellCommands(bot, config, engine, monitor)
     by_name = {c.name: c for c in cog.app_command.commands}  # type: ignore[union-attr]
-    for restricted in ("start", "stop", "reset", "alivecheck", "logs"):
+    for restricted in ("start", "stop", "reset", "alivecheck", "logs", "reloadmessages"):
         assert by_name[restricted].checks, f"/hell {restricted} must be host-restricted"
     for public in ("status", "leaderboard", "milestones", "mystats"):
         assert not by_name[public].checks

@@ -1,0 +1,488 @@
+"""
+================================================================================
+ Announcements.py — EVERY message the Welcome to Hell bot sends lives here
+================================================================================
+
+Edit this file to change wording, emojis, rewards or flavour text.  You never
+need to touch the bot's logic: the code reads its text from here at render
+time, so a change takes effect on the next message (or instantly with
+`/hell reloadmessages`).
+
+HOW TO EDIT SAFELY
+------------------
+1.  Only change the text **inside the quotes**.
+2.  Keep every `{placeholder}` that is already in a line — they are filled in
+    by the bot (each block lists the placeholders it supports).  You may delete
+    a placeholder you do not want, or reuse one several times, but never invent
+    a new name: an unknown `{name}` makes that message fail to render.
+3.  A literal curly brace must be doubled: `{{like this}}`.
+4.  Discord markdown works: `**bold**`, `*italics*`, `` `code` ``, `<#channel>`,
+    `<@user>`, `<@&role>`.
+5.  After editing, run `/hell reloadmessages` (needs `@gamenight host`) or just
+    restart the bot.  If this file has a syntax error the bot keeps using the
+    previously loaded text and tells you what is wrong — it will not crash.
+
+Tip: `python tools/simulate.py` prints every message offline, so you can proof
+read your changes without starting the bot.
+================================================================================
+"""
+
+# =============================================================================
+#  1. MILESTONES — the five checkpoints and their rewards
+# =============================================================================
+#  hours        : the mark on the 0 → 160h event timeline (do not change unless
+#                 you really mean to change the event structure)
+#  title        : headline of the milestone announcement
+#  blurb        : one or two sentences under the headline
+#  flavour      : italic closing line (optional, use "" for none)
+#  reward       : full reward text shown in the announcement
+#  short_reward : compact version used in lists and summaries
+
+VERITIES_URL = "https://www.roblox.com/games/138268356635577/Find-the-Verities"
+
+MILESTONES = (
+    {
+        "hours": 32,
+        "title": "🔥 32 HOURS SURVIVED",
+        "blurb": "Welcome to Hell has reached the first milestone.",
+        "flavour": "The first gate is behind you. 128 hours to go — the easy part is over.",
+        "reward": "@hell (limited)",
+        "short_reward": "@hell",
+    },
+    {
+        "hours": 64,
+        "title": "🔥🔥 64 HOURS — THE FIRE SPREADS",
+        "blurb": "Two full days and change without the VC ever going quiet. "
+                 "The second milestone belongs to you.",
+        "flavour": "Two gates down. This VC has not been silent for a single second.",
+        "reward": f"Limited-time Verity in **Find the Verities** — {VERITIES_URL}",
+        "short_reward": "a limited Verity in Find the Verities",
+    },
+    {
+        "hours": 96,
+        "title": "🔥🔥🔥 96 HOURS — HALFWAY IS BEHIND YOU",
+        "blurb": "Four straight days in Hell. The third milestone is complete and there is "
+                 "no turning back now.",
+        "flavour": "Three gates cleared. Quitting now would be a tragedy for everyone involved.",
+        "reward": "@hell-ist (limited)",
+        "short_reward": "@hell-ist",
+    },
+    {
+        "hours": 128,
+        "title": "🔥🔥🔥🔥 128 HOURS — THE FINAL STRETCH",
+        "blurb": "The fourth milestone has fallen. Only 32 hours stand between this VC and "
+                 "immortality.",
+        "flavour": "Four gates cleared. Thirty-two hours from history.",
+        "reward": "Music permissions for everyone, provided they are not abused.",
+        "short_reward": "music permissions",
+    },
+    {
+        "hours": 160,
+        "title": "🏆🔥 160 HOURS — WELCOME TO HELL COMPLETED",
+        "blurb": "The full 160 consecutive hours have been survived. The final milestone is "
+                 "complete.",
+        "flavour": "There is nothing left to survive. Hell has been conquered.",
+        "reward": "@hell master (limited)",
+        "short_reward": "@hell master",
+    },
+)
+
+# Extra reward for the final Top 3 of a completed run.
+TOP3_BONUS_ROLE = "@cool people :D"
+
+
+# =============================================================================
+#  2. MILESTONE ANNOUNCEMENT  (posted with @everyone)
+# =============================================================================
+#  {reward} {members} {member_count} {reached_at} {reached_relative}
+#  {hours} {remaining_hours}
+
+MILESTONE_REWARD_FIELD = "🎁 Reward"
+MILESTONE_CLAIM_FIELD = "⚠️ How to claim"
+MILESTONE_CLAIM_TEXT = (
+    "**Only the users listed below — the ones in the VC at this exact moment — "
+    "can claim this reward.** The list is recorded and timestamped; joining afterwards "
+    "does not count."
+)
+MILESTONE_ELIGIBLE_FIELD = "👥 Eligible ({member_count})"
+MILESTONE_REACHED_FIELD = "🕛 Reached at"
+MILESTONE_REACHED_TEXT = "{reached_at} ({reached_relative})"
+MILESTONE_LATE_FIELD = "ℹ️ Note"
+MILESTONE_LATE_TEXT = (
+    "The bot was offline at the exact milestone second; this list is the first "
+    "verified snapshot taken afterwards."
+)
+MILESTONE_FOOTER = "Milestone {hours}h of 160h • {remaining_hours}h left"
+MILESTONE_FOOTER_FINAL = "Milestone {hours}h of 160h • FINAL MILESTONE"
+MILESTONE_NOBODY = "*nobody — the VC was empty*"
+
+
+# =============================================================================
+#  3. EVENT START  (posted with @everyone)
+# =============================================================================
+#  {host} {vc} {clanker_role} {started_at} {started_relative} {ends_at}
+#  {ends_relative} {participant_count} {participants} {total_hours}
+
+START_TITLE = "🔥 WELCOME TO HELL HAS STARTED 🔥"
+START_DESCRIPTION = (
+    "The gates are open. Starting **now**, {vc} must keep "
+    "**at least one real human inside, continuously, for {total_hours} hours**.\n\n"
+    "Started by {host} • {started_at} ({started_relative})"
+)
+START_RULES_FIELD = "📜 The rules"
+START_RULES = (
+    "• Bots never count.\n"
+    "• {clanker_role} users are removed on sight and earn no time.\n"
+    "• AFK still counts — you just have to *be there*.\n"
+    "• **Random alive checks**: every 1–6 hours everyone in the VC gets pinged and has "
+    "5 minutes to reply `Yes`. Miss it and you are disconnected — your leaderboard time "
+    "stays and you can rejoin instantly.\n"
+    "• If the VC empties, a {grace_seconds}s countdown starts. Nobody back in time = "
+    "**FAILED**, forever."
+)
+START_MILESTONES_FIELD = "🏁 Milestones"
+START_MILESTONE_LINE = "**{hours}h** — {reward}"
+START_PARTICIPANTS_FIELD = "👥 In Hell right now ({participant_count})"
+START_NOBODY = "*nobody yet*"
+START_FINISH_FIELD = "🕛 Finish line"
+START_FINISH_TEXT = "{ends_at}\n({ends_relative})"
+START_FOOTER = "Good luck. You are going to need it. • /hell status • /hell leaderboard"
+
+
+# =============================================================================
+#  4. LIVE PROGRESS MESSAGE  (edited every 10 seconds, never pings)
+# =============================================================================
+#  {status} {emoji} {bar} {elapsed} {total} {percent} {participants}
+#  {remaining} {current_milestone} {next_milestone} {time_to_next}
+#  {next_relative} {started_at} {started_relative} {unverified}
+#  {grace_left} {vc}
+
+PROGRESS_TITLE = "{emoji} WELCOME TO HELL"
+PROGRESS_DESCRIPTION = "`{bar}`\n**{elapsed} / {total}** — **{percent}** complete"
+PROGRESS_STATUS_FIELD = "Status"
+PROGRESS_STATUS_VALUE = "`{status}`"
+PROGRESS_STATUS_VALUE_EMPTY_VC = "`{status}` ⚠️ **VC EMPTY**"
+PROGRESS_PEOPLE_FIELD = "👥 Currently in Hell"
+PROGRESS_PEOPLE_VALUE = "**{participants}**"
+PROGRESS_REMAINING_FIELD = "⏳ Time remaining"
+PROGRESS_REMAINING_VALUE = "**{remaining}**"
+PROGRESS_CURRENT_FIELD = "✅ Current milestone"
+PROGRESS_CURRENT_VALUE = "**{current_milestone}h** cleared"
+PROGRESS_CURRENT_NONE = "*none yet*"
+PROGRESS_NEXT_FIELD = "🔥 Next milestone"
+PROGRESS_NEXT_VALUE = "**{next_milestone}h**\nin {time_to_next}"
+PROGRESS_NEXT_VALUE_RUNNING = "**{next_milestone}h**\nin {time_to_next}\n({next_relative})"
+PROGRESS_NEXT_NONE = "*all milestones cleared*"
+PROGRESS_STARTED_FIELD = "🕛 Started"
+PROGRESS_STARTED_VALUE = "{started_at}\n{started_relative}"
+PROGRESS_FOOTER_LIVE = "Live • updates every 10 seconds • leave the VC empty and it all ends"
+PROGRESS_FOOTER_FINAL = "Final state • this message is no longer updating"
+
+PROGRESS_FAILED_FIELD = "💀 FAILED"
+PROGRESS_FAILED_DEFAULT = "The VC became empty of valid participants."
+PROGRESS_COMPLETED_FIELD = "🏆 COMPLETED"
+PROGRESS_COMPLETED_TEXT = "160 consecutive hours survived. Welcome to Hell has been completed."
+PROGRESS_CANCELLED_FIELD = "🛑 CANCELLED"
+PROGRESS_CANCELLED_DEFAULT = "Manually stopped by a host."
+PROGRESS_GRACE_FIELD = "⚠️ THE VC IS EMPTY"
+PROGRESS_GRACE_TEXT = "**{grace_left}s** left to get somebody back in {vc} or the run is over."
+PROGRESS_UNVERIFIED_FIELD = "⚠️ Unobserved window"
+PROGRESS_UNVERIFIED_TEXT = (
+    "{unverified} of this run could not be watched (bot offline). "
+    "The timer kept running; nobody was credited for that window."
+)
+
+
+# =============================================================================
+#  5. EMPTY-VC GRACE PERIOD  (warning + recovery, both posted WITHOUT pings)
+# =============================================================================
+#  {vc} {seconds} {deadline_at} {deadline_relative} {elapsed}
+#  {empty_for} {participants} {participant_count}
+
+GRACE_WARNING_TITLE = "⚠️ THE VC IS EMPTY — THE RUN IS ABOUT TO DIE"
+GRACE_WARNING_DESCRIPTION = (
+    "{vc} has **no valid humans** in it.\n"
+    "Somebody has **{seconds} seconds** to join or **Welcome to Hell fails permanently**."
+)
+GRACE_WARNING_DEADLINE_FIELD = "⏳ Deadline"
+GRACE_WARNING_DEADLINE_TEXT = "{deadline_at} ({deadline_relative})"
+GRACE_WARNING_CLOCK_FIELD = "⏱️ On the clock"
+GRACE_WARNING_CLOCK_TEXT = "**{elapsed}** / 160h"
+GRACE_WARNING_FOOTER = "No pings on purpose — if you are reading this, get in the VC."
+
+GRACE_RECOVERED_TITLE = "✅ SAVED — THE RUN CONTINUES"
+GRACE_RECOVERED_DESCRIPTION = (
+    "The VC was empty for **{empty_for}s** and somebody made it back in time. "
+    "The 160h clock never stopped."
+)
+GRACE_RECOVERED_FIELD = "👥 Back in Hell ({participant_count})"
+GRACE_RECOVERED_NOBODY = "*nobody*"
+GRACE_RECOVERED_FOOTER = "That was close."
+
+
+# =============================================================================
+#  6. FAILURE  (posted with @everyone)
+# =============================================================================
+#  {vc} {survived} {percent} {failed_at} {milestones}
+
+FAILURE_TITLE = "💀 WELCOME TO HELL — CHALLENGE FAILED"
+FAILURE_DESCRIPTION = (
+    "{vc} was **completely empty of valid participants** for the entire grace period, "
+    "so nobody came back in time.\n"
+    "The timer has stopped **permanently** and the run cannot resume."
+)
+FAILURE_SURVIVED_FIELD = "⏱️ Survived"
+FAILURE_SURVIVED_TEXT = "**{survived}** of 160h"
+FAILURE_PROGRESS_FIELD = "📉 Progress"
+FAILURE_PROGRESS_TEXT = "**{percent}**"
+FAILURE_WHEN_FIELD = "🕛 Failed at"
+FAILURE_MILESTONES_FIELD = "🏁 Milestones secured"
+FAILURE_MILESTONES_NONE = "**none**"
+FAILURE_FOOTER = "Rewards already earned at reached milestones still stand. Reset with /hell reset."
+FAILURE_LEADERBOARD_TITLE = "🏆 FINAL LEADERBOARD (frozen)"
+
+
+# =============================================================================
+#  7. CANCELLED  (manual stop by a host — no ping)
+# =============================================================================
+#  {who} {elapsed} {cancelled_at}
+
+CANCELLED_TITLE = "🛑 WELCOME TO HELL — CANCELLED"
+CANCELLED_DESCRIPTION = (
+    "The event was manually stopped by {who}.\n"
+    "This is a **cancellation, not a failure** — the VC never emptied."
+)
+CANCELLED_CLOCK_FIELD = "⏱️ Time on the clock"
+CANCELLED_CLOCK_TEXT = "**{elapsed}** of 160h"
+CANCELLED_WHEN_FIELD = "🕛 Stopped at"
+CANCELLED_FOOTER = "A host can begin a fresh run with /hell reset followed by /hell start."
+CANCELLED_LEADERBOARD_TITLE = "🏆 LEADERBOARD (frozen)"
+
+
+# =============================================================================
+#  8. COMPLETION — 160 hours  (posted with @everyone)
+# =============================================================================
+#  {vc} {completed_at} {final_reward} {all_rewards} {bonus_role} {podium}
+
+COMPLETION_TITLE = "🏆🔥 WELCOME TO HELL HAS BEEN COMPLETED 🔥🏆"
+COMPLETION_DESCRIPTION = (
+    "**160 consecutive hours.**\n"
+    "{vc} never emptied — not for one single second.\n\n"
+    "Completed {completed_at}."
+)
+COMPLETION_REWARD_FIELD = "🎁 160h reward"
+COMPLETION_REWARD_TEXT = "{final_reward}\n*for everyone who was in the VC at the 160h mark*"
+COMPLETION_TOP3_FIELD = "🥇 Special Top 3 reward"
+COMPLETION_TOP3_TEXT = (
+    "The final Top 3 receive **every milestone reward** — {all_rewards} — "
+    "**plus {bonus_role}**."
+)
+COMPLETION_PODIUM_FIELD = "🏅 The Top 3"
+COMPLETION_PODIUM_NONE = "*No ranked participants.*"
+COMPLETION_FOOTER = "The leaderboard below is final and frozen. Well done, all of you."
+COMPLETION_LEADERBOARD_TITLE = "🏆 FINAL RANKINGS (frozen)"
+
+
+# =============================================================================
+#  9. LEADERBOARD
+# =============================================================================
+#  {total} {title} — entry lines use {medal} {who} {time}
+
+LEADERBOARD_TITLE = "🏆 WELCOME TO HELL — LEADERBOARD"
+LEADERBOARD_TITLE_FINAL = "🏆 WELCOME TO HELL — FINAL LEADERBOARD"
+LEADERBOARD_EMPTY = "*Nobody has spent time in Hell yet.*"
+LEADERBOARD_NO_PODIUM = "*No podium yet.*"
+LEADERBOARD_REST_TITLE = "Everyone else"
+LEADERBOARD_REST_TITLE_CONT = "Everyone else (cont.)"
+LEADERBOARD_FOOTER = "{total} participant(s) • times count only while the event is running"
+LEADERBOARD_FROZEN_FOOTER = "These rankings are frozen; the event is over."
+LEADERBOARD_MORE = "and {hidden} more participant(s)"
+LEADERBOARD_ENTRY = "{medal} {who} — **{time}**"
+LEADERBOARD_MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
+LEADERBOARD_RANK = "**{rank}.**"      # used from 4th place down
+
+
+# =============================================================================
+# 10. ALIVE CHECKS ("roll call")
+# =============================================================================
+#  {minutes} {answered} {total} {kicked} {left_early} {reason}
+#
+#  ALIVE_CHECK_TEXT is the exact headline that gets pinged — keep it short.
+
+ALIVE_CHECK_TEXT = "🚨 ARE YOU ALIVE? Say: Yes"
+ALIVE_CHECK_INSTRUCTIONS = (
+    "*Reply with* `Yes` *in this channel within {minutes} minutes or you will be "
+    "disconnected from the VC. You keep all your leaderboard time and can rejoin "
+    "immediately.*"
+)
+ALIVE_CHECK_RESULT_TITLE = "🚨 **Alive check finished**"
+ALIVE_CHECK_RESULT_ANSWERED = "✅ Answered: **{answered}**"
+ALIVE_CHECK_RESULT_KICKED = "❌ Disconnected for not answering: {kicked}"
+ALIVE_CHECK_RESULT_KICKED_NOTE = (
+    "*Their leaderboard time is untouched — rejoin whenever you like and tracking resumes.*"
+)
+ALIVE_CHECK_RESULT_NOBODY_KICKED = "❌ Disconnected: **nobody** — everyone answered in time."
+ALIVE_CHECK_RESULT_LEFT_EARLY = "↩️ Already out of the VC: {left_early}"
+ALIVE_CHECK_CANCELLED = (
+    "🚨 **Alive check cancelled** — {reason}. Nobody was disconnected."
+)
+ALIVE_CHECK_CANCELLED_DEFAULT_REASON = "the bot was restarted while it was running"
+ALIVE_CHECK_STATUS_RUNNING = "🚨 Alive check running — **{answered}/{total}** answered, {left}s left"
+ALIVE_CHECK_STATUS_IDLE = (
+    "🚨 Alive checks: random, every **{min_hours:g}–{max_hours:g}h** — reply `Yes` within "
+    "{minutes} min"
+)
+
+
+# =============================================================================
+# 11. END-OF-EVENT STAT CARD  (DM'd to every contestant)
+# =============================================================================
+#  {survived} {rank} {participants} {reward_count} {reward_plural}
+#  {rewards} {outcome} {event_clock}
+
+CARD_EMBED_TITLE = "🔥 WELCOME TO HELL"
+CARD_EMBED_FOOTER = "Thanks for surviving with us. See you in the next one."
+CARD_BODY = (
+    "**WELCOME TO HELL**\n"
+    "\n"
+    "**{survived} SURVIVED**\n"
+    "\n"
+    "**YOU WERE... TOP {rank}**\n"
+    "*out of {participants} contestant(s)*\n"
+    "\n"
+    "**YOU WON {reward_count} REWARD{reward_plural}**"
+)
+CARD_REWARD_LINE = "• {reward}"
+CARD_REWARD_TOP3_NOTE = "*Top 3: every milestone reward is yours.*"
+CARD_REWARD_NOTE = "*Claimable because you were in the VC when the milestone hit.*"
+CARD_NO_REWARDS = "*You were not in the VC at any milestone moment — no rewards this time.*"
+CARD_TOP3_BONUS_LINE = "Top 3 bonus — {bonus_role}"
+CARD_MILESTONE_LINE = "{hours}h — {reward}"
+CARD_OUTCOME = {
+    "COMPLETED": "The challenge was **COMPLETED** — 160 consecutive hours.",
+    "FAILED": "The challenge **FAILED** — the VC emptied before 160 hours.",
+    "CANCELLED": "The challenge was **CANCELLED** by a host.",
+}
+CARD_OUTCOME_DEFAULT = "The event has ended."
+CARD_EVENT_CLOCK = "Event clock: **{event_clock}** of 160:00:00."
+
+DM_SUMMARY_TITLE = "📬 Stat cards delivered"
+DM_SUMMARY_TEXT = "Sent **{sent}** personal summaries to the contestants of this run."
+DM_SUMMARY_BLOCKED_FIELD = "DMs closed"
+DM_SUMMARY_BLOCKED_TEXT = (
+    "**{blocked}** contestant(s) could not be messaged. They can run `/hell mystats` "
+    "to see their card."
+)
+DM_SUMMARY_FAILED_FIELD = "Failed"
+DM_SUMMARY_FAILED_TEXT = "**{failed}** (see the logs)"
+
+
+# =============================================================================
+# 12. COMMAND REPLIES  (only the person running the command sees these)
+# =============================================================================
+#  {vc} {announce_channel} {host_role} {elapsed} {total} {status} {started_at}
+#  {minutes} {check_channel} {previous_status}
+
+CMD_ALREADY_RUNNING = (
+    "❌ **Welcome to Hell is already RUNNING** — {elapsed} on the clock. "
+    "Use `/hell status`, or `/hell stop` to cancel it first."
+)
+CMD_VC_UNREACHABLE = (
+    "❌ I cannot see the target voice channel ({vc}). "
+    "Check the ID and my permissions, then try again."
+)
+CMD_VC_EMPTY_ON_START = (
+    "❌ {vc} has **no valid humans** in it. "
+    "The event would fail on its very first check — get someone in there first."
+)
+CMD_STARTED = (
+    "🔥 **Welcome to Hell has started.** Timer running since {started_at}; "
+    "target: {total} of continuous presence in {vc}. "
+    "Announcements go to {announce_channel}."
+)
+CMD_IDLE_TITLE = "💤 Welcome to Hell is not running"
+CMD_IDLE_TEXT = (
+    "No event has been started yet.\n"
+    "A {host_role} can start one with `/hell start`.\n\n"
+    "Target VC: {vc} • Duration: **160 hours**"
+)
+CMD_STOP_NOTHING = "❌ Nothing to stop — current status is `{status}`."
+CMD_STOP_CONFIRM = (
+    "⚠️ **Stop Welcome to Hell?**\n"
+    "The clock is at **{elapsed} / {total}**. "
+    "The event will be marked **CANCELLED** (not FAILED), the leaderboard frozen, and it "
+    "cannot be resumed."
+)
+CMD_STOP_DONE = "🛑 Event cancelled and leaderboard frozen."
+CMD_STOP_TIMEOUT = "⌛ Confirmation timed out — nothing happened."
+CMD_RESET_DONE = (
+    "♻️ **Event data reset.** Previous status was `{previous_status}`. "
+    "All timers, leaderboard entries and milestones are gone — `/hell start` begins a fresh run."
+)
+CMD_RESET_MISMATCH = "❌ Phrase did not match. Nothing was reset."
+CMD_NOT_A_HOST = "⛔ You are not a `@gamenight host`."
+CMD_NOT_ALLOWED = "⛔ You cannot use this command. ({host_role} only)"
+CMD_ERROR = "💥 Something went wrong running that command. The event state is untouched."
+
+CMD_ALIVECHECK_NO_EVENT = "❌ No event is running (status `{status}`)."
+CMD_ALIVECHECK_DISABLED = "❌ Alive checks are disabled (`ALIVE_CHECK_ENABLED=false`)."
+CMD_ALIVECHECK_ALREADY = "❌ An alive check is already running."
+CMD_ALIVECHECK_FAILED = (
+    "❌ Could not start it — the VC is empty or the check channel is unreachable."
+)
+CMD_ALIVECHECK_STARTED = (
+    "🚨 Alive check posted in {check_channel}. "
+    "Everyone in the VC has {minutes} minutes to reply `Yes`."
+)
+
+CMD_MYSTATS_NONE = (
+    "You have no recorded time in this event yet — join {vc} to start your clock."
+)
+
+CMD_MILESTONES_TITLE = "🏁 WELCOME TO HELL — MILESTONES"
+CMD_MILESTONES_DESCRIPTION = (
+    "Milestones follow the **global event timer**, not individual user time."
+)
+CMD_MILESTONES_REACHED = "✅ reached {reached_at} — {member_count} eligible"
+CMD_MILESTONES_PENDING = "⏳ in {time_to_go}"
+CMD_MILESTONES_IDLE = "—"
+CMD_MILESTONES_FIELD = "{hours}h — {short_reward}"
+
+CMD_LOGS_UNAVAILABLE = "❌ The live log stream is not available."
+CMD_LOGS_ON = "📡 Live log stream **enabled**."
+CMD_LOGS_OFF = "📴 Live log stream **disabled**."
+CMD_LOGS_TEST = "✅ Test line sent to the operator's DMs."
+CMD_LOGS_FLUSHED = "📨 Flushed **{sent}** message(s)."
+CMD_LOGS_STATUS = "📡 Live log stream: **{status}**"
+
+CMD_MESSAGES_RELOADED = (
+    "✅ **Announcements.py reloaded** — {count} message(s) in memory, {milestones} milestone(s). "
+    "New wording applies from the next message."
+)
+CMD_MESSAGES_FAILED = (
+    "❌ **Announcements.py could not be loaded**, so the bot kept the previous text:\n"
+    "```\n{error}\n```"
+)
+
+
+# =============================================================================
+# 13. COLOURS  (hex, as used by the embeds)
+# =============================================================================
+
+COLOR_RUNNING = 0xE25822     # ember orange
+COLOR_MILESTONE = 0xFF4500
+COLOR_FAILED = 0x8B0000
+COLOR_COMPLETED = 0xFFD700
+COLOR_CANCELLED = 0x607D8B
+COLOR_IDLE = 0x2F3136
+COLOR_GRACE = 0xFFA500
+COLOR_CARD = 0xE25822
+
+# Emoji shown next to the event status on the progress message.
+STATUS_EMOJI = {
+    "IDLE": "💤",
+    "RUNNING": "🔥",
+    "FAILED": "💀",
+    "COMPLETED": "🏆",
+    "CANCELLED": "🛑",
+}

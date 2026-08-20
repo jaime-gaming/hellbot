@@ -15,9 +15,10 @@ icon = here / "assets" / "hellbot.ico"
 icon_arg = str(icon) if icon.exists() else None
 
 datas = []
-env_example = here / ".env.example"
-if env_example.exists():
-    datas.append((str(env_example), "."))
+for extra in (".env.example", "Announcements.py"):
+    path = here / extra
+    if path.exists():
+        datas.append((str(path), "."))
 
 a = Analysis(
     ["launcher_main.py"],
@@ -25,6 +26,7 @@ a = Analysis(
     binaries=[],
     datas=datas,
     hiddenimports=[
+        "Announcements",
         "hell",
         "hell.bot",
         "hell.announcer",

@@ -14,6 +14,11 @@ Design notes
 * Discord failures are logged and swallowed: a message must never take the
   event timer down with it.  Milestones are only flagged as announced once
   Discord actually accepted the message.
+* **No wording lives in this file.**  Every string, colour and emoji comes from
+  `Announcements.py` through :mod:`hell.texts`, so the event's voice can be
+  rewritten without touching any logic (and reloaded live with
+  `/hell reloadmessages`).  This module only decides *which* message to build
+  and how to keep it inside Discord's limits.
 """
 
 from __future__ import annotations
@@ -35,8 +40,9 @@ from .engine import (
     Snapshot,
 )
 from .leaderboard import format_entry, render_leaderboard, top_n
-from .milestones import MILESTONES, TOP3_BONUS_ROLE, get_milestone
+from .milestones import MILESTONES, get_milestone
 from .models import EventStatus, LeaderboardEntry, MilestoneRecord, ParticipantRef
+from .texts import TEXT, say
 from .timeutil import discord_ts, format_hm, format_hms, progress_bar
 
 log = logging.getLogger("hell.announcer")
@@ -48,30 +54,21 @@ MAX_EMBED_TOTAL = 5500      # 6000 hard limit, margin kept
 MAX_FIELDS = 20             # 25 hard limit, margin kept
 MAX_EMBEDS_PER_MESSAGE = 10
 
-COLOR_RUNNING = 0xE25822    # ember orange
-COLOR_MILESTONE = 0xFF4500
-COLOR_FAILED = 0x8B0000
-COLOR_COMPLETED = 0xFFD700
-COLOR_CANCELLED = 0x607D8B
-COLOR_GRACE = 0xFFA500
-COLOR_IDLE = 0x2F3136
 
-STATUS_EMOJI = {
-    EventStatus.IDLE: "💤",
-    EventStatus.RUNNING: "🔥",
-    EventStatus.FAILED: "💀",
-    EventStatus.COMPLETED: "🏆",
-    EventStatus.CANCELLED: "🛑",
-}
+# Colours and status emojis live in Announcements.py too, so the whole look of
+# the bot can be tuned from that one file.
 
-STATUS_COLOR = {
-    EventStatus.IDLE: COLOR_IDLE,
-    EventStatus.RUNNING: COLOR_RUNNING,
-    EventStatus.FAILED: COLOR_FAILED,
-    EventStatus.COMPLETED: COLOR_COMPLETED,
-    EventStatus.CANCELLED: COLOR_CANCELLED,
-}
 
+def color(name: str, fallback: int = 0xE25822) -> int:
+    return int(getattr(TEXT, f"COLOR_{name.upper()}", fallback))
+
+
+def status_emoji(status: EventStatus) -> str:
+    return dict(TEXT.STATUS_EMOJI).get(status.value, "🔥")
+
+
+def status_color(status: EventStatus) -> int:
+    return color(status.value, color("RUNNING"))
 
 # --------------------------------------------------------------- text tools
 
@@ -164,9 +161,9 @@ def embeds_to_text(embeds: Sequence[discord.Embed]) -> str:
     return "\n\n".join(embed_to_text(e) for e in embeds)
 
 
-def format_members(members: Sequence[ParticipantRef], *, empty: str = "*nobody — the VC was empty*") -> str:
+def format_members(members: Sequence[ParticipantRef], *, empty: Optional[str] = None) -> str:
     if not members:
-        return empty
+        return empty if empty is not None else TEXT.MILESTONE_NOBODY
     return ", ".join(m.mention() for m in members)
 
 
@@ -238,79 +235,108 @@ class Announcer:
     # ------------------------------------------------------------- progress
 
     def build_progress(self, snap: Snapshot) -> discord.Embed:
-        emoji = STATUS_EMOJI.get(snap.status, "🔥")
-        bar = progress_bar(snap.fraction)
         embed = discord.Embed(
-            title=f"{emoji} WELCOME TO HELL",
-            description=(
-                f"`{bar}`\n"
-                f"**{format_hm(snap.elapsed)} / {format_hm(snap.total)}** — "
-                f"**{snap.fraction * 100:.1f}%** complete"
+            title=say(TEXT.PROGRESS_TITLE, emoji=status_emoji(snap.status)),
+            description=say(
+                TEXT.PROGRESS_DESCRIPTION,
+                bar=progress_bar(snap.fraction),
+                elapsed=format_hm(snap.elapsed),
+                total=format_hm(snap.total),
+                percent=f"{snap.fraction * 100:.1f}%",
             ),
-            color=STATUS_COLOR.get(snap.status, COLOR_RUNNING),
+            color=status_color(snap.status),
         )
-        status_value = f"`{snap.status.value}`"
-        if snap.grace_open:
-            status_value = f"`{snap.status.value}` ⚠️ **VC EMPTY**"
-        embed.add_field(name="Status", value=status_value, inline=True)
-        embed.add_field(name="👥 Currently in Hell", value=f"**{snap.participants}**", inline=True)
-        embed.add_field(name="⏳ Time remaining", value=f"**{format_hm(snap.remaining)}**", inline=True)
+        template = (
+            TEXT.PROGRESS_STATUS_VALUE_EMPTY_VC if snap.grace_open else TEXT.PROGRESS_STATUS_VALUE
+        )
+        embed.add_field(
+            name=TEXT.PROGRESS_STATUS_FIELD,
+            value=say(template, status=snap.status.value),
+            inline=True,
+        )
+        embed.add_field(
+            name=TEXT.PROGRESS_PEOPLE_FIELD,
+            value=say(TEXT.PROGRESS_PEOPLE_VALUE, participants=snap.participants),
+            inline=True,
+        )
+        embed.add_field(
+            name=TEXT.PROGRESS_REMAINING_FIELD,
+            value=say(TEXT.PROGRESS_REMAINING_VALUE, remaining=format_hm(snap.remaining)),
+            inline=True,
+        )
 
-        current = f"**{snap.current.hours}h** cleared" if snap.current else "*none yet*"
-        embed.add_field(name="✅ Current milestone", value=current, inline=True)
+        current = (
+            say(TEXT.PROGRESS_CURRENT_VALUE, current_milestone=snap.current.hours)
+            if snap.current
+            else TEXT.PROGRESS_CURRENT_NONE
+        )
+        embed.add_field(name=TEXT.PROGRESS_CURRENT_FIELD, value=current, inline=True)
+
         if snap.upcoming and snap.time_to_next is not None:
-            nxt = f"**{snap.upcoming.hours}h**\nin {format_hm(snap.time_to_next)}"
-            if snap.status is EventStatus.RUNNING and snap.start_ts:
-                nxt += f"\n({discord_ts(snap.start_ts + snap.upcoming.seconds, 'R')})"
+            running = snap.status is EventStatus.RUNNING and snap.start_ts
+            nxt = say(
+                TEXT.PROGRESS_NEXT_VALUE_RUNNING if running else TEXT.PROGRESS_NEXT_VALUE,
+                next_milestone=snap.upcoming.hours,
+                time_to_next=format_hm(snap.time_to_next),
+                next_relative=(
+                    discord_ts((snap.start_ts or 0) + snap.upcoming.seconds, "R") if running else ""
+                ),
+            )
         else:
-            nxt = "*all milestones cleared*"
-        embed.add_field(name="🔥 Next milestone", value=nxt, inline=True)
+            nxt = TEXT.PROGRESS_NEXT_NONE
+        embed.add_field(name=TEXT.PROGRESS_NEXT_FIELD, value=nxt, inline=True)
 
         if snap.start_ts:
-            when = f"{discord_ts(snap.start_ts, 'f')}\n{discord_ts(snap.start_ts, 'R')}"
-            embed.add_field(name="🕛 Started", value=when, inline=True)
+            embed.add_field(
+                name=TEXT.PROGRESS_STARTED_FIELD,
+                value=say(
+                    TEXT.PROGRESS_STARTED_VALUE,
+                    started_at=discord_ts(snap.start_ts, "f"),
+                    started_relative=discord_ts(snap.start_ts, "R"),
+                ),
+                inline=True,
+            )
 
         if snap.status is EventStatus.FAILED:
             embed.add_field(
-                name="💀 FAILED",
-                value=snap.end_reason or "The VC became empty of valid participants.",
+                name=TEXT.PROGRESS_FAILED_FIELD,
+                value=snap.end_reason or TEXT.PROGRESS_FAILED_DEFAULT,
                 inline=False,
             )
         elif snap.status is EventStatus.COMPLETED:
             embed.add_field(
-                name="🏆 COMPLETED",
-                value="160 consecutive hours survived. Welcome to Hell has been completed.",
-                inline=False,
+                name=TEXT.PROGRESS_COMPLETED_FIELD, value=TEXT.PROGRESS_COMPLETED_TEXT, inline=False
             )
         elif snap.status is EventStatus.CANCELLED:
             embed.add_field(
-                name="🛑 CANCELLED",
-                value=snap.end_reason or "Manually stopped by a host.",
+                name=TEXT.PROGRESS_CANCELLED_FIELD,
+                value=snap.end_reason or TEXT.PROGRESS_CANCELLED_DEFAULT,
                 inline=False,
             )
         if snap.grace_open:
-            embed.colour = discord.Colour(COLOR_GRACE)
+            embed.colour = discord.Colour(color("GRACE"))
             embed.add_field(
-                name="⚠️ THE VC IS EMPTY",
-                value=(
-                    f"**{snap.grace_seconds_left:.0f}s** left to get somebody back in "
-                    f"<#{self.config.voice_channel_id}> or the run is over."
+                name=TEXT.PROGRESS_GRACE_FIELD,
+                value=say(
+                    TEXT.PROGRESS_GRACE_TEXT,
+                    grace_left=f"{snap.grace_seconds_left:.0f}",
+                    vc=f"<#{self.config.voice_channel_id}>",
                 ),
                 inline=False,
             )
         if snap.unverified >= 60:
             embed.add_field(
-                name="⚠️ Unobserved window",
-                value=(
-                    f"{format_hm(snap.unverified)} of this run could not be watched (bot offline). "
-                    "The timer kept running; nobody was credited for that window."
-                ),
+                name=TEXT.PROGRESS_UNVERIFIED_FIELD,
+                value=say(TEXT.PROGRESS_UNVERIFIED_TEXT, unverified=format_hm(snap.unverified)),
                 inline=False,
             )
-        if snap.status is EventStatus.RUNNING:
-            embed.set_footer(text="Live • updates every 10 seconds • leave the VC empty and it all ends")
-        else:
-            embed.set_footer(text="Final state • this message is no longer updating")
+        embed.set_footer(
+            text=(
+                TEXT.PROGRESS_FOOTER_LIVE
+                if snap.status is EventStatus.RUNNING
+                else TEXT.PROGRESS_FOOTER_FINAL
+            )
+        )
         return embed
 
     def render_progress(self, snap: Snapshot) -> str:
@@ -387,46 +413,51 @@ class Announcer:
         self, snap: Snapshot, host_mention: str, participants: Sequence[ParticipantRef]
     ) -> discord.Embed:
         start_ts = snap.start_ts or 0
+        fields = dict(
+            host=host_mention,
+            vc=f"<#{self.config.voice_channel_id}>",
+            clanker_role=f"<@&{self.config.clanker_role_id}>",
+            started_at=discord_ts(start_ts, "F"),
+            started_relative=discord_ts(start_ts, "R"),
+            ends_at=discord_ts(start_ts + snap.total, "F"),
+            ends_relative=discord_ts(start_ts + snap.total, "R"),
+            participant_count=len(participants),
+            total_hours=int(snap.total // 3600),
+            grace_seconds=int(self.config.empty_vc_grace_seconds),
+        )
         embed = discord.Embed(
-            title="🔥 WELCOME TO HELL HAS STARTED 🔥",
-            description=(
-                f"The gates are open. Starting **now**, <#{self.config.voice_channel_id}> must keep "
-                "**at least one real human inside, continuously, for 160 hours**.\n\n"
-                f"Started by {host_mention} • {discord_ts(start_ts, 'F')} ({discord_ts(start_ts, 'R')})"
-            ),
-            color=COLOR_RUNNING,
+            title=say(TEXT.START_TITLE, **fields),
+            description=say(TEXT.START_DESCRIPTION, **fields),
+            color=color("RUNNING"),
         )
         embed.add_field(
-            name="📜 The rules",
-            value=(
-                "• Bots never count.\n"
-                f"• <@&{self.config.clanker_role_id}> users are removed on sight and earn no time.\n"
-                "• AFK still counts — you just have to *be there*.\n"
-                "• **Random alive checks**: every 1–6 hours everyone in the VC gets pinged and has "
-                "5 minutes to reply `Yes`. Miss it and you are disconnected — your leaderboard time "
-                "stays and you can rejoin instantly.\n"
-                "• The second the VC empties of valid humans, the run is **FAILED**, forever."
-            ),
+            name=say(TEXT.START_RULES_FIELD, **fields),
+            value=say(TEXT.START_RULES, **fields),
             inline=False,
         )
         embed.add_field(
-            name="🏁 Milestones",
+            name=say(TEXT.START_MILESTONES_FIELD, **fields),
             value="\n".join(
-                f"**{m.hours}h** — {self.config.reward_text(m.hours, m.reward)}" for m in MILESTONES
+                say(
+                    TEXT.START_MILESTONE_LINE,
+                    hours=m.hours,
+                    reward=self.config.reward_text(m.hours, m.reward),
+                )
+                for m in MILESTONES
             ),
             inline=False,
         )
         add_chunked_field(
             embed,
-            f"👥 In Hell right now ({len(participants)})",
-            format_members(participants, empty="*nobody yet*"),
+            say(TEXT.START_PARTICIPANTS_FIELD, **fields),
+            format_members(participants, empty=TEXT.START_NOBODY),
         )
         embed.add_field(
-            name="🕛 Finish line",
-            value=f"{discord_ts(start_ts + snap.total, 'F')}\n({discord_ts(start_ts + snap.total, 'R')})",
+            name=say(TEXT.START_FINISH_FIELD, **fields),
+            value=say(TEXT.START_FINISH_TEXT, **fields),
             inline=False,
         )
-        embed.set_footer(text="Good luck. You are going to need it. • /hell status • /hell leaderboard")
+        embed.set_footer(text=say(TEXT.START_FOOTER, **fields))
         return embed
 
     def render_start(self, snap: Snapshot, host_mention: str, participants: Sequence[ParticipantRef]) -> str:
@@ -445,22 +476,29 @@ class Announcer:
 
     def build_grace_warning(self, event: GraceStarted) -> discord.Embed:
         """Empty-VC warning.  Posted with pings explicitly disabled."""
+        fields = dict(
+            vc=f"<#{self.config.voice_channel_id}>",
+            seconds=f"{event.seconds:.0f}",
+            deadline_at=discord_ts(event.deadline_ts, "T"),
+            deadline_relative=discord_ts(event.deadline_ts, "R"),
+            elapsed=format_hm(event.elapsed),
+        )
         embed = discord.Embed(
-            title="⚠️ THE VC IS EMPTY — THE RUN IS ABOUT TO DIE",
-            description=(
-                f"<#{self.config.voice_channel_id}> has **no valid humans** in it.\n"
-                f"Somebody has **{event.seconds:.0f} seconds** to join or "
-                "**Welcome to Hell fails permanently**."
-            ),
-            color=COLOR_GRACE,
+            title=say(TEXT.GRACE_WARNING_TITLE, **fields),
+            description=say(TEXT.GRACE_WARNING_DESCRIPTION, **fields),
+            color=color("GRACE"),
         )
         embed.add_field(
-            name="⏳ Deadline",
-            value=f"{discord_ts(event.deadline_ts, 'T')} ({discord_ts(event.deadline_ts, 'R')})",
+            name=say(TEXT.GRACE_WARNING_DEADLINE_FIELD, **fields),
+            value=say(TEXT.GRACE_WARNING_DEADLINE_TEXT, **fields),
             inline=True,
         )
-        embed.add_field(name="⏱️ On the clock", value=f"**{format_hm(event.elapsed)}** / 160h", inline=True)
-        embed.set_footer(text="No pings on purpose — if you are reading this, get in the VC.")
+        embed.add_field(
+            name=say(TEXT.GRACE_WARNING_CLOCK_FIELD, **fields),
+            value=say(TEXT.GRACE_WARNING_CLOCK_TEXT, **fields),
+            inline=True,
+        )
+        embed.set_footer(text=say(TEXT.GRACE_WARNING_FOOTER, **fields))
         return embed
 
     def render_grace_warning(self, event: GraceStarted) -> str:
@@ -471,20 +509,22 @@ class Announcer:
         await self.send([self.build_grace_warning(event)], mention_everyone=False)
 
     def build_grace_recovered(self, event: GraceRecovered) -> discord.Embed:
+        fields = dict(
+            empty_for=f"{event.empty_for:.0f}",
+            participant_count=len(event.participants),
+            vc=f"<#{self.config.voice_channel_id}>",
+        )
         embed = discord.Embed(
-            title="✅ SAVED — THE RUN CONTINUES",
-            description=(
-                f"The VC was empty for **{event.empty_for:.0f}s** and somebody made it back "
-                "in time. The 160h clock never stopped."
-            ),
-            color=COLOR_RUNNING,
+            title=say(TEXT.GRACE_RECOVERED_TITLE, **fields),
+            description=say(TEXT.GRACE_RECOVERED_DESCRIPTION, **fields),
+            color=color("RUNNING"),
         )
-        embed.add_field(
-            name=f"👥 Back in Hell ({len(event.participants)})",
-            value=format_members(event.participants, empty="*nobody*"),
-            inline=False,
+        add_chunked_field(
+            embed,
+            say(TEXT.GRACE_RECOVERED_FIELD, **fields),
+            format_members(event.participants, empty=TEXT.GRACE_RECOVERED_NOBODY),
         )
-        embed.set_footer(text="That was close.")
+        embed.set_footer(text=say(TEXT.GRACE_RECOVERED_FOOTER, **fields))
         return embed
 
     def render_grace_recovered(self, event: GraceRecovered) -> str:
@@ -495,53 +535,52 @@ class Announcer:
 
     # ------------------------------------------------------------ milestones
 
-    FLAVOUR = {
-        32: "The first gate is behind you. 128 hours to go — the easy part is over.",
-        64: "Two gates down. This VC has not been silent for a single second.",
-        96: "Three gates cleared. Quitting now would be a tragedy for everyone involved.",
-        128: "Four gates cleared. Thirty-two hours from history.",
-        160: "There is nothing left to survive. Hell has been conquered.",
-    }
-
     def build_milestone(self, event: MilestoneReached) -> discord.Embed:
         m = event.milestone
+        fields = dict(
+            hours=m.hours,
+            remaining_hours=160 - m.hours,
+            reward=self.config.reward_text(m.hours, m.reward),
+            member_count=len(event.members),
+            reached_at=discord_ts(event.reached_ts, "F"),
+            reached_relative=discord_ts(event.reached_ts, "R"),
+        )
+        description = m.blurb
+        if m.flavour:
+            description = f"{m.blurb}\n\n*{m.flavour}*"
         embed = discord.Embed(
             title=m.title,
-            description=f"{m.blurb}\n\n*{self.FLAVOUR.get(m.hours, '')}*".strip(),
-            color=COLOR_COMPLETED if m.hours == 160 else COLOR_MILESTONE,
+            description=description.strip(),
+            color=color("COMPLETED") if m.hours == 160 else color("MILESTONE"),
         )
-        embed.add_field(name="🎁 Reward", value=self.config.reward_text(m.hours, m.reward), inline=False)
         embed.add_field(
-            name="⚠️ How to claim",
-            value=(
-                "**Only the users listed below — the ones in the VC at this exact moment — "
-                "can claim this reward.** The list is recorded and timestamped; joining afterwards "
-                "does not count."
-            ),
+            name=say(TEXT.MILESTONE_REWARD_FIELD, **fields),
+            value=fields["reward"],
             inline=False,
         )
-        add_chunked_field(embed, f"👥 Eligible ({len(event.members)})", format_members(event.members))
         embed.add_field(
-            name="🕛 Reached at",
-            value=f"{discord_ts(event.reached_ts, 'F')} ({discord_ts(event.reached_ts, 'R')})",
+            name=say(TEXT.MILESTONE_CLAIM_FIELD, **fields),
+            value=say(TEXT.MILESTONE_CLAIM_TEXT, **fields),
+            inline=False,
+        )
+        add_chunked_field(
+            embed,
+            say(TEXT.MILESTONE_ELIGIBLE_FIELD, **fields),
+            format_members(event.members),
+        )
+        embed.add_field(
+            name=say(TEXT.MILESTONE_REACHED_FIELD, **fields),
+            value=say(TEXT.MILESTONE_REACHED_TEXT, **fields),
             inline=False,
         )
         if event.late:
             embed.add_field(
-                name="ℹ️ Note",
-                value=(
-                    "The bot was offline at the exact milestone second; this list is the first "
-                    "verified snapshot taken afterwards."
-                ),
+                name=say(TEXT.MILESTONE_LATE_FIELD, **fields),
+                value=say(TEXT.MILESTONE_LATE_TEXT, **fields),
                 inline=False,
             )
-        remaining = 160 - m.hours
-        embed.set_footer(
-            text=(
-                f"Milestone {m.hours}h of 160h"
-                + (f" • {remaining}h left" if remaining else " • FINAL MILESTONE")
-            )
-        )
+        footer = TEXT.MILESTONE_FOOTER_FINAL if m.hours == 160 else TEXT.MILESTONE_FOOTER
+        embed.set_footer(text=say(footer, **fields))
         return embed
 
     def render_milestone(self, event: MilestoneReached) -> str:
@@ -576,30 +615,43 @@ class Announcer:
 
     def build_failure(self, event: EventFailed) -> list[discord.Embed]:
         reached = [m for m in MILESTONES if m.seconds <= event.elapsed]
-        embed = discord.Embed(
-            title="💀 WELCOME TO HELL — CHALLENGE FAILED",
-            description=(
-                f"<#{self.config.voice_channel_id}> was **completely empty of valid participants** "
-                "for the entire grace period, so nobody came back in time.\n"
-                "The timer has stopped **permanently** and the run cannot resume."
+        fields = dict(
+            vc=f"<#{self.config.voice_channel_id}>",
+            survived=format_hms(event.elapsed),
+            percent=f"{event.elapsed / (160 * 3600) * 100:.1f}%",
+            failed_at=discord_ts(event.failed_ts, "F"),
+            milestones=(
+                ", ".join(f"**{m.hours}h**" for m in reached)
+                if reached
+                else TEXT.FAILURE_MILESTONES_NONE
             ),
-            color=COLOR_FAILED,
         )
-        embed.add_field(name="⏱️ Survived", value=f"**{format_hms(event.elapsed)}** of 160h", inline=True)
+        embed = discord.Embed(
+            title=say(TEXT.FAILURE_TITLE, **fields),
+            description=say(TEXT.FAILURE_DESCRIPTION, **fields),
+            color=color("FAILED"),
+        )
         embed.add_field(
-            name="📉 Progress",
-            value=f"**{event.elapsed / (160 * 3600) * 100:.1f}%**",
+            name=say(TEXT.FAILURE_SURVIVED_FIELD, **fields),
+            value=say(TEXT.FAILURE_SURVIVED_TEXT, **fields),
             inline=True,
         )
-        embed.add_field(name="🕛 Failed at", value=discord_ts(event.failed_ts, "F"), inline=True)
         embed.add_field(
-            name="🏁 Milestones secured",
-            value=", ".join(f"**{m.hours}h**" for m in reached) if reached else "**none**",
+            name=say(TEXT.FAILURE_PROGRESS_FIELD, **fields),
+            value=say(TEXT.FAILURE_PROGRESS_TEXT, **fields),
+            inline=True,
+        )
+        embed.add_field(
+            name=say(TEXT.FAILURE_WHEN_FIELD, **fields), value=fields["failed_at"], inline=True
+        )
+        embed.add_field(
+            name=say(TEXT.FAILURE_MILESTONES_FIELD, **fields),
+            value=fields["milestones"],
             inline=False,
         )
-        embed.set_footer(text="Rewards already earned at reached milestones still stand. Reset with /hell reset.")
+        embed.set_footer(text=say(TEXT.FAILURE_FOOTER, **fields))
         return [embed] + self.build_leaderboard_embeds(
-            event.leaderboard, title="🏆 FINAL LEADERBOARD (frozen)", color=COLOR_FAILED
+            event.leaderboard, title=TEXT.FAILURE_LEADERBOARD_TITLE, color=color("FAILED")
         )
 
     def render_failure(self, event: EventFailed) -> str:
@@ -609,20 +661,27 @@ class Announcer:
         await self.send(self.build_failure(event), content="@everyone", mention_everyone=True)
 
     def build_cancelled(self, event: EventCancelled) -> list[discord.Embed]:
-        who = f"<@{event.by_user_id}>" if event.by_user_id else "a host"
-        embed = discord.Embed(
-            title="🛑 WELCOME TO HELL — CANCELLED",
-            description=(
-                f"The event was manually stopped by {who}.\n"
-                "This is a **cancellation, not a failure** — the VC never emptied."
-            ),
-            color=COLOR_CANCELLED,
+        fields = dict(
+            who=f"<@{event.by_user_id}>" if event.by_user_id else "a host",
+            elapsed=format_hms(event.elapsed),
+            cancelled_at=discord_ts(event.cancelled_ts, "F"),
         )
-        embed.add_field(name="⏱️ Time on the clock", value=f"**{format_hms(event.elapsed)}** of 160h", inline=True)
-        embed.add_field(name="🕛 Stopped at", value=discord_ts(event.cancelled_ts, "F"), inline=True)
-        embed.set_footer(text="A host can begin a fresh run with /hell reset followed by /hell start.")
+        embed = discord.Embed(
+            title=say(TEXT.CANCELLED_TITLE, **fields),
+            description=say(TEXT.CANCELLED_DESCRIPTION, **fields),
+            color=color("CANCELLED"),
+        )
+        embed.add_field(
+            name=say(TEXT.CANCELLED_CLOCK_FIELD, **fields),
+            value=say(TEXT.CANCELLED_CLOCK_TEXT, **fields),
+            inline=True,
+        )
+        embed.add_field(
+            name=say(TEXT.CANCELLED_WHEN_FIELD, **fields), value=fields["cancelled_at"], inline=True
+        )
+        embed.set_footer(text=say(TEXT.CANCELLED_FOOTER, **fields))
         return [embed] + self.build_leaderboard_embeds(
-            event.leaderboard, title="🏆 LEADERBOARD (frozen)", color=COLOR_CANCELLED
+            event.leaderboard, title=TEXT.CANCELLED_LEADERBOARD_TITLE, color=color("CANCELLED")
         )
 
     def render_cancelled(self, event: EventCancelled) -> str:
@@ -634,39 +693,40 @@ class Announcer:
     def build_completion(self, event: EventCompleted) -> list[discord.Embed]:
         board = event.leaderboard
         podium = top_n(board, 3)
-        embed = discord.Embed(
-            title="🏆🔥 WELCOME TO HELL HAS BEEN COMPLETED 🔥🏆",
-            description=(
-                "**160 consecutive hours.**\n"
-                f"<#{self.config.voice_channel_id}> never emptied — not for one single second.\n\n"
-                f"Completed {discord_ts(event.completed_ts, 'F')}."
+        fields = dict(
+            vc=f"<#{self.config.voice_channel_id}>",
+            completed_at=discord_ts(event.completed_ts, "F"),
+            final_reward=self.config.reward_text(160, get_milestone(160).reward),
+            all_rewards=", ".join(
+                self.config.reward_text(m.hours, m.short_reward or m.reward) for m in MILESTONES
             ),
-            color=COLOR_COMPLETED,
+            bonus_role=self.config.role_mention(
+                self.config.cool_people_role_id, TEXT.TOP3_BONUS_ROLE
+            ),
+        )
+        embed = discord.Embed(
+            title=say(TEXT.COMPLETION_TITLE, **fields),
+            description=say(TEXT.COMPLETION_DESCRIPTION, **fields),
+            color=color("COMPLETED"),
         )
         embed.add_field(
-            name="🎁 160h reward",
-            value=(
-                f"{self.config.reward_text(160, get_milestone(160).reward)}\n"
-                "*for everyone who was in the VC at the 160h mark*"
-            ),
+            name=say(TEXT.COMPLETION_REWARD_FIELD, **fields),
+            value=say(TEXT.COMPLETION_REWARD_TEXT, **fields),
             inline=False,
         )
         add_chunked_field(
             embed,
-            "🥇 Special Top 3 reward",
-            (
-                "The final Top 3 receive **every milestone reward** — "
-                + ", ".join(self.config.reward_text(m.hours, m.short_reward or m.reward) for m in MILESTONES)
-                + " — **plus "
-                + self.config.role_mention(self.config.cool_people_role_id, TOP3_BONUS_ROLE)
-                + "**."
-            ),
+            say(TEXT.COMPLETION_TOP3_FIELD, **fields),
+            say(TEXT.COMPLETION_TOP3_TEXT, **fields),
         )
-        if podium:
-            add_chunked_field(embed, "🏅 The Top 3", "\n".join(format_entry(e) for e in podium))
-        embed.set_footer(text="The leaderboard below is final and frozen. Well done, all of you.")
+        add_chunked_field(
+            embed,
+            say(TEXT.COMPLETION_PODIUM_FIELD, **fields),
+            "\n".join(format_entry(e) for e in podium) or TEXT.COMPLETION_PODIUM_NONE,
+        )
+        embed.set_footer(text=say(TEXT.COMPLETION_FOOTER, **fields))
         return [embed] + self.build_leaderboard_embeds(
-            board, title="🏆 FINAL RANKINGS (frozen)", color=COLOR_COMPLETED
+            board, title=TEXT.COMPLETION_LEADERBOARD_TITLE, color=color("COMPLETED")
         )
 
     def render_completion(self, event: EventCompleted) -> str:
@@ -702,19 +762,17 @@ class Announcer:
         self,
         entries: Sequence[LeaderboardEntry],
         *,
-        title: str = "🏆 WELCOME TO HELL — LEADERBOARD",
-        color: int = COLOR_RUNNING,
+        title: Optional[str] = None,
+        color_value: Optional[int] = None,
         limit: int = 50,
+        **legacy,
     ) -> list[discord.Embed]:
         """Podium + the rest, split across as many embeds as needed."""
+        title = title if title is not None else TEXT.LEADERBOARD_TITLE
+        colour = color_value if color_value is not None else legacy.get("color", color("RUNNING"))
+
         if not entries:
-            return [
-                discord.Embed(
-                    title=title,
-                    description="*Nobody has spent time in Hell yet.*",
-                    color=color,
-                )
-            ]
+            return [discord.Embed(title=title, description=TEXT.LEADERBOARD_EMPTY, color=colour)]
 
         shown = list(entries[:limit])
         podium = [e for e in shown if e.rank <= 3]
@@ -722,33 +780,38 @@ class Announcer:
 
         head = discord.Embed(
             title=title,
-            description="\n".join(format_entry(e) for e in podium) or "*No podium yet.*",
-            color=color,
+            description="\n".join(format_entry(e) for e in podium) or TEXT.LEADERBOARD_NO_PODIUM,
+            color=colour,
         )
         total = len(entries)
-        head.set_footer(
-            text=f"{total} participant(s) • times count only while the event is running"
-        )
+        head.set_footer(text=say(TEXT.LEADERBOARD_FOOTER, total=total))
         embeds = [head]
         if rest:
-            for index, chunk in enumerate(split_text("\n".join(format_entry(e) for e in rest), MAX_DESCRIPTION)):
+            body = "\n".join(format_entry(e) for e in rest)
+            for index, chunk in enumerate(split_text(body, MAX_DESCRIPTION)):
                 embeds.append(
                     discord.Embed(
-                        title="Everyone else" if index == 0 else "Everyone else (cont.)",
+                        title=(
+                            TEXT.LEADERBOARD_REST_TITLE
+                            if index == 0
+                            else TEXT.LEADERBOARD_REST_TITLE_CONT
+                        ),
                         description=chunk,
-                        color=color,
+                        color=colour,
                     )
                 )
         hidden = total - len(shown)
         if hidden > 0:
-            embeds[-1].add_field(name="…", value=f"and {hidden} more participant(s)", inline=False)
+            embeds[-1].add_field(
+                name="…", value=say(TEXT.LEADERBOARD_MORE, hidden=hidden), inline=False
+            )
         return embeds[:MAX_EMBEDS_PER_MESSAGE]
 
     def render_leaderboard_message(self, entries: Sequence[LeaderboardEntry], frozen: bool) -> str:
-        title = "🏆 WELCOME TO HELL — FINAL LEADERBOARD" if frozen else "🏆 WELCOME TO HELL — LEADERBOARD"
+        title = TEXT.LEADERBOARD_TITLE_FINAL if frozen else TEXT.LEADERBOARD_TITLE
         text = embeds_to_text(self.build_leaderboard_embeds(entries, title=title))
         if frozen:
-            text += "\n\n*These rankings are frozen; the event is over.*"
+            text += f"\n\n*{TEXT.LEADERBOARD_FROZEN_FOOTER}*"
         return text
 
     # `render_leaderboard` from the pure module stays available for tests/CLI.

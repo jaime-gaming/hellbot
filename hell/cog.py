@@ -14,6 +14,8 @@ from .engine import HellEngine, StartError
 from .milestones import MILESTONES, TOTAL_SECONDS
 from .models import EventStatus
 from .monitor import VoiceMonitor
+from .texts import TEXT, say
+from .texts import message_count, reload as reload_texts, source as texts_source
 from .timeutil import discord_ts, format_hm, now_ts
 
 log = logging.getLogger("hell.commands")
@@ -34,7 +36,9 @@ def is_host():
         if not isinstance(member, discord.Member):
             raise NotAHost("This command can only be used inside the server.")
         if not any(r.id == config.gamenight_host_role_id for r in member.roles):
-            raise NotAHost("Only <@&%d> can use this command." % config.gamenight_host_role_id)
+            raise NotAHost(
+                say(TEXT.CMD_NOT_ALLOWED, host_role=f"<@&{config.gamenight_host_role_id}>")
+            )
         return True
 
     return app_commands.check(predicate)
@@ -88,9 +92,7 @@ class ResetModal(discord.ui.Modal, title="Reset Welcome to Hell"):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if str(self.phrase.value).strip() != RESET_PHRASE:
-            await interaction.response.send_message(
-                "❌ Phrase did not match. Nothing was reset.", ephemeral=True
-            )
+            await interaction.response.send_message(TEXT.CMD_RESET_MISMATCH, ephemeral=True)
             return
         engine = self.cog.engine
         was = engine.status
@@ -100,9 +102,7 @@ class ResetModal(discord.ui.Modal, title="Reset Welcome to Hell"):
         self.cog.announcer.forget_progress_message()
         log.warning("Event data reset by %s (previous status: %s)", interaction.user, was.value)
         await interaction.response.send_message(
-            f"♻️ **Event data reset.** Previous status was `{was.value}`. "
-            "All timers, leaderboard entries and milestones are gone — `/hell start` begins a fresh run.",
-            ephemeral=False,
+            say(TEXT.CMD_RESET_DONE, previous_status=was.value), ephemeral=False
         )
 
 
@@ -128,9 +128,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         if self.engine.is_running:
             elapsed = self.engine.elapsed()
             await interaction.followup.send(
-                f"❌ **Welcome to Hell is already RUNNING** — {format_hm(elapsed)} on the clock. "
-                "Use `/hell status`, or `/hell stop` to cancel it first.",
-                ephemeral=True,
+                say(TEXT.CMD_ALREADY_RUNNING, elapsed=format_hm(elapsed)), ephemeral=True
             )
             return
 
@@ -140,8 +138,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         collected = await self.monitor.collect()
         if collected is None:
             await interaction.followup.send(
-                f"❌ I cannot see the target voice channel (<#{self.config.voice_channel_id}>). "
-                "Check the ID and my permissions, then try again.",
+                say(TEXT.CMD_VC_UNREACHABLE, vc=f"<#{self.config.voice_channel_id}>"),
                 ephemeral=True,
             )
             return
@@ -150,8 +147,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             await self.monitor.kick_clankers(clankers)
         if self.config.require_occupants_to_start and not humans:
             await interaction.followup.send(
-                f"❌ <#{self.config.voice_channel_id}> has **no valid humans** in it. "
-                "The event would fail on its very first check — get someone in there first.",
+                say(TEXT.CMD_VC_EMPTY_ON_START, vc=f"<#{self.config.voice_channel_id}>"),
                 ephemeral=True,
             )
             return
@@ -181,9 +177,13 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         await self.announcer.announce_start(snap, interaction.user, humans)
         await self.announcer.update_progress(snap)
         await interaction.followup.send(
-            f"🔥 **Welcome to Hell has started.** Timer running since {discord_ts(snap.start_ts or 0, 'T')}; "
-            f"target: {format_hm(TOTAL_SECONDS)} of continuous presence in <#{self.config.voice_channel_id}>. "
-            f"Announcements go to <#{self.config.announce_channel_id}>.",
+            say(
+                TEXT.CMD_STARTED,
+                started_at=discord_ts(snap.start_ts or 0, "T"),
+                total=format_hm(TOTAL_SECONDS),
+                vc=f"<#{self.config.voice_channel_id}>",
+                announce_channel=f"<#{self.config.announce_channel_id}>",
+            ),
             ephemeral=True,
         )
 
@@ -196,13 +196,13 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         if self.engine.status is EventStatus.IDLE:
             await interaction.followup.send(
                 embed=discord.Embed(
-                    title="💤 Welcome to Hell is not running",
-                    description=(
-                        "No event has been started yet.\n"
-                        f"A <@&{self.config.gamenight_host_role_id}> can start one with `/hell start`.\n\n"
-                        f"Target VC: <#{self.config.voice_channel_id}> • Duration: **160 hours**"
+                    title=TEXT.CMD_IDLE_TITLE,
+                    description=say(
+                        TEXT.CMD_IDLE_TEXT,
+                        host_role=f"<@&{self.config.gamenight_host_role_id}>",
+                        vc=f"<#{self.config.voice_channel_id}>",
                     ),
-                    color=0x2F3136,
+                    color=int(TEXT.COLOR_IDLE),
                 )
             )
             return
@@ -241,20 +241,31 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         records = {r.hours: r for r in self.engine.milestone_records()}
         elapsed = self.engine.elapsed()
         embed = discord.Embed(
-            title="🏁 WELCOME TO HELL — MILESTONES",
-            description="Milestones follow the **global event timer**, not individual user time.",
-            color=0xFF4500,
+            title=TEXT.CMD_MILESTONES_TITLE,
+            description=TEXT.CMD_MILESTONES_DESCRIPTION,
+            color=int(TEXT.COLOR_MILESTONE),
         )
         for m in MILESTONES:
             record = records.get(m.hours)
             if record:
-                state = f"✅ reached {discord_ts(record.reached_ts, 'f')} — {len(record.members)} eligible"
+                state = say(
+                    TEXT.CMD_MILESTONES_REACHED,
+                    reached_at=discord_ts(record.reached_ts, "f"),
+                    member_count=len(record.members),
+                )
             elif self.engine.is_running:
-                state = f"⏳ in {format_hm(max(0.0, m.seconds - elapsed))}"
+                state = say(
+                    TEXT.CMD_MILESTONES_PENDING,
+                    time_to_go=format_hm(max(0.0, m.seconds - elapsed)),
+                )
             else:
-                state = "—"
+                state = TEXT.CMD_MILESTONES_IDLE
             embed.add_field(
-                name=f"{m.hours}h — {m.short_reward or m.reward}",
+                name=say(
+                    TEXT.CMD_MILESTONES_FIELD,
+                    hours=m.hours,
+                    short_reward=m.short_reward or m.reward,
+                ),
                 value=f"{self.config.reward_text(m.hours, m.reward)}\n{state}",
                 inline=False,
             )
@@ -296,7 +307,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         await interaction.response.defer(thinking=True, ephemeral=True)
         stream = getattr(self.bot, "log_stream", None)
         if stream is None:
-            await interaction.followup.send("❌ The live log stream is not available.", ephemeral=True)
+            await interaction.followup.send(TEXT.CMD_LOGS_UNAVAILABLE, ephemeral=True)
             return
 
         choice = action.value if action else "status"
@@ -308,19 +319,19 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             stream.set_enabled(True)
             if not stream.running:
                 await stream.start()
-            message = "📡 Live log stream **enabled**."
+            message = TEXT.CMD_LOGS_ON
         elif choice == "off":
             stream.set_enabled(False)
-            message = "📴 Live log stream **disabled**."
+            message = TEXT.CMD_LOGS_OFF
         elif choice == "test":
             log.warning("Live log test triggered by %s (%s)", interaction.user, interaction.user.id)
             await stream.flush()
-            message = "✅ Test line sent to the operator's DMs."
+            message = TEXT.CMD_LOGS_TEST
         elif choice == "flush":
             sent = await stream.flush()
-            message = f"📨 Flushed **{sent}** message(s)."
+            message = say(TEXT.CMD_LOGS_FLUSHED, sent=sent)
         else:
-            message = f"📡 Live log stream: **{stream.status()}**"
+            message = say(TEXT.CMD_LOGS_STATUS, status=stream.status())
 
         await interaction.followup.send(message, ephemeral=True)
 
@@ -333,8 +344,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         report = self.monitor.reports.report_for(interaction.user.id)
         if report is None:
             await interaction.followup.send(
-                "You have no recorded time in this event yet — join "
-                f"<#{self.config.voice_channel_id}> to start your clock.",
+                say(TEXT.CMD_MYSTATS_NONE, vc=f"<#{self.config.voice_channel_id}>"),
                 ephemeral=True,
             )
             return
@@ -354,28 +364,46 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         await interaction.response.defer(thinking=True, ephemeral=True)
         if not self.engine.is_running:
             await interaction.followup.send(
-                f"❌ No event is running (status `{self.engine.status.value}`).", ephemeral=True
+                say(TEXT.CMD_ALIVECHECK_NO_EVENT, status=self.engine.status.value), ephemeral=True
             )
             return
         if not self.config.alive_check_enabled:
-            await interaction.followup.send(
-                "❌ Alive checks are disabled (`ALIVE_CHECK_ENABLED=false`).", ephemeral=True
-            )
+            await interaction.followup.send(TEXT.CMD_ALIVECHECK_DISABLED, ephemeral=True)
             return
         if self.monitor.alive_checks.pending is not None:
-            await interaction.followup.send("❌ An alive check is already running.", ephemeral=True)
+            await interaction.followup.send(TEXT.CMD_ALIVECHECK_ALREADY, ephemeral=True)
             return
         started = await self.monitor.force_alive_check()
         if not started:
-            await interaction.followup.send(
-                "❌ Could not start it — the VC is empty or the check channel is unreachable.",
-                ephemeral=True,
-            )
+            await interaction.followup.send(TEXT.CMD_ALIVECHECK_FAILED, ephemeral=True)
             return
-        minutes = int(self.config.alive_check_timeout_minutes)
         await interaction.followup.send(
-            f"🚨 Alive check posted in <#{self.monitor.alive_io.channel_id()}>. "
-            f"Everyone in the VC has {minutes} minutes to reply `Yes`.",
+            say(
+                TEXT.CMD_ALIVECHECK_STARTED,
+                check_channel=f"<#{self.monitor.alive_io.channel_id()}>",
+                minutes=int(self.config.alive_check_timeout_minutes),
+            ),
+            ephemeral=True,
+        )
+
+    # ------------------------------------------------------- message reloading
+
+    @app_commands.command(
+        name="reloadmessages",
+        description="Re-read Announcements.py so wording changes apply without a restart.",
+    )
+    @is_host()
+    @app_commands.guild_only()
+    async def reloadmessages(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        ok, detail = reload_texts()
+        if not ok:
+            await interaction.followup.send(say(TEXT.CMD_MESSAGES_FAILED, error=detail[:1500]),
+                                            ephemeral=True)
+            return
+        log.info("Announcements.py reloaded from %s by %s", texts_source(), interaction.user)
+        await interaction.followup.send(
+            say(TEXT.CMD_MESSAGES_RELOADED, count=message_count(), milestones=len(MILESTONES)),
             ephemeral=True,
         )
 
@@ -387,24 +415,21 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
     async def stop(self, interaction: discord.Interaction) -> None:
         if not self.engine.is_running:
             await interaction.response.send_message(
-                f"❌ Nothing to stop — current status is `{self.engine.status.value}`.", ephemeral=True
+                say(TEXT.CMD_STOP_NOTHING, status=self.engine.status.value), ephemeral=True
             )
             return
 
         elapsed = self.engine.elapsed()
         view = ConfirmView(interaction.user.id, confirm_label="Stop the event")
         await interaction.response.send_message(
-            f"⚠️ **Stop Welcome to Hell?**\n"
-            f"The clock is at **{format_hm(elapsed)} / {format_hm(TOTAL_SECONDS)}**. "
-            "The event will be marked **CANCELLED** (not FAILED), the leaderboard frozen, and it "
-            "cannot be resumed.",
+            say(TEXT.CMD_STOP_CONFIRM, elapsed=format_hm(elapsed), total=format_hm(TOTAL_SECONDS)),
             view=view,
             ephemeral=True,
         )
         await view.wait()
         if not view.value:
             if view.value is None:
-                await interaction.followup.send("⌛ Confirmation timed out — nothing happened.", ephemeral=True)
+                await interaction.followup.send(TEXT.CMD_STOP_TIMEOUT, ephemeral=True)
             return
 
         try:
@@ -414,7 +439,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             await interaction.followup.send(f"❌ {exc}", ephemeral=True)
             return
         await self.monitor.dispatch(event)
-        await interaction.followup.send("🛑 Event cancelled and leaderboard frozen.", ephemeral=True)
+        await interaction.followup.send(TEXT.CMD_STOP_DONE, ephemeral=True)
 
     # ----------------------------------------------------------------- reset
 
@@ -430,12 +455,14 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         self, interaction: discord.Interaction, error: app_commands.AppCommandError
     ) -> None:
         if isinstance(error, NotAHost):
-            message = f"⛔ {error}" if str(error) else "⛔ You are not a `@gamenight host`."
+            message = str(error) or TEXT.CMD_NOT_A_HOST
         elif isinstance(error, app_commands.CheckFailure):
-            message = f"⛔ You cannot use this command. (<@&{self.config.gamenight_host_role_id}> only)"
+            message = say(
+                TEXT.CMD_NOT_ALLOWED, host_role=f"<@&{self.config.gamenight_host_role_id}>"
+            )
         else:
             log.exception("Command error", exc_info=error)
-            message = "💥 Something went wrong running that command. The event state is untouched."
+            message = TEXT.CMD_ERROR
         try:
             if interaction.response.is_done():
                 await interaction.followup.send(message, ephemeral=True)

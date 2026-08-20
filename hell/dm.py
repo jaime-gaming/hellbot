@@ -22,10 +22,9 @@ import discord
 from .config import Config
 from .engine import HellEngine
 from .reports import UserReport, build_reports, render_report
+from .texts import TEXT, say
 
 log = logging.getLogger("hell.dm")
-
-COLOR_CARD = 0xE25822
 
 
 class FinalReportDM:
@@ -58,11 +57,11 @@ class FinalReportDM:
 
     def build_embed(self, report: UserReport) -> discord.Embed:
         embed = discord.Embed(
-            title="🔥 WELCOME TO HELL",
+            title=TEXT.CARD_EMBED_TITLE,
             description=render_report(report),
-            color=COLOR_CARD,
+            color=int(TEXT.COLOR_CARD),
         )
-        embed.set_footer(text="Thanks for surviving with us. See you in the next one.")
+        embed.set_footer(text=TEXT.CARD_EMBED_FOOTER)
         return embed
 
     # -------------------------------------------------------------- sending
@@ -135,21 +134,20 @@ class FinalReportDM:
         if self.announcer is None or not summary["total"]:
             return
         embed = discord.Embed(
-            title="📬 Stat cards delivered",
-            description=(
-                f"Sent **{summary['sent']}** personal summaries to the contestants of this run."
-            ),
-            color=COLOR_CARD,
+            title=TEXT.DM_SUMMARY_TITLE,
+            description=say(TEXT.DM_SUMMARY_TEXT, sent=summary["sent"]),
+            color=int(TEXT.COLOR_CARD),
         )
         if summary["blocked"]:
             embed.add_field(
-                name="DMs closed",
-                value=(
-                    f"**{summary['blocked']}** contestant(s) could not be messaged. "
-                    "They can run `/hell mystats` to see their card."
-                ),
+                name=TEXT.DM_SUMMARY_BLOCKED_FIELD,
+                value=say(TEXT.DM_SUMMARY_BLOCKED_TEXT, blocked=summary["blocked"]),
                 inline=False,
             )
         if summary["failed"]:
-            embed.add_field(name="Failed", value=f"**{summary['failed']}** (see the logs)", inline=False)
+            embed.add_field(
+                name=TEXT.DM_SUMMARY_FAILED_FIELD,
+                value=say(TEXT.DM_SUMMARY_FAILED_TEXT, failed=summary["failed"]),
+                inline=False,
+            )
         await self.announcer.send([embed])

@@ -77,10 +77,11 @@ class Config:
     database_path: Path = field(default_factory=lambda: Path("data/hell.sqlite3"))
 
     monitor_interval: float = 1.0        # VC check cadence (seconds)
-    progress_interval: float = 10.0      # progress message edit cadence (seconds)
+    progress_interval: float = 20.0      # progress message edit cadence (seconds)
     startup_grace: float = 15.0          # ignore VC observations right after boot
     empty_vc_grace_seconds: float = 15.0  # empty VC -> this long to repopulate or the run dies
     max_tick_credit: float = 5.0         # cap per-tick leaderboard credit (downtime guard)
+    downtime_credit_seconds: float = 300.0  # short outages are credited back (see engine.tick)
     require_occupants_to_start: bool = True
     heartbeat_minutes: float = 15.0
 
@@ -127,10 +128,11 @@ class Config:
             cool_people_role_id=_int_env("COOL_PEOPLE_ROLE_ID"),
             database_path=resolve(os.getenv("DATABASE_PATH", "").strip() or "data/hell.sqlite3"),
             monitor_interval=_float_env("MONITOR_INTERVAL", 1.0),
-            progress_interval=_float_env("PROGRESS_INTERVAL", 10.0),
+            progress_interval=_float_env("PROGRESS_INTERVAL", 20.0),
             startup_grace=_float_env("STARTUP_GRACE_SECONDS", 15.0),
             empty_vc_grace_seconds=_float_env("EMPTY_VC_GRACE_SECONDS", 15.0),
             max_tick_credit=_float_env("MAX_TICK_CREDIT_SECONDS", 5.0),
+            downtime_credit_seconds=_float_env("DOWNTIME_CREDIT_SECONDS", 300.0),
             require_occupants_to_start=_bool_env("REQUIRE_OCCUPANTS_TO_START", True),
             heartbeat_minutes=_float_env("HEARTBEAT_MINUTES", 15.0),
             alive_check_enabled=_bool_env("ALIVE_CHECK_ENABLED", True),
@@ -159,6 +161,7 @@ class Config:
             ("Database", str(self.database_path)),
             ("Monitor / progress", f"{self.monitor_interval:g}s / {self.progress_interval:g}s"),
             ("Empty-VC grace", f"{self.empty_vc_grace_seconds:g}s"),
+            ("Downtime credit", f"up to {self.downtime_credit_seconds:g}s"),
             (
                 "Alive checks",
                 (

@@ -54,7 +54,7 @@ def test_reset_phrase_is_strong():
 def test_monitor_intervals_follow_config(bot, config, engine):
     monitor = VoiceMonitor(bot, config, engine, Announcer(bot, config, engine))
     assert monitor._monitor_loop.seconds == 1.0
-    assert monitor._progress_loop.seconds == 10.0
+    assert monitor._progress_loop.seconds == 20.0
 
 
 def test_background_tasks_report_their_failures(caplog):

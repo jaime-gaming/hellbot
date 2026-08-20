@@ -42,6 +42,18 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         self.announcer = monitor.announcer
         super().__init__()
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Log who runs what — an audit trail for every command in the group."""
+        command = interaction.command.name if interaction.command else "?"
+        log.info(
+            "/hell %s by %s (%s)%s",
+            command,
+            interaction.user,
+            interaction.user.id,
+            f" [event {self.engine.status.value}]" if self.engine.event_uid else "",
+        )
+        return True
+
     # ----------------------------------------------------------------- start
 
     @app_commands.command(name="start", description="Start Welcome to Hell (160h). Requires @gamenight host.")

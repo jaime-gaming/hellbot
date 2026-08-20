@@ -54,7 +54,7 @@ from .milestones import (
 from .models import EventState, EventStatus, LeaderboardEntry, Milestone, MilestoneRecord, ParticipantRef
 from .storage import Store
 from .timeline import EventTimeline
-from .timeutil import now_ts
+from .timeutil import format_hm, now_ts
 from .tracking import UserTimeTracker
 
 log = logging.getLogger("hell.engine")
@@ -336,12 +336,15 @@ class HellEngine:
         # 1) Timeline #2: advance each present user's own 0 -> Xh clock.
         #    Nothing here can affect the global 0 -> 160h timeline.
         previous = self.state.last_tick_ts if self.state.last_tick_ts is not None else timeline.start_ts
+        bridge_users, bridge_seconds = self._bridge(previous, effective_now, obs)
         self.tracker.credit(
             uid,
             previous_ts=previous,
             now_ts=effective_now,
             participants=obs.participants,
             stamp=obs.now,
+            bridge_users=bridge_users,
+            bridge_seconds=bridge_seconds,
         )
 
         self.state.last_tick_ts = effective_now
@@ -381,6 +384,35 @@ class HellEngine:
                 )
             )
         return events
+
+    def _bridge(self, previous: float, now: float, obs: Observation) -> tuple[frozenset[int], float]:
+        """Work out how much of an outage can be credited back.
+
+        If the bot was away only briefly and somebody was in the VC both before
+        it went down and now, they demonstrably never left — so their clock is
+        made whole instead of losing the gap. Anyone who arrived during the
+        outage gets nothing extra, because nothing observed them.
+        """
+        gap = max(0.0, now - previous)
+        allowance = self.config.downtime_credit_seconds
+        if gap <= self.config.max_tick_credit or gap > allowance:
+            return frozenset(), 0.0
+
+        present_now = {p.user_id for p in obs.participants}
+        continuous = frozenset(self._presence_signature & present_now)
+        if not continuous:
+            log.warning(
+                "Gap of %.0fs and nobody from before is still here — that time is not credited",
+                gap,
+            )
+            return frozenset(), 0.0
+
+        log.info(
+            "Recovered from a %.0fs gap; %d user(s) were here before and after, crediting it back",
+            gap,
+            len(continuous),
+        )
+        return continuous, gap - self.config.max_tick_credit
 
     # ------------------------------------------------------------ grace rule
 
@@ -492,6 +524,14 @@ class HellEngine:
         return out
 
     def _terminate(self, status: EventStatus, ts: float, reason: str) -> None:
+        log.info(
+            "Event %s: %s -> %s after %s (%s)",
+            self.state.event_uid,
+            self.state.status.value,
+            status.value,
+            format_hm(self.elapsed(ts)),
+            reason,
+        )
         self.state.status = status
         self.state.end_ts = ts
         self.state.end_reason = reason
@@ -521,6 +561,11 @@ class HellEngine:
             return []
         entries = self.tracker.totals(uid)
         self.store.save_final_leaderboard(uid, entries)
+        log.info(
+            "Final leaderboard frozen: %d participant(s), %s tracked in total",
+            len(entries),
+            format_hm(sum(e.seconds for e in entries)),
+        )
         self.state.final_saved = True
         self.store.save_state(self.state)
         return entries

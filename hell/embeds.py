@@ -310,7 +310,7 @@ class EmbedFactory:
             )
         embed.set_footer(
             text=(
-                TEXT.PROGRESS_FOOTER_LIVE
+                say(TEXT.PROGRESS_FOOTER_LIVE, interval=int(self.config.progress_interval))
                 if snap.status is EventStatus.RUNNING
                 else TEXT.PROGRESS_FOOTER_FINAL
             )
@@ -542,7 +542,6 @@ class EmbedFactory:
                 event.leaderboard,
                 title=TEXT.FAILURE_LEADERBOARD_TITLE,
                 color=theme_color("FAILED"),
-                elapsed=event.elapsed,
             ),
         ]
 
@@ -573,7 +572,6 @@ class EmbedFactory:
                 event.leaderboard,
                 title=TEXT.CANCELLED_LEADERBOARD_TITLE,
                 color=theme_color("CANCELLED"),
-                elapsed=event.elapsed,
             ),
         ]
 
@@ -619,16 +617,8 @@ class EmbedFactory:
                 board,
                 title=TEXT.COMPLETION_LEADERBOARD_TITLE,
                 color=theme_color("COMPLETED"),
-                elapsed=160 * 3600.0,
             ),
         ]
-
-    @staticmethod
-    def _share(entry: LeaderboardEntry, reference: float) -> str:
-        """How much of the event this person was present for."""
-        if reference <= 0:
-            return ""
-        return f"{min(100.0, entry.seconds / reference * 100):.0f}%"
 
     def leaderboard(
         self,
@@ -637,7 +627,6 @@ class EmbedFactory:
         title: Optional[str] = None,
         color: Optional[int] = None,
         limit: int = 50,
-        elapsed: Optional[float] = None,
     ) -> list[discord.Embed]:
         """Podium + the rest, split across as many embeds as needed."""
         title = title if title is not None else TEXT.LEADERBOARD_TITLE
@@ -650,13 +639,9 @@ class EmbedFactory:
         podium = [e for e in shown if e.rank <= 3]
         rest = [e for e in shown if e.rank > 3]
 
-        reference = elapsed if elapsed else max((e.seconds for e in entries), default=0.0)
-        shares = {e.user_id: self._share(e, reference) for e in shown}
-
         head = discord.Embed(
             title=title,
-            description="\n".join(format_entry(e, share=shares.get(e.user_id, "")) for e in podium)
-            or TEXT.LEADERBOARD_NO_PODIUM,
+            description="\n".join(format_entry(e) for e in podium) or TEXT.LEADERBOARD_NO_PODIUM,
             color=colour,
         )
         total = len(entries)
@@ -670,7 +655,7 @@ class EmbedFactory:
         self._brand(head, timestamp=False)
         embeds = [head]
         if rest:
-            body = "\n".join(format_entry(e, share=shares.get(e.user_id, "")) for e in rest)
+            body = "\n".join(format_entry(e) for e in rest)
             for index, chunk in enumerate(split_text(body, MAX_DESCRIPTION)):
                 embeds.append(
                     discord.Embed(

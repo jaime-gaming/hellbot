@@ -28,7 +28,7 @@ need [`Announcements.py`](../Announcements.py).
   ┌─────────────────────────┴───────────────────────────────────────────┐
   │  DISCORD EDGE                                                        │
   │                                                                      │
-  │  monitor.py     1s VC polling, 10s progress edit, dispatch           │
+  │  monitor.py     1s VC polling, timed progress edits, dispatch           │
   │  embeds.py      how every message looks                              │
   │  announcer.py   how every message is delivered                       │
   │  aliveio.py     roll-call pings, kicks, reply backfill               │
@@ -66,7 +66,9 @@ global clock while at least one valid human remains.
    `announced` is only set after Discord accepts the message, so a crash
    between the two re-posts rather than loses it.
 5. **Credit is only granted for observed seconds**, capped per tick
-   (`MAX_TICK_CREDIT_SECONDS`), so downtime is never silently paid out.
+   (`MAX_TICK_CREDIT_SECONDS`), so downtime is never silently paid out — with one
+   deliberate exception: an outage shorter than `DOWNTIME_CREDIT_SECONDS` is credited back to
+   users seen in the VC both before and after it, because they demonstrably never left.
 6. **Bots and `@clanker` never exist** as far as the core is concerned — the
    monitor filters them out before an `Observation` is built.
 7. **An empty VC opens a grace window, not an immediate failure**, and failure

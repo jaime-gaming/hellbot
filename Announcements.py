@@ -189,7 +189,7 @@ START_FOOTER = "Good luck. You are going to need it. · /hell status · /hell le
 
 
 # =============================================================================
-#  4. LIVE PROGRESS MESSAGE  (edited every 10 seconds, never pings)
+#  4. LIVE PROGRESS MESSAGE  (edited on a timer, never pings)
 # =============================================================================
 #  {status} {emoji} {bar} {elapsed} {total} {percent} {participants}
 #  {remaining} {current_milestone} {next_milestone} {time_to_next}
@@ -217,7 +217,7 @@ PROGRESS_NEXT_VALUE_RUNNING = "**{next_milestone}h**\nin {time_to_next}\n({next_
 PROGRESS_NEXT_NONE = "*all milestones cleared*"
 PROGRESS_STARTED_FIELD = "🕛 Started"
 PROGRESS_STARTED_VALUE = "{started_at}\n{started_relative}"
-PROGRESS_FOOTER_LIVE = "Live · updates every 10s · /hell status · /hell leaderboard"
+PROGRESS_FOOTER_LIVE = "Live · updates every {interval}s · /hell status · /hell leaderboard"
 PROGRESS_FOOTER_FINAL = "Final state · this message is no longer updating"
 
 PROGRESS_FAILED_FIELD = "💀 FAILED"
@@ -342,7 +342,7 @@ LEADERBOARD_REST_TITLE_CONT = "Everyone else (cont.)"
 LEADERBOARD_FOOTER = "{total} participant(s) · {tracked} tracked in total · time counts only while the event runs"
 LEADERBOARD_FROZEN_FOOTER = "These rankings are frozen; the event is over."
 LEADERBOARD_MORE = "and {hidden} more participant(s)"
-LEADERBOARD_ENTRY = "{medal}  {who}  ·  `{time}`  ·  {share}"
+LEADERBOARD_ENTRY = "{medal}  {who}  ·  `{time}`"
 LEADERBOARD_MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
 LEADERBOARD_RANK = "`#{rank}`"        # used from 4th place down
 

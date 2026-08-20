@@ -262,3 +262,26 @@ def test_missing_artwork_is_skipped_quietly(monkeypatch):
     assert assets.resolve("assets/does-not-exist.png") is None
     assert assets.resolve("https://example.com/x.png") == "https://example.com/x.png"
     assert assets.resolve("assets/hellbot.png") == "attachment://hellbot.png"
+
+
+def test_leaderboards_show_no_percentages(announcer, engine):
+    """Times only — the share column was removed on request."""
+    from hell.leaderboard import build_leaderboard
+
+    start(engine, T0, 1)
+    for i in range(1, 61):
+        engine.tick(obs(T0 + i, 1))
+    board = build_leaderboard([(1, "A", 3600.0), (2, "B", 1800.0), (4, "D", 60.0)])
+
+    text = announcer.render_leaderboard_message(board, frozen=False)
+    assert "%" not in text
+    assert "1h 00m" in text and "0h 30m" in text
+
+
+def test_the_progress_footer_states_the_real_cadence(announcer, engine, config):
+    config.progress_interval = 20.0
+    start(engine, T0, 1)
+    assert "every 20s" in announcer.render_progress(engine.snapshot(now=T0 + 60))
+
+    config.progress_interval = 15.0
+    assert "every 15s" in announcer.render_progress(engine.snapshot(now=T0 + 60))

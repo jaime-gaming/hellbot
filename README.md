@@ -33,7 +33,8 @@ empties and nobody returns within the grace period, the run is dead — permanen
 
 **The bot**
 
-* Timestamp-based and persisted in SQLite — **a restart never resets the timer**
+* Timestamp-based and persisted in SQLite — **a restart never resets the timer**, and a short
+  outage is credited back to whoever never left the VC
 * **Live log stream** DM'd to the operator: joins, leaves, kicks, milestones, errors
   (`/hell logs tail` shows recent lines in-channel when DMs are off)
 * **All wording in one file** — [`Announcements.py`](Announcements.py) — hot-reloadable
@@ -54,7 +55,7 @@ RUNNING             7                      86h 36m
 ✅ Current milestone  🔥 Next milestone      🕛 Started
 64h cleared          96h · in 22h 36m       in 3 days
 
-Live · updates every 10s · /hell status · /hell leaderboard
+Live · updates every 20s · /hell status · /hell leaderboard
 ```
 
 ```
@@ -148,7 +149,7 @@ in the log, and in the launcher's Dashboard.
 | `CLANKER_ROLE_ID` | ✅ | `@clanker` — auto-disconnected, never earns leaderboard time |
 | `HELL_ROLE_ID`, `HELLIST_ROLE_ID`, `HELL_MASTER_ROLE_ID`, `COOL_PEOPLE_ROLE_ID` | optional | only used to render real role mentions in reward messages |
 | `DATABASE_PATH` | optional | default `data/hell.sqlite3` |
-| `MONITOR_INTERVAL` / `PROGRESS_INTERVAL` | optional | default `1` s / `10` s |
+| `MONITOR_INTERVAL` / `PROGRESS_INTERVAL` | optional | default `1` s / `20` s |
 | `STARTUP_GRACE_SECONDS` | optional | default `15` — VC reads right after boot are observed but cannot fail the event (cold-cache guard) |
 | `EMPTY_VC_GRACE_SECONDS` | optional | default `15` — how long the VC may be empty before the run fails |
 | `SEND_FINAL_DMS` / `DM_DELAY_SECONDS` | optional | default `true` / `1` — end-of-event stat cards |
@@ -157,6 +158,7 @@ in the log, and in the launcher's Dashboard.
 | `LOG_DM_LEVEL` | optional | default `INFO` — `DEBUG`/`INFO`/`WARNING`/`ERROR` |
 | `LOG_DM_FLUSH_SECONDS` | optional | default `3` — batching interval |
 | `MAX_TICK_CREDIT_SECONDS` | optional | default `5` — cap on leaderboard credit per check, so downtime is never silently credited |
+| `DOWNTIME_CREDIT_SECONDS` | optional | default `300` — an outage up to this long is credited back to whoever was in the VC before *and* after it |
 | `REQUIRE_OCCUPANTS_TO_START` | optional | default `true` — refuses to start into an empty VC |
 | `HEARTBEAT_MINUTES` | optional | default `15` — proof-of-life line in the log |
 | `ALIVE_CHECK_ENABLED` | optional | default `true` |
@@ -339,9 +341,9 @@ Delivery is resumable (every attempt is written to `dm_log`, so a restart never 
 paced at one DM per second, and users with DMs closed are reported in the channel summary — they
 can run `/hell mystats` to see the same card.
 
-### The 10-second progress message
+### The progress message
 
-One embed, created once and **edited** afterwards (its ID is persisted, so it keeps being edited
+One embed, created once and **edited** every `PROGRESS_INTERVAL` seconds (20 by default) (its ID is persisted, so it keeps being edited
 after a restart; if someone deletes it, it is recreated). It shows status, `73h 24m / 160h 00m`,
 percentage, a `█████████░░░░░░░░░░░` bar, live headcount, current milestone, next milestone with a
 live countdown, and time remaining. Identical renders are skipped, and once the event ends the
@@ -429,7 +431,8 @@ CANCELLED.
 | User leaves and returns | Totals continue accumulating |
 | Identical total times | Shared rank, deterministic display order |
 | 250 people in the VC at a milestone | Message split across embed fields; never exceeds Discord's limits |
-| Bot offline for a while | Timer keeps running (timestamps), the unobserved window is **not** credited to anyone and is reported in the progress message |
+| Bot offline briefly (restart, deploy, crash) | The timer keeps running, and anyone in the VC before *and* after the outage gets that time credited back — nobody loses progress for the bot's downtime |
+| Bot offline for a long time | The timer still keeps running, but the unobserved window is **not** credited to anyone and is reported in the progress message |
 | Alive check + restart | Check state is persisted; replies sent while offline are recovered, and an expired check is cancelled instead of kicking people |
 | Alive check ignored by everyone | Everyone is disconnected, the VC empties, and the normal failure rule ends the run |
 | Someone joins mid-check | Not pinged, not required to answer, never kicked for it |

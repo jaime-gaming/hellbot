@@ -148,6 +148,11 @@ class Store:
                 (EventStatus.IDLE.value,),
             )
             self._migrate()
+            log.info(
+                "Database ready: %s (schema v%d)",
+                self.path if str(self.path) != ":memory:" else "in-memory",
+                SCHEMA_VERSION,
+            )
 
     def _migrate(self) -> None:
         """Additive schema migrations for databases created by older versions."""

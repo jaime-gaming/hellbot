@@ -5,7 +5,8 @@ Runs two loops:
 * **1 second** — read the target VC, drop bots, kick `@clanker` users, feed a
   trusted :class:`~hell.engine.Observation` into the engine and dispatch any
   domain events (milestone / failure / completion) to the announcer.
-* **10 seconds** — edit the live progress message.
+* **`PROGRESS_INTERVAL` seconds** (20 by default) — edit the live progress
+  message. Editing less often keeps well clear of Discord's edit rate limits.
 
 An observation is only fed to the engine when it can be *trusted*: the gateway
 is connected, the guild and the voice channel resolved, and the startup grace
@@ -71,11 +72,17 @@ class VoiceMonitor:
         self._last_heartbeat = 0.0
         self._terminal_rendered = False
         self._monitor_loop.change_interval(seconds=max(0.25, config.monitor_interval))
-        self._progress_loop.change_interval(seconds=max(1.0, config.progress_interval))
+        self._progress_loop.change_interval(seconds=max(5.0, config.progress_interval))
 
     # ------------------------------------------------------------- lifecycle
 
     def start(self) -> None:
+        log.info(
+            "Monitoring VC %s every %.0fs; progress message every %.0fs",
+            self.config.voice_channel_id,
+            self.config.monitor_interval,
+            self.config.progress_interval,
+        )
         self._ready_at = now_ts()
         if not self._monitor_loop.is_running():
             self._monitor_loop.start()
@@ -83,6 +90,7 @@ class VoiceMonitor:
             self._progress_loop.start()
 
     def stop(self) -> None:
+        log.info("Stopping the VC monitor")
         self._monitor_loop.cancel()
         self._progress_loop.cancel()
         if self._alive_task is not None and not self._alive_task.done():
@@ -287,7 +295,7 @@ class VoiceMonitor:
             f"{snap.upcoming.hours}h" if snap.upcoming else "none",
         )
 
-    @tasks.loop(seconds=10.0)
+    @tasks.loop(seconds=20.0)
     async def _progress_loop(self) -> None:
         state = self.engine.state
         if state.status is EventStatus.IDLE:

@@ -121,6 +121,7 @@ class Announcer:
             everyone=mention_everyone, users=False, roles=False, replied_user=False
         )
         first: Optional[discord.Message] = None
+        titles = ", ".join(e.title for e in batch if e.title) or "message"
         try:
             for index in range(0, max(1, len(batch)), MAX_EMBEDS_PER_MESSAGE):
                 slice_ = batch[index : index + MAX_EMBEDS_PER_MESSAGE]
@@ -131,6 +132,9 @@ class Announcer:
                     allowed_mentions=allowed,
                 )
                 first = first or msg
+            log.info(
+                "Announced: %s%s", titles, " (@everyone)" if mention_everyone else ""
+            )
         except discord.Forbidden:
             log.error(
                 "Missing permission to post in the announcement channel (%s). "
@@ -177,9 +181,7 @@ class Announcer:
         color: Optional[int] = None,
         limit: int = 50,
     ) -> list[discord.Embed]:
-        return self.embeds.leaderboard(
-            entries, title=title, color=color, limit=limit, elapsed=self.engine.elapsed()
-        )
+        return self.embeds.leaderboard(entries, title=title, color=color, limit=limit)
 
     def build_status(self, snap: Snapshot, *, alive_line: Optional[str] = None) -> discord.Embed:
         return self.embeds.status(
@@ -286,6 +288,7 @@ class Announcer:
             try:
                 await msg.edit(embed=embed, content=None, allowed_mentions=discord.AllowedMentions.none())
                 self._last_progress_payload = payload
+                log.debug("Progress message updated")
                 return
             except discord.NotFound:
                 log.warning("Progress message vanished — recreating it")
@@ -314,6 +317,7 @@ class Announcer:
         self._progress_message = new_msg
         self._last_progress_payload = payload
         self.engine.set_progress_message(new_msg.channel.id, new_msg.id)
+        log.info("Live progress message created (%s) in #%s", new_msg.id, new_msg.channel.id)
         try:
             await new_msg.pin(reason="Welcome to Hell live progress")
         except discord.HTTPException:

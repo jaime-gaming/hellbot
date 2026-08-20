@@ -36,7 +36,7 @@ def write_good_env(tmp_path: Path) -> Path:
 def test_defaults_when_no_file(tmp_path):
     values = envfile.read_env(tmp_path / "missing.env")
     assert values["VOICE_CHANNEL_ID"] == "1539756705997652079"
-    assert values["PROGRESS_INTERVAL"] == "10"
+    assert values["PROGRESS_INTERVAL"] == "20"
 
 
 def test_write_then_read_round_trip(tmp_path):

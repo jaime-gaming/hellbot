@@ -14,7 +14,7 @@ from hell.engine import (
 )
 from hell.milestones import TOTAL_SECONDS
 from hell.models import EventStatus
-from tests.conftest import GRACE, HOUR, T0, empty_out, obs, start
+from tests.conftest import GRACE, HOUR, T0, empty_out, make_config, obs, start
 
 # ------------------------------------------------------------------- start
 
@@ -293,3 +293,60 @@ def test_rapid_join_leave_churn_is_tracked(engine):
     assert engine.status is EventStatus.RUNNING
     assert board[1] == pytest.approx(60, abs=2)
     assert board[2] == pytest.approx(30, abs=2)
+
+
+# --------------------------------------------- downtime does not lose progress
+
+def test_a_short_outage_is_credited_back_to_whoever_never_left(engine, store, config):
+    """The bot dying must not cost people the time they were actually there."""
+    start(engine, T0, 1, 2)
+    for i in range(1, 61):
+        engine.tick(obs(T0 + i, 1, 2))
+    before = {e.user_id: e.seconds for e in engine.leaderboard()}
+
+    reborn = HellEngine(store, config)                 # restart after 3 minutes down
+    reborn.tick(obs(T0 + 60 + 180, 1))                 # user 1 still there, user 2 left
+
+    after = {e.user_id: e.seconds for e in reborn.leaderboard()}
+    assert after[1] == pytest.approx(before[1] + 180, abs=1)   # made whole
+    assert after[2] == pytest.approx(before[2], abs=1)         # nothing invented
+
+
+def test_a_long_outage_is_not_credited(engine, store, config):
+    """Beyond the allowance the bot cannot claim to know what happened."""
+    start(engine, T0, 1)
+    for i in range(1, 61):
+        engine.tick(obs(T0 + i, 1))
+    before = engine.leaderboard()[0].seconds
+
+    reborn = HellEngine(store, config)
+    reborn.tick(obs(T0 + 60 + 3600, 1))                # an hour of downtime
+
+    assert reborn.leaderboard()[0].seconds <= before + config.max_tick_credit + 1
+    assert store.get_unverified_seconds(reborn.event_uid) > 3000
+
+
+def test_nobody_who_arrived_during_the_outage_gets_free_time(engine, store, config):
+    start(engine, T0, 1)
+    for i in range(1, 61):
+        engine.tick(obs(T0 + i, 1))
+
+    reborn = HellEngine(store, config)
+    reborn.tick(obs(T0 + 60 + 120, 1, 7))              # user 7 appears after the gap
+
+    board = {e.user_id: e.seconds for e in reborn.leaderboard()}
+    assert board[1] > 150                               # was there throughout
+    assert board[7] <= config.max_tick_credit + 1       # only what was observed
+
+
+def test_the_allowance_is_configurable(tmp_path):
+    from hell.storage import Store
+
+    config = make_config(tmp_path, downtime_credit_seconds=30.0)
+    store = Store(config.database_path)
+    engine = HellEngine(store, config)
+    start(engine, T0, 1)
+    engine.tick(obs(T0 + 1, 1))
+    engine.tick(obs(T0 + 61, 1))                        # a 60s gap, over the 30s allowance
+    assert engine.leaderboard()[0].seconds < 20
+    store.close()

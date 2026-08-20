@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 
 from .leaderboard import build_leaderboard
@@ -38,6 +39,7 @@ class CreditResult:
     credited: float      # seconds actually awarded to each present user
     unverified: float    # seconds that passed unobserved (never credited)
     users: int           # how many users received the credit
+    bridged: float = 0.0  # downtime restored to users present either side
 
 
 class UserTimeTracker:
@@ -55,11 +57,20 @@ class UserTimeTracker:
         now_ts: float,
         participants: Sequence[ParticipantRef],
         stamp: float | None = None,
+        bridge_users: AbstractSet[int] = frozenset(),
+        bridge_seconds: float = 0.0,
     ) -> CreditResult:
-        """Advance every present user's clock by the observed interval."""
+        """Advance every present user's clock by the observed interval.
+
+        `bridge_users` / `bridge_seconds` cover a short outage: anyone the bot
+        saw *before* it went down and still sees now was demonstrably in the VC
+        the whole time, so that gap is credited back to them rather than lost.
+        Everyone else only ever gets the normal per-observation credit.
+        """
         raw_delta = max(0.0, now_ts - previous_ts)
         credited = min(raw_delta, self.max_credit)
-        unverified = raw_delta - credited
+        bridged = max(0.0, bridge_seconds) if bridge_users else 0.0
+        unverified = max(0.0, raw_delta - credited - bridged)
         stamp = now_ts if stamp is None else stamp
 
         if unverified > 0.5:
@@ -80,7 +91,23 @@ class UserTimeTracker:
                 # Still make sure everyone present has a leaderboard row.
                 self.store.touch_users(event_uid, participants, stamp)
 
-        return CreditResult(credited=credited, unverified=unverified, users=len(participants))
+            if bridged > 0:
+                restored = [p for p in participants if p.user_id in bridge_users]
+                if restored:
+                    self.store.add_user_time(
+                        event_uid,
+                        [(p.user_id, p.display_name, bridged, stamp) for p in restored],
+                    )
+                    log.info(
+                        "Restored %.0fs of downtime to %d user(s) who never left: %s",
+                        bridged,
+                        len(restored),
+                        ", ".join(p.display_name for p in restored[:10]),
+                    )
+
+        return CreditResult(
+            credited=credited, unverified=unverified, users=len(participants), bridged=bridged
+        )
 
     # ------------------------------------------------------------- readers
 

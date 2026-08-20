@@ -63,7 +63,8 @@ FIELDS: tuple[Field, ...] = (
 
     Field("DATABASE_PATH", "Database file", "Advanced", default="data/hell.sqlite3"),
     Field("MONITOR_INTERVAL", "VC check interval (s)", "Advanced", default="1"),
-    Field("PROGRESS_INTERVAL", "Progress update interval (s)", "Advanced", default="10"),
+    Field("PROGRESS_INTERVAL", "Progress update interval (s)", "Advanced", default="20",
+          help="How often the live progress message is edited. Higher = fewer edits."),
     Field("STARTUP_GRACE_SECONDS", "Startup grace (s)", "Advanced", default="15",
           help="VC reads during this window after boot cannot fail the event."),
     Field("EMPTY_VC_GRACE_SECONDS", "Empty-VC grace (s)", "Advanced", default="15",
@@ -71,6 +72,8 @@ FIELDS: tuple[Field, ...] = (
     Field("SEND_FINAL_DMS", "DM stat cards when the event ends", "Advanced", default="true"),
     Field("DM_DELAY_SECONDS", "Delay between DMs (s)", "Advanced", default="1"),
     Field("MAX_TICK_CREDIT_SECONDS", "Max credit per check (s)", "Advanced", default="5"),
+    Field("DOWNTIME_CREDIT_SECONDS", "Credit back short outages (s)", "Advanced", default="300",
+          help="After a restart, people who were in the VC before and after keep that time."),
     Field("REQUIRE_OCCUPANTS_TO_START", "Refuse to start with an empty VC", "Advanced", default="true"),
     Field("HEARTBEAT_MINUTES", "Heartbeat log interval (min)", "Advanced", default="15"),
     Field("LOG_LEVEL", "Log level", "Advanced", default="INFO"),

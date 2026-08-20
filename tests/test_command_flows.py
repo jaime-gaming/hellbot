@@ -718,3 +718,18 @@ def test_logs_tail_when_nothing_has_happened(wired, host):
     call(cog, "logs", interaction, action=Choice("tail"))
 
     assert "Nothing buffered" in interaction.text()
+
+
+def test_every_command_use_is_logged(wired, host, caplog):
+    """An audit trail of who ran what, for after-the-fact questions."""
+    import logging
+
+    cog, bot, _text, _voice = wired
+    interaction = FakeInteraction(bot, host)
+    interaction.command = type("C", (), {"name": "status"})()
+
+    with caplog.at_level(logging.INFO, logger="hell.commands"):
+        run(cog.interaction_check(interaction))
+
+    assert "/hell status by" in caplog.text
+    assert str(host.id) in caplog.text

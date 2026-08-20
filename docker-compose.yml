@@ -1,0 +1,18 @@
+services:
+  hellbot:
+    build: .
+    container_name: welcome-to-hell
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_PATH: /data/hell.sqlite3
+    volumes:
+      - hell-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  hell-data:

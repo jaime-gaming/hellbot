@@ -1,0 +1,70 @@
+[project]
+name = "welcome-to-hell"
+version = "1.4.0"
+description = "Discord bot running the 160-hour Welcome to Hell voice-channel event"
+requires-python = ">=3.10"
+dependencies = [
+    "discord.py>=2.3,<3",
+    "aiohttp>=3.9",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pyflakes>=3.1",
+    "mypy>=1.8",
+]
+
+[project.scripts]
+hellbot = "hell.bot:main"
+
+[tool.setuptools]
+packages = ["hell", "launcher"]
+
+# --------------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+filterwarnings = [
+    "ignore::DeprecationWarning:discord.player",
+]
+
+# ----------------------------------------------------------------------- mypy
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+strict_optional = false
+disable_error_code = ["annotation-unchecked"]
+files = ["hell", "launcher"]
+
+# ----------------------------------------------------------------------- ruff
+# Optional: `pip install ruff && ruff check .`
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+exclude = [".venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "C4", "RUF"]
+ignore = [
+    "E501",    # long lines are caught by review, not by CI
+    "B008",
+    "RUF001",  # em dashes and typographic quotes are intentional in messages
+    "RUF002",
+    "RUF003",
+    # The codebase deliberately spells optionals as Optional[X]/Dict[...] for
+    # readability and consistency; `from __future__ import annotations` means
+    # this is purely a style choice, so don't churn 100+ lines over it.
+    "UP006",
+    "UP007",
+    "UP045",
+    # `fields = dict(a=..., b=...)` reads better than a brace literal when the
+    # keys are the placeholder names of a message template.
+    "C408",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"Announcements.py" = ["E501", "RUF001"]
+"tests/*" = ["B011"]

@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Runtime state — never commit an event in progress
+.env
+data/
+logs/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build output
+build/
+dist/
+*.egg-info/
+.deps-ok

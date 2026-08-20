@@ -57,10 +57,17 @@ def medals() -> dict[int, str]:
     return {int(k): v for k, v in dict(TEXT.LEADERBOARD_MEDALS).items()}
 
 
-def format_entry(entry: LeaderboardEntry, use_mentions: bool = True) -> str:
+def format_entry(entry: LeaderboardEntry, use_mentions: bool = True, share: str = "") -> str:
     who = entry.mention() if use_mentions else entry.display_name
     prefix = medals().get(entry.rank, say(TEXT.LEADERBOARD_RANK, rank=entry.rank))
-    return say(TEXT.LEADERBOARD_ENTRY, medal=prefix, who=who, time=format_hm(entry.seconds))
+    line = say(
+        TEXT.LEADERBOARD_ENTRY,
+        medal=prefix,
+        who=who,
+        time=format_hm(entry.seconds),
+        share=share,
+    )
+    return line.rstrip(" ·")   # tidy up when there is no share to show
 
 
 def render_leaderboard(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import logging
 from typing import Optional
 
@@ -210,6 +212,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             app_commands.Choice(name="on", value="on"),
             app_commands.Choice(name="off", value="off"),
             app_commands.Choice(name="test", value="test"),
+            app_commands.Choice(name="tail", value="tail"),
             app_commands.Choice(name="flush", value="flush"),
         ],
         level=[
@@ -250,6 +253,13 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             log.warning("Live log test triggered by %s (%s)", interaction.user, interaction.user.id)
             await stream.flush()
             message = TEXT.CMD_LOGS_TEST
+        elif choice == "tail":
+            lines = stream.tail(20)
+            message = (
+                "```ansi\n" + "\n".join(lines)[-1900:] + "\n```"
+                if lines
+                else TEXT.CMD_LOGS_TAIL_EMPTY
+            )
         elif choice == "flush":
             sent = await stream.flush()
             message = say(TEXT.CMD_LOGS_FLUSHED, sent=sent)
@@ -306,6 +316,138 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
                 check_channel=f"<#{self.monitor.alive_io.channel_id()}>",
                 minutes=int(self.config.alive_check_timeout_minutes),
             ),
+            ephemeral=True,
+        )
+
+    # ------------------------------------------------------------------ help
+
+    @app_commands.command(name="help", description="What this event is and how to take part.")
+    @app_commands.guild_only()
+    async def help(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        everyone: list[str] = []
+        hosts: list[str] = []
+        for command in sorted(self.app_command.commands, key=lambda c: c.name):  # type: ignore[union-attr]
+            line = f"`/hell {command.name}` — {command.description}"
+            restricted = bool(getattr(command, "checks", ()))
+            (hosts if restricted else everyone).append(line)
+
+        embed = discord.Embed(
+            title=TEXT.CMD_HELP_TITLE,
+            description=say(
+                TEXT.CMD_HELP_DESCRIPTION,
+                vc=f"<#{self.config.voice_channel_id}>",
+                grace_seconds=int(self.config.empty_vc_grace_seconds),
+            ),
+            color=int(TEXT.COLOR_RUNNING),
+        )
+        add_chunked_field(embed, TEXT.CMD_HELP_EVERYONE_FIELD, "\n".join(everyone))
+        add_chunked_field(
+            embed,
+            say(TEXT.CMD_HELP_HOST_FIELD, host_role=f"<@&{self.config.gamenight_host_role_id}>"),
+            "\n".join(hosts),
+        )
+        add_chunked_field(
+            embed,
+            TEXT.CMD_HELP_RULES_FIELD,
+            say(
+                TEXT.CMD_HELP_RULES,
+                clanker_role=f"<@&{self.config.clanker_role_id}>",
+                alive_minutes=int(self.config.alive_check_timeout_minutes),
+            ),
+        )
+        embed.set_footer(text=TEXT.CMD_HELP_FOOTER)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    # ------------------------------------------------------------------ user
+
+    @app_commands.command(name="user", description="How long someone has spent in Hell.")
+    @app_commands.describe(member="Whose time to show (defaults to you).")
+    @app_commands.guild_only()
+    async def user(
+        self, interaction: discord.Interaction, member: Optional[discord.Member] = None
+    ) -> None:
+        await interaction.response.defer(thinking=True)
+        target = member or interaction.user
+        board = self.engine.leaderboard()
+        entry = next((e for e in board if e.user_id == target.id), None)
+        if entry is None:
+            await interaction.followup.send(
+                say(TEXT.CMD_USER_NO_TIME, who=target.mention), ephemeral=True
+            )
+            return
+
+        elapsed = self.engine.elapsed()
+        claimed = [
+            record.hours
+            for record in self.engine.milestone_records()
+            if any(m.user_id == target.id for m in record.members)
+        ]
+        present = any(p.user_id == target.id for p in self.engine.last_participants)
+
+        embed = discord.Embed(
+            title=say(TEXT.CMD_USER_TITLE, name=target.display_name),
+            description=TEXT.CMD_USER_PRESENT if present else TEXT.CMD_USER_ABSENT,
+            color=int(TEXT.COLOR_RUNNING),
+        )
+        embed.add_field(
+            name=TEXT.CMD_USER_TIME_FIELD, value=f"**{format_hm(entry.seconds)}**", inline=True
+        )
+        embed.add_field(
+            name=TEXT.CMD_USER_RANK_FIELD,
+            value=say(TEXT.CMD_USER_RANK_VALUE, rank=entry.rank, total=len(board)),
+            inline=True,
+        )
+        if elapsed > 0:
+            embed.add_field(
+                name=TEXT.CMD_USER_SHARE_FIELD,
+                value=f"**{min(100.0, entry.seconds / elapsed * 100):.0f}%**",
+                inline=True,
+            )
+        add_chunked_field(
+            embed,
+            say(TEXT.CMD_USER_MILESTONES_FIELD, count=len(claimed)),
+            ", ".join(f"**{hours}h**" for hours in claimed) or TEXT.CMD_USER_MILESTONES_NONE,
+        )
+        await interaction.followup.send(embed=embed)
+
+    # ---------------------------------------------------------------- export
+
+    @app_commands.command(
+        name="export", description="Download the leaderboard as a CSV (for handing out rewards).")
+    @is_host()
+    @app_commands.guild_only()
+    async def export(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        board = self.engine.leaderboard()
+        if not board:
+            await interaction.followup.send(TEXT.CMD_EXPORT_EMPTY, ephemeral=True)
+            return
+
+        claimed_by: dict[int, list[int]] = {}
+        for record in self.engine.milestone_records():
+            for participant in record.members:
+                claimed_by.setdefault(participant.user_id, []).append(record.hours)
+
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["rank", "user_id", "display_name", "seconds", "time", "milestones"])
+        for entry in board:
+            writer.writerow(
+                [
+                    entry.rank,
+                    entry.user_id,
+                    entry.display_name,
+                    round(entry.seconds, 1),
+                    format_hm(entry.seconds),
+                    " ".join(f"{hours}h" for hours in sorted(claimed_by.get(entry.user_id, []))),
+                ]
+            )
+        filename = f"welcome-to-hell-{self.engine.status.value.lower()}.csv"
+        payload = discord.File(io.BytesIO(buffer.getvalue().encode("utf-8")), filename=filename)
+        await interaction.followup.send(
+            say(TEXT.CMD_EXPORT_DESCRIPTION, filename=filename, rows=len(board)),
+            file=payload,
             ephemeral=True,
         )
 

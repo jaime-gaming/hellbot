@@ -601,3 +601,120 @@ def test_error_handler_hides_internal_failures(wired, host, caplog):
     assert "Something went wrong" in interaction.text()
     assert "boom" in caplog.text                       # the detail goes to the log
     assert "boom" not in interaction.text()            # not to the user
+
+
+# ---------------------------------------------------------------- /hell help
+
+
+def test_help_lists_every_command_split_by_permission(wired, host):
+    cog, bot, _text, _voice = wired
+    interaction = FakeInteraction(bot, host)
+
+    call(cog, "help", interaction)
+
+    text = interaction.text()
+    for name in ("start", "status", "leaderboard", "user", "export", "doctor"):
+        assert f"/hell {name}" in text
+    assert "Anyone can use" in text
+    assert "only" in text                      # the host-restricted section
+    assert "alive checks" in text.lower()
+
+
+# ---------------------------------------------------------------- /hell user
+
+
+def test_user_reports_time_rank_and_milestones(wired, engine):
+    cog, bot, _text, _voice = wired
+    start(engine, T0, 1, 2)
+    for i in range(1, 61):
+        engine.tick(obs(T0 + i, 1, 2))
+    engine.tick(obs(T0 + 32 * 3600, 1, 2))     # a milestone both were present for
+
+    interaction = FakeInteraction(bot, FakeAuthor(uid=1, name="Alice"))
+    call(cog, "user", interaction)
+
+    text = interaction.text()
+    assert "Alice in Hell" in text
+    assert "Rank" in text and "#1" in text
+    assert "32h" in text                        # the milestone they claimed
+    assert "Share of the event" in text
+
+
+def test_user_without_time_is_told_so(wired, host):
+    cog, bot, _text, _voice = wired
+    interaction = FakeInteraction(bot, host)
+    call(cog, "user", interaction)
+    assert "no recorded time" in interaction.text()
+
+
+def test_user_can_look_up_somebody_else(wired, engine):
+    cog, bot, _text, _voice = wired
+    start(engine, T0, 1, 2)
+    for i in range(1, 31):
+        engine.tick(obs(T0 + i, 1, 2))
+
+    other = FakeAuthor(uid=2, name="Bob")
+    interaction = FakeInteraction(bot, FakeAuthor(uid=1, name="Alice"))
+    call(cog, "user", interaction, member=other)
+
+    assert "Bob in Hell" in interaction.text()
+
+
+# -------------------------------------------------------------- /hell export
+
+
+def test_export_produces_a_csv_of_the_leaderboard(wired, engine):
+    cog, bot, _text, _voice = wired
+    start(engine, T0, 1, 2)
+    for i in range(1, 61):
+        engine.tick(obs(T0 + i, 1, 2))
+    engine.tick(obs(T0 + 32 * 3600, 1))
+
+    interaction = FakeInteraction(bot, FakeAuthor(uid=9))
+    call(cog, "export", interaction)
+
+    payload = interaction.followup.sent[-1]
+    attachment = payload["file"]
+    assert attachment.filename.endswith(".csv")
+    body = attachment.fp.read().decode("utf-8")
+    assert body.splitlines()[0] == "rank,user_id,display_name,seconds,time,milestones"
+    assert "32h" in body                        # milestone column filled in
+    assert "User1" in body and "User2" in body
+
+
+def test_export_says_when_there_is_nothing_to_export(wired, host):
+    cog, bot, _text, _voice = wired
+    interaction = FakeInteraction(bot, host)
+    call(cog, "export", interaction)
+    assert "nothing to export" in interaction.text()
+
+
+# ------------------------------------------------------------ /hell logs tail
+
+
+def test_logs_tail_shows_recent_lines_without_dms(wired, host):
+    import logging
+
+    cog, bot, _text, _voice = wired
+    stream = StubStream()
+    stream.lines = ["12:00:00 • [monitor] Alice joined the VC"]
+    stream.tail = lambda limit=20: stream.lines  # type: ignore[assignment]
+    bot.log_stream = stream
+
+    interaction = FakeInteraction(bot, host)
+    call(cog, "logs", interaction, action=Choice("tail"))
+
+    assert "Alice joined the VC" in interaction.text()
+    logging.getLogger("hell.test").debug("noop")
+
+
+def test_logs_tail_when_nothing_has_happened(wired, host):
+    cog, bot, _text, _voice = wired
+    stream = StubStream()
+    stream.tail = lambda limit=20: []  # type: ignore[assignment]
+    bot.log_stream = stream
+
+    interaction = FakeInteraction(bot, host)
+    call(cog, "logs", interaction, action=Choice("tail"))
+
+    assert "Nothing buffered" in interaction.text()

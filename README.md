@@ -35,6 +35,7 @@ empties and nobody returns within the grace period, the run is dead — permanen
 
 * Timestamp-based and persisted in SQLite — **a restart never resets the timer**
 * **Live log stream** DM'd to the operator: joins, leaves, kicks, milestones, errors
+  (`/hell logs tail` shows recent lines in-channel when DMs are off)
 * **All wording in one file** — [`Announcements.py`](Announcements.py) — hot-reloadable
 * A **desktop control panel** (no console) and a one-file **`.exe`** build
 * A large test suite (engine, persistence, Discord edge, GUI, deployment) — ruff + mypy clean
@@ -182,6 +183,9 @@ in the log, and in the launcher's Dashboard.
 | `/hell doctor` | `@gamenight host` | Self-check: preflight results, live state, background tasks and the (redacted) configuration. |
 | `/hell logs` | `@gamenight host` | Control the live log stream: `status`, `on`, `off`, `test`, `flush`, and the minimum severity. |
 | `/hell mystats` | everyone | Your own stat card (time survived, rank, rewards) — handy if your DMs are closed. |
+| `/hell help` | everyone | What the event is, every command, and the rules in one card. |
+| `/hell user` | everyone | How long someone has spent in Hell: time, rank, share of the event, milestones claimed. |
+| `/hell export` | `@gamenight host` | The leaderboard as a CSV attachment, for handing out rewards outside Discord. |
 | `/hell milestones` | everyone | All five milestones, their rewards, when each was reached and how many users were eligible. |
 | `/hell stop` | `@gamenight host` | Button confirmation → marks the event **CANCELLED** (explicitly *not* FAILED) and freezes the leaderboard. |
 | `/hell reset` | `@gamenight host` | Modal requiring the exact phrase `RESET WELCOME TO HELL` → wipes all event data for a fresh run. |

@@ -152,7 +152,7 @@ class Announcer:
         return self.embeds.start(snap, host_mention, participants)
 
     def build_milestone(self, event: MilestoneReached) -> discord.Embed:
-        return self.embeds.milestone(event)
+        return self.embeds.milestone(event, leaders=self.engine.leaderboard())
 
     def build_grace_warning(self, event: GraceStarted) -> discord.Embed:
         return self.embeds.grace_warning(event)
@@ -177,7 +177,9 @@ class Announcer:
         color: Optional[int] = None,
         limit: int = 50,
     ) -> list[discord.Embed]:
-        return self.embeds.leaderboard(entries, title=title, color=color, limit=limit)
+        return self.embeds.leaderboard(
+            entries, title=title, color=color, limit=limit, elapsed=self.engine.elapsed()
+        )
 
     def build_status(self, snap: Snapshot, *, alive_line: Optional[str] = None) -> discord.Embed:
         return self.embeds.status(

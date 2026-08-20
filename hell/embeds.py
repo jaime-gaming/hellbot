@@ -45,7 +45,6 @@ MAX_EMBED_TOTAL = 5500      # hard limit 6000
 MAX_FIELDS = 20             # hard limit 25
 MAX_EMBEDS_PER_MESSAGE = 10
 
-
 def theme_color(name: str, fallback: int = 0xE25822) -> int:
     """Look a colour up in Announcements.py (`COLOR_<NAME>`)."""
     try:
@@ -54,14 +53,11 @@ def theme_color(name: str, fallback: int = 0xE25822) -> int:
         log.warning("COLOR_%s in Announcements.py is not a number — using the default", name.upper())
         return fallback
 
-
 def status_emoji(status: EventStatus) -> str:
     return dict(TEXT.STATUS_EMOJI).get(status.value, "🔥")
 
-
 def status_color(status: EventStatus) -> int:
     return theme_color(status.value, theme_color("RUNNING"))
-
 
 def bar(fraction: float) -> str:
     """The milestone-segmented progress bar, styled from Announcements.py."""
@@ -74,7 +70,6 @@ def bar(fraction: float) -> str:
         separator=str(getattr(TEXT, "BAR_SEPARATOR", "┃")),
     )
 
-
 def dots(reached: int, total: Optional[int] = None) -> str:
     """Milestone tally, e.g. `🔥🔥🔥◦◦`."""
     total = len(MILESTONES) if total is None else total
@@ -83,10 +78,8 @@ def dots(reached: int, total: Optional[int] = None) -> str:
         getattr(TEXT, "DOT_PENDING", "◦")
     ) * (total - reached)
 
-
 def reached_count(elapsed: float) -> int:
     return sum(1 for m in MILESTONES if elapsed >= m.seconds)
-
 
 def split_text(text: str, limit: int) -> list[str]:
     """Split text into chunks of at most `limit` characters.
@@ -120,7 +113,6 @@ def split_text(text: str, limit: int) -> list[str]:
     flush(buf, out)
     return out or [""]
 
-
 def _split_line(line: str, limit: int) -> list[str]:
     parts: list[str] = []
     current = ""
@@ -140,7 +132,6 @@ def _split_line(line: str, limit: int) -> list[str]:
         parts.append(current)
     return parts
 
-
 def add_chunked_field(embed: discord.Embed, name: str, value: str, *, inline: bool = False) -> None:
     """Add a field, transparently splitting it across continuation fields."""
     chunks = split_text(value, MAX_FIELD)
@@ -148,7 +139,6 @@ def add_chunked_field(embed: discord.Embed, name: str, value: str, *, inline: bo
         if len(embed.fields) >= MAX_FIELDS or len(embed) + len(chunk) + len(name) > MAX_EMBED_TOTAL:
             break
         embed.add_field(name=name if index == 0 else f"{name} (cont.)", value=chunk, inline=inline)
-
 
 def embed_to_text(embed: discord.Embed) -> str:
     """Flatten an embed to plain text (used by tests and the offline simulator).
@@ -172,17 +162,13 @@ def embed_to_text(embed: discord.Embed) -> str:
         lines.append(f"_{embed.footer.text}_")
     return "\n".join(lines).strip()
 
-
 def embeds_to_text(embeds: Sequence[discord.Embed]) -> str:
     return "\n\n".join(embed_to_text(e) for e in embeds)
-
 
 def format_members(members: Sequence[ParticipantRef], *, empty: Optional[str] = None) -> str:
     if not members:
         return empty if empty is not None else TEXT.MILESTONE_NOBODY
     return ", ".join(m.mention() for m in members)
-
-
 
 class EmbedFactory:
     """Builds every embed the bot posts.  Pure: no I/O, no state."""
@@ -431,7 +417,7 @@ class EmbedFactory:
         self._brand(embed)
         return embed
 
-    def milestone(self, event: MilestoneReached) -> discord.Embed:
+    def milestone(self, event: MilestoneReached, leaders: Sequence[LeaderboardEntry] = ()) -> discord.Embed:
         m = event.milestone
         fields = dict(
             hours=m.hours,
@@ -476,6 +462,13 @@ class EmbedFactory:
             value=say(TEXT.MILESTONE_REACHED_TEXT, **fields),
             inline=False,
         )
+        podium = top_n(leaders, 3)
+        if podium:
+            add_chunked_field(
+                embed,
+                say(TEXT.MILESTONE_LEADERS_FIELD, **fields),
+                "\n".join(format_entry(e) for e in podium),
+            )
         if event.late:
             embed.add_field(
                 name=say(TEXT.MILESTONE_LATE_FIELD, **fields),
@@ -523,12 +516,33 @@ class EmbedFactory:
             value=fields["milestones"],
             inline=False,
         )
+        upcoming = next((m for m in MILESTONES if m.seconds > event.elapsed), None)
+        if upcoming is not None:
+            embed.add_field(
+                name=say(TEXT.FAILURE_NEAR_MISS_FIELD, **fields),
+                value=say(
+                    TEXT.FAILURE_NEAR_MISS,
+                    time_to_next=format_hm(upcoming.seconds - event.elapsed),
+                    next_milestone=upcoming.hours,
+                ),
+                inline=False,
+            )
+        podium = top_n(event.leaderboard, 3)
+        if podium:
+            add_chunked_field(
+                embed,
+                say(TEXT.FAILURE_TOP_FIELD, **fields),
+                "\n".join(format_entry(e) for e in podium),
+            )
         embed.set_footer(text=say(TEXT.FAILURE_FOOTER, **fields))
         self._brand(embed)
         return [
             embed,
             *self.leaderboard(
-                event.leaderboard, title=TEXT.FAILURE_LEADERBOARD_TITLE, color=theme_color("FAILED")
+                event.leaderboard,
+                title=TEXT.FAILURE_LEADERBOARD_TITLE,
+                color=theme_color("FAILED"),
+                elapsed=event.elapsed,
             ),
         ]
 
@@ -559,6 +573,7 @@ class EmbedFactory:
                 event.leaderboard,
                 title=TEXT.CANCELLED_LEADERBOARD_TITLE,
                 color=theme_color("CANCELLED"),
+                elapsed=event.elapsed,
             ),
         ]
 
@@ -601,9 +616,19 @@ class EmbedFactory:
         return [
             embed,
             *self.leaderboard(
-                board, title=TEXT.COMPLETION_LEADERBOARD_TITLE, color=theme_color("COMPLETED")
+                board,
+                title=TEXT.COMPLETION_LEADERBOARD_TITLE,
+                color=theme_color("COMPLETED"),
+                elapsed=160 * 3600.0,
             ),
         ]
+
+    @staticmethod
+    def _share(entry: LeaderboardEntry, reference: float) -> str:
+        """How much of the event this person was present for."""
+        if reference <= 0:
+            return ""
+        return f"{min(100.0, entry.seconds / reference * 100):.0f}%"
 
     def leaderboard(
         self,
@@ -612,6 +637,7 @@ class EmbedFactory:
         title: Optional[str] = None,
         color: Optional[int] = None,
         limit: int = 50,
+        elapsed: Optional[float] = None,
     ) -> list[discord.Embed]:
         """Podium + the rest, split across as many embeds as needed."""
         title = title if title is not None else TEXT.LEADERBOARD_TITLE
@@ -624,17 +650,27 @@ class EmbedFactory:
         podium = [e for e in shown if e.rank <= 3]
         rest = [e for e in shown if e.rank > 3]
 
+        reference = elapsed if elapsed else max((e.seconds for e in entries), default=0.0)
+        shares = {e.user_id: self._share(e, reference) for e in shown}
+
         head = discord.Embed(
             title=title,
-            description="\n".join(format_entry(e) for e in podium) or TEXT.LEADERBOARD_NO_PODIUM,
+            description="\n".join(format_entry(e, share=shares.get(e.user_id, "")) for e in podium)
+            or TEXT.LEADERBOARD_NO_PODIUM,
             color=colour,
         )
         total = len(entries)
-        head.set_footer(text=say(TEXT.LEADERBOARD_FOOTER, total=total))
+        head.set_footer(
+            text=say(
+                TEXT.LEADERBOARD_FOOTER,
+                total=total,
+                tracked=format_hm(sum(e.seconds for e in entries)),
+            )
+        )
         self._brand(head, timestamp=False)
         embeds = [head]
         if rest:
-            body = "\n".join(format_entry(e) for e in rest)
+            body = "\n".join(format_entry(e, share=shares.get(e.user_id, "")) for e in rest)
             for index, chunk in enumerate(split_text(body, MAX_DESCRIPTION)):
                 embeds.append(
                     discord.Embed(

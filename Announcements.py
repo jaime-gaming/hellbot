@@ -150,6 +150,7 @@ MILESTONE_LATE_TEXT = (
     "verified snapshot taken afterwards."
 )
 MILESTONE_TALLY = "{dots}  ·  milestone **{index} of {count}**"
+MILESTONE_LEADERS_FIELD = "🏆 Most time in Hell so far"
 MILESTONE_FOOTER = "{hours}h of 160h cleared · {remaining_hours}h to go"
 MILESTONE_FOOTER_FINAL = "160h of 160h cleared · FINAL MILESTONE"
 MILESTONE_NOBODY = "*nobody — the VC was empty*"
@@ -279,6 +280,9 @@ FAILURE_PROGRESS_TEXT = "**{percent}**"
 FAILURE_WHEN_FIELD = "🕛 Failed at"
 FAILURE_MILESTONES_FIELD = "🏁 Milestones secured"
 FAILURE_MILESTONES_NONE = "**none**"
+FAILURE_NEAR_MISS_FIELD = "😤 So close"
+FAILURE_NEAR_MISS = "You were **{time_to_next}** away from the **{next_milestone}h** milestone."
+FAILURE_TOP_FIELD = "🥇 Longest in Hell"
 FAILURE_FOOTER = "Rewards already earned at reached milestones still stand. Reset with /hell reset."
 FAILURE_LEADERBOARD_TITLE = "🏆 FINAL LEADERBOARD (frozen)"
 
@@ -335,10 +339,10 @@ LEADERBOARD_EMPTY = "*Nobody has spent time in Hell yet.*"
 LEADERBOARD_NO_PODIUM = "*No podium yet.*"
 LEADERBOARD_REST_TITLE = "Everyone else"
 LEADERBOARD_REST_TITLE_CONT = "Everyone else (cont.)"
-LEADERBOARD_FOOTER = "{total} participant(s) · time counts only while the event is running"
+LEADERBOARD_FOOTER = "{total} participant(s) · {tracked} tracked in total · time counts only while the event runs"
 LEADERBOARD_FROZEN_FOOTER = "These rankings are frozen; the event is over."
 LEADERBOARD_MORE = "and {hidden} more participant(s)"
-LEADERBOARD_ENTRY = "{medal}  {who}  ·  `{time}`"
+LEADERBOARD_ENTRY = "{medal}  {who}  ·  `{time}`  ·  {share}"
 LEADERBOARD_MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
 LEADERBOARD_RANK = "`#{rank}`"        # used from 4th place down
 
@@ -489,6 +493,42 @@ CMD_MILESTONES_PENDING = "⏳ in {time_to_go}"
 CMD_MILESTONES_IDLE = "—"
 CMD_MILESTONES_FIELD = "{hours}h — {short_reward}"
 
+CMD_HELP_TITLE = "🔥 WELCOME TO HELL — COMMANDS"
+CMD_HELP_DESCRIPTION = (
+    "The event: keep at least one real human in {vc} for **160 hours straight**.\n"
+    "If it empties, a **{grace_seconds}s** countdown starts — nobody back in time and the run "
+    "is over, permanently."
+)
+CMD_HELP_EVERYONE_FIELD = "Anyone can use"
+CMD_HELP_HOST_FIELD = "{host_role} only"
+CMD_HELP_RULES_FIELD = "Good to know"
+CMD_HELP_RULES = (
+    "• Bots and {clanker_role} never count, and {clanker_role} is disconnected on sight.\n"
+    "• AFK counts — you just have to be there.\n"
+    "• Random alive checks: reply `Yes` within {alive_minutes} minutes or you are disconnected "
+    "(your time is kept, rejoin whenever).\n"
+    "• Milestone rewards go to whoever is in the VC at that exact second."
+)
+CMD_HELP_FOOTER = "Times are tracked per person; the 160h clock is shared."
+
+CMD_USER_TITLE = "📊 {name} in Hell"
+CMD_USER_NO_TIME = "{who} has no recorded time in this event yet."
+CMD_USER_TIME_FIELD = "⏱️ Time in the VC"
+CMD_USER_RANK_FIELD = "🏅 Rank"
+CMD_USER_RANK_VALUE = "**#{rank}** of {total}"
+CMD_USER_SHARE_FIELD = "📈 Share of the event"
+CMD_USER_MILESTONES_FIELD = "🎁 Milestones claimed ({count})"
+CMD_USER_MILESTONES_NONE = "*none yet — be in the VC when the next one lands*"
+CMD_USER_PRESENT = "🟢 In the VC right now"
+CMD_USER_ABSENT = "⚫ Not in the VC"
+
+CMD_EXPORT_TITLE = "📄 Leaderboard export"
+CMD_EXPORT_DESCRIPTION = (
+    "`{filename}` — {rows} participant(s), for handing out rewards outside Discord."
+)
+CMD_EXPORT_EMPTY = "❌ There is nothing to export yet — no participant has recorded time."
+
+CMD_LOGS_TAIL_EMPTY = "📭 Nothing buffered right now."
 CMD_LOGS_UNAVAILABLE = "❌ The live log stream is not available."
 CMD_LOGS_ON = "📡 Live log stream **enabled**."
 CMD_LOGS_OFF = "📴 Live log stream **disabled**."

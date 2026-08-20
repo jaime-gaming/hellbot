@@ -189,3 +189,127 @@ def test_main_exits_cleanly_without_configuration(monkeypatch, capsys):
 
 async def _noop(*_args, **_kwargs):
     return None
+
+
+# ------------------------------------------------------------- startup path
+
+
+def test_setup_hook_registers_the_commands_and_syncs(bot, monkeypatch):
+    synced: dict = {}
+
+    async def fake_sync(*, guild=None):
+        synced["guild"] = getattr(guild, "id", None)
+        return [1, 2, 3]
+
+    monkeypatch.setattr(bot.tree, "sync", fake_sync)
+    run(bot.setup_hook())
+
+    assert synced["guild"] == bot.config.guild_id
+    assert bot.get_cog("hell") is not None
+
+
+def test_setup_hook_survives_a_failed_sync(bot, monkeypatch, caplog):
+    import logging
+
+    async def boom(*, guild=None):
+        raise discord.HTTPException(MagicMock(status=500), "discord is down")
+
+    monkeypatch.setattr(bot.tree, "sync", boom)
+    with caplog.at_level(logging.ERROR, logger="hell"):
+        run(bot.setup_hook())        # must not stop the bot from running
+    assert "Could not sync slash commands" in caplog.text
+
+
+def test_on_ready_reports_state_runs_preflight_and_starts_the_monitor(bot, monkeypatch, caplog):
+    import logging
+
+    from hell.health import HealthReport
+
+    calls: list[str] = []
+
+    async def fake_preflight(_bot, _config):
+        calls.append("preflight")
+        report = HealthReport()
+        report.warnings.append("something to look at")
+        return report
+
+    async def fake_presence(*_a, **_kw):
+        calls.append("presence")
+
+    async def fake_resume():
+        calls.append("resume")
+
+    bot.config.token = "super-secret-token-value"     # so the check below means something
+    monkeypatch.setattr("hell.bot.preflight", fake_preflight)
+    monkeypatch.setattr(bot, "change_presence", fake_presence)
+    monkeypatch.setattr(bot.monitor, "resume_after_restart", fake_resume)
+    monkeypatch.setattr(bot.monitor, "start", lambda: calls.append("monitor"))
+    monkeypatch.setattr(bot.log_stream, "start", _noop)
+
+    with caplog.at_level(logging.INFO, logger="hell"):
+        run(bot.on_ready())
+
+    assert calls == ["preflight", "presence", "monitor", "resume"]
+    assert bot.health is not None and bot.health.warnings
+    assert "Voice channel:" in caplog.text          # the redacted config summary
+    assert bot.config.token not in caplog.text
+
+
+def test_on_ready_recovers_only_once(bot, monkeypatch):
+    resumes: list[int] = []
+
+    async def fake_preflight(_bot, _config):
+        from hell.health import HealthReport
+
+        return HealthReport()
+
+    monkeypatch.setattr("hell.bot.preflight", fake_preflight)
+    monkeypatch.setattr(bot, "change_presence", _noop)
+    monkeypatch.setattr(bot.monitor, "start", lambda: None)
+    monkeypatch.setattr(bot.log_stream, "start", _noop)
+    monkeypatch.setattr(bot.monitor, "resume_after_restart",
+                        lambda: _record(resumes))
+
+    run(bot.on_ready())
+    run(bot.on_ready())          # a reconnect fires on_ready again
+
+    assert len(resumes) == 1     # recovery must not run twice
+
+
+def test_on_ready_survives_a_broken_preflight(bot, monkeypatch, caplog):
+    import logging
+
+    async def boom(_bot, _config):
+        raise RuntimeError("preflight exploded")
+
+    monkeypatch.setattr("hell.bot.preflight", boom)
+    monkeypatch.setattr(bot, "change_presence", _noop)
+    monkeypatch.setattr(bot.monitor, "start", lambda: None)
+    monkeypatch.setattr(bot.monitor, "resume_after_restart", _noop)
+    monkeypatch.setattr(bot.log_stream, "start", _noop)
+
+    with caplog.at_level(logging.ERROR, logger="hell"):
+        run(bot.on_ready())      # the bot must still come up
+    assert "Preflight checks failed to run" in caplog.text
+
+
+def test_presence_reflects_the_event_state(bot, monkeypatch):
+    from tests.conftest import T0, start
+
+    shown: list[str] = []
+
+    async def capture(activity=None):
+        shown.append(activity.name if activity else "")
+
+    monkeypatch.setattr(bot, "change_presence", capture)
+
+    run(bot._update_presence())
+    assert "/hell start" in shown[-1]
+
+    start(bot.engine, T0, 1)
+    run(bot._update_presence())
+    assert "Hell:" in shown[-1] and "160h" in shown[-1]
+
+
+async def _record(bucket):
+    bucket.append(1)

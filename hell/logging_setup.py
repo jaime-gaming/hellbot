@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -17,6 +18,39 @@ from .paths import log_file
 
 FORMAT = "%(asctime)s %(levelname)-8s %(name)-16s %(message)s"
 DATEFMT = "%Y-%m-%d %H:%M:%S"
+
+# Console colours, used only on a real terminal (never in the log file, and
+# never when the output is piped or redirected).
+RESET = "\033[0m"
+LEVEL_COLOR = {
+    logging.DEBUG: "\033[2;37m",     # dim grey
+    logging.INFO: "\033[38;5;208m",  # ember orange
+    logging.WARNING: "\033[33m",     # yellow
+    logging.ERROR: "\033[31m",       # red
+    logging.CRITICAL: "\033[1;41m",  # white on red
+}
+
+
+class ColourFormatter(logging.Formatter):
+    """Adds colour to the level and dims the logger name."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        colour = LEVEL_COLOR.get(record.levelno, "")
+        original_level, original_name = record.levelname, record.name
+        try:
+            record.levelname = f"{colour}{original_level:<8}{RESET}"
+            record.name = f"\033[2m{original_name:<16}{RESET}"
+            return super().format(record)
+        finally:
+            record.levelname, record.name = original_level, original_name
+
+
+def _supports_colour(stream) -> bool:
+    if os.environ.get("NO_COLOR"):        # https://no-color.org
+        return False
+    if os.environ.get("FORCE_COLOR"):
+        return True
+    return bool(getattr(stream, "isatty", lambda: False)())
 
 _configured = False
 
@@ -58,7 +92,11 @@ def setup_logging(
         try:
             stream.write("")
             console = logging.StreamHandler(stream)
-            console.setFormatter(formatter)
+            if _supports_colour(stream):
+                console.setFormatter(ColourFormatter("%(asctime)s %(levelname)s %(name)s %(message)s",
+                                                     datefmt=DATEFMT))
+            else:
+                console.setFormatter(formatter)
             console.setLevel(root.level)
             root.addHandler(console)
         except Exception:  # pragma: no cover - pythonw edge cases

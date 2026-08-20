@@ -53,9 +53,12 @@ EXCLUDED_PREFIXES = ("hell.logsink", "discord.http", "discord.gateway", "discord
 class DiscordLogHandler(logging.Handler):
     """Buffers formatted log lines for the DM stream.  Thread-safe and non-blocking."""
 
-    def __init__(self, capacity: int = 2000):
+    def __init__(self, capacity: int = 2000, history: int = 200):
         super().__init__()
         self.buffer: deque[str] = deque(maxlen=capacity)
+        # `buffer` is drained when the DM is sent; `recent` is a rolling window
+        # kept for `/hell logs tail`, so the log is readable even with DMs off.
+        self.recent: deque[str] = deque(maxlen=history)
         self.dropped = 0
         self._enabled = True
 
@@ -66,20 +69,25 @@ class DiscordLogHandler(logging.Handler):
     def set_enabled(self, value: bool) -> None:
         self._enabled = bool(value)
         if not value:
-            self.buffer.clear()
+            self.buffer.clear()   # `recent` survives: tailing still works
 
     def emit(self, record: logging.LogRecord) -> None:
-        if not self._enabled:
-            return
         if record.name.startswith(EXCLUDED_PREFIXES):
             return
         try:
             line = self.render(record)
         except Exception:  # pragma: no cover - formatting must never raise
             return
+        self.recent.append(line)
+        if not self._enabled:
+            return
         if len(self.buffer) == self.buffer.maxlen:
             self.dropped += 1
         self.buffer.append(line)
+
+    def tail(self, limit: int = 20) -> list[str]:
+        """The most recent lines, without consuming them."""
+        return list(self.recent)[-max(1, limit):]
 
     def render(self, record: logging.LogRecord) -> str:
         icon = LEVEL_ICON.get(record.levelno, "•")
@@ -168,6 +176,9 @@ class DiscordLogStream:
         self.handler.set_enabled(value)
         if value:
             self.disabled_reason = None
+
+    def tail(self, limit: int = 20) -> list[str]:
+        return self.handler.tail(limit)
 
     def status(self) -> str:
         if self.disabled_reason:

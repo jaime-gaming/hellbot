@@ -183,3 +183,26 @@ def test_the_build_context_excludes_secrets_and_state():
     ignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
     for entry in (".env", "data/", "logs/", ".git/", "*.sqlite3", ".venv/"):
         assert entry in ignore, f".dockerignore should exclude {entry}"
+
+
+# ------------------------------------------------------------------- branding
+
+def test_the_logo_assets_are_present_and_usable():
+    """The launcher window, the taskbar and the built .exe all need these."""
+    png = ROOT / "assets" / "hellbot.png"
+    ico = ROOT / "assets" / "hellbot.ico"
+    assert png.is_file() and ico.is_file()
+
+    header = png.read_bytes()[:8]
+    assert header == b"\x89PNG\r\n\x1a\n", "hellbot.png is not a PNG"
+    assert ico.read_bytes()[:4] == b"\x00\x00\x01\x00", "hellbot.ico is not an ICO"
+    # Windows shows the icon at many sizes; a single-resolution .ico looks bad.
+    icon_count = int.from_bytes(ico.read_bytes()[4:6], "little")
+    assert icon_count >= 4, f"hellbot.ico only contains {icon_count} size(s)"
+
+
+def test_the_spec_and_readme_use_the_logo():
+    spec = (ROOT / "hellbot.spec").read_text(encoding="utf-8")
+    assert "hellbot.ico" in spec
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "assets/hellbot.png" in readme

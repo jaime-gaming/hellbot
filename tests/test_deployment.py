@@ -228,3 +228,23 @@ def test_the_spec_and_readme_use_the_logo():
     assert "hellbot.ico" in spec
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "assets/hellbot.png" in readme
+
+
+def test_healthy_while_paused(tmp_path):
+    """A paused event intentionally stops ticking; the healthcheck must not
+    mistake the frozen `last_tick_ts` for a stalled monitor (which would make
+    Docker/systemd kill the bot mid-pause)."""
+    hc = load_healthcheck()
+    store = Store(tmp_path / "hell.sqlite3")
+    state = store.load_state()
+    state.status = EventStatus.RUNNING
+    state.event_uid = "uid"
+    state.start_ts = time.time() - 3600
+    state.last_tick_ts = time.time() - 9999      # very stale on purpose
+    state.paused_ts = time.time() - 9990
+    store.save_state(state)
+    store.close()
+
+    healthy, reason = hc.check(tmp_path / "hell.sqlite3", 120)
+    assert healthy
+    assert "PAUSED" in reason

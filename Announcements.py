@@ -204,6 +204,7 @@ PROGRESS_DESCRIPTION = (
 PROGRESS_STATUS_FIELD = "Status"
 PROGRESS_STATUS_VALUE = "`{status}`"
 PROGRESS_STATUS_VALUE_EMPTY_VC = "`{status}` ⚠️ **VC EMPTY**"
+PROGRESS_STATUS_VALUE_PAUSED = "`{status}` ⏸️ **TIMER FROZEN** — nothing counts right now"
 PROGRESS_PEOPLE_FIELD = "👥 Currently in Hell"
 PROGRESS_PEOPLE_VALUE = "**{participants}**"
 PROGRESS_REMAINING_FIELD = "⏳ Time remaining"
@@ -423,6 +424,22 @@ DM_SUMMARY_FAILED_TEXT = "**{failed}** (see the logs)"
 
 
 # =============================================================================
+#  11b. LIVE LOG ALERT PING  (DM'd to the operator when something goes wrong)
+# =============================================================================
+#  {mention} {title} {alerts}
+#  Sent when a log line is at LOG_DM_PING_LEVEL or worse, or Discord reports a
+#  rate limit. The {mention} is the reason the ping works — keep it in the body.
+
+LOG_ALERT_TITLE = "⚠️ Welcome to Hell — something went wrong"
+LOG_ALERT_BODY = (
+    "{mention}\n\n"
+    "**{title}**\n"
+    "```ansi\n{alerts}\n```\n"
+    "*The full stream continues below — this ping is just the alarm bell.*"
+)
+
+
+# =============================================================================
 # 12. COMMAND REPLIES  (only the person running the command sees these)
 # =============================================================================
 #  {vc} {announce_channel} {host_role} {elapsed} {total} {status} {started_at}
@@ -451,27 +468,49 @@ CMD_IDLE_TEXT = (
     "A {host_role} can start one with `/hell start`.\n\n"
     "Target VC: {vc} • Duration: **160 hours**"
 )
-CMD_STOP_NOTHING = "❌ Nothing to stop — current status is `{status}`."
-CMD_STOP_CONFIRM = (
-    "⚠️ **Stop Welcome to Hell?**\n"
-    "The clock is at **{elapsed} / {total}**. "
-    "The event will be marked **CANCELLED** (not FAILED), the leaderboard frozen, and it "
-    "cannot be resumed."
+CMD_PAUSE_DONE = (
+    "⏸️ **Event paused.** The 160h timer and every contestant's clock are frozen — "
+    "no milestones can fire and nothing can fail while paused. Use `/hell resume` to continue; "
+    "the paused time is never counted."
 )
+CMD_RESUME_DONE = "▶️ **Event resumed.** Timers are running again from exactly where they stopped."
+CMD_STOP_NOTHING = "❌ Nothing to stop — current status is `{status}`."
 CMD_STOP_DONE = "🛑 Event cancelled and leaderboard frozen."
-CMD_STOP_TIMEOUT = "⌛ Confirmation timed out — nothing happened."
 CMD_RESET_DONE = (
     "♻️ **Event data reset.** Previous status was `{previous_status}`. "
     "All timers, leaderboard entries and milestones are gone — `/hell start` begins a fresh run."
 )
-CMD_RESET_MISMATCH = "❌ Phrase did not match. Nothing was reset."
 CMD_NOT_A_HOST = "⛔ You are not a `@gamenight host`."
 CMD_NOT_ALLOWED = "⛔ You cannot use this command. ({host_role} only)"
 CMD_ERROR = "💥 Something went wrong running that command. The event state is untouched."
 
+# --- approval codes for dangerous commands ------------------------------
+DANGER_CODE_TITLE = "🔐 Welcome to Hell — approval code"
+DANGER_CODE_BODY = (
+    "**{action}** needs your approval.\n\n"
+    "**Code:** `{code}`\n\n"
+    "Enter it with `/hell approve`. The code expires in **{expires} minutes** and works once.\n\n"
+    "Requested by **{requester}**."
+)
+DANGER_ACTION_STOP = "Stopping the event"
+DANGER_ACTION_RESET = "Resetting all event data"
+CMD_APPROVAL_REQUESTED = (
+    "⏳ **Approval required.** A one-time code was sent to the operator's DMs. "
+    "Run `/hell approve` and enter the code to proceed."
+)
+CMD_APPROVE_NOTHING_PENDING = "✅ Nothing is waiting for approval."
+CMD_APPROVE_EXPIRED = "⌛ The approval code for **{action}** has expired. Run the command again to get a fresh code."
+CMD_APPROVE_STALE_EVENT = (
+    "🔄 The event changed since this code was issued — it would act on a different event. "
+    "The code was invalidated. Run the command again to get a fresh one."
+)
+CMD_APPROVE_FAILED = "❌ Approval failed — {error}"
+CMD_APPROVAL_UNAVAILABLE = "❌ Could not send the approval code to the operator (`{error}`). Nothing was changed — try again."
+
 CMD_ALIVECHECK_NO_EVENT = "❌ No event is running (status `{status}`)."
 CMD_ALIVECHECK_DISABLED = "❌ Alive checks are disabled (`ALIVE_CHECK_ENABLED=false`)."
 CMD_ALIVECHECK_ALREADY = "❌ An alive check is already running."
+CMD_ALIVECHECK_PAUSED = "⏸️ Cannot start an alive check while the event is paused — resume it first."
 CMD_ALIVECHECK_FAILED = (
     "❌ Could not start it — the VC is empty or the check channel is unreachable."
 )

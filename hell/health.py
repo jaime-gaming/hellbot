@@ -77,6 +77,12 @@ async def preflight(bot: discord.Client, config: Config) -> HealthReport:
         )
     if not bot.intents.voice_states:
         report.errors.append("The Voice States intent is disabled — VC monitoring cannot work.")
+    if not bot.intents.message_content:
+        report.errors.append(
+            "The Message Content intent is disabled — alive-check replies ('Yes') cannot be "
+            "read and every roll call would end by disconnecting everyone. Enable 'Message "
+            "Content Intent' in the Developer Portal (Bot -> Privileged Gateway Intents)."
+        )
 
     # --- voice channel -----------------------------------------------------
     vc = guild.get_channel(config.voice_channel_id)

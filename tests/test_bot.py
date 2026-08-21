@@ -46,6 +46,9 @@ def test_required_intents_are_requested(bot):
     assert bot.intents.members       # needed to see who is in the VC
     assert bot.intents.voice_states
     assert bot.intents.guilds
+    # Without message content, alive-check replies arrive empty and nobody can
+    # ever answer a roll call — this must never regress.
+    assert bot.intents.message_content
 
 
 def test_the_log_stream_captures_records_before_login(bot):

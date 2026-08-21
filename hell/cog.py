@@ -23,10 +23,10 @@ from .tasks import active as active_tasks
 from .texts import TEXT, message_count, say
 from .texts import reload as reload_texts
 from .texts import source as texts_source
-from .ui import RESET_PHRASE, ConfirmView, NotAHost, ResetModal, is_host
-
-__all__ = ["RESET_PHRASE", "ConfirmView", "HellCommands", "NotAHost", "ResetModal", "is_host"]
 from .timeutil import discord_ts, format_hm, now_ts
+from .ui import CODE_LIFETIME_SECONDS, CodeGate, NotAHost, is_host
+
+__all__ = ["CodeGate", "HellCommands", "NotAHost", "is_host"]
 
 log = logging.getLogger("hell.commands")
 
@@ -40,6 +40,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         self.engine = engine
         self.monitor = monitor
         self.announcer = monitor.announcer
+        self.code_gate = CodeGate()
         super().__init__()
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -82,7 +83,9 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         humans, clankers = collected
         if clankers:
             await self.monitor.kick_clankers(clankers)
-        if self.config.require_occupants_to_start and not humans:
+        # Hard requirement: an event never starts into an empty VC.  There is
+        # no config toggle for this — a run nobody can win is not a run.
+        if not humans:
             await interaction.followup.send(
                 say(TEXT.CMD_VC_EMPTY_ON_START, vc=f"<#{self.config.voice_channel_id}>"),
                 ephemeral=True,
@@ -315,6 +318,9 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         if not self.config.alive_check_enabled:
             await interaction.followup.send(TEXT.CMD_ALIVECHECK_DISABLED, ephemeral=True)
             return
+        if self.engine.is_paused:
+            await interaction.followup.send(TEXT.CMD_ALIVECHECK_PAUSED, ephemeral=True)
+            return
         if self.monitor.alive_checks.pending is not None:
             await interaction.followup.send(TEXT.CMD_ALIVECHECK_ALREADY, ephemeral=True)
             return
@@ -496,12 +502,18 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         collected = await self.monitor.collect() if self.engine.is_running else None
         if collected is not None:
             vc_count = len(collected[0])
+        paused = (
+            f"**⏸️ paused** since {discord_ts(state.paused_ts, 'f')}"
+            if state.paused_ts is not None
+            else "no"
+        )
         add_chunked_field(
             embed,
             "📊 State",
             "\n".join(
                 [
                     f"• Status: **{state.status.value}**",
+                    f"• Paused: {paused}",
                     f"• Elapsed: **{format_hm(self.engine.elapsed())}** / {format_hm(TOTAL_SECONDS)}",
                     f"• In the VC: **{vc_count}**",
                     f"• Milestones reached: **{len(self.engine.milestone_records())}**",
@@ -555,9 +567,60 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             ephemeral=True,
         )
 
+    # ------------------------------------------------------------- pause/run
+
+    @app_commands.command(
+        name="pause",
+        description="Freeze everything (global + contestant timers) while a bug is fixed. Nothing can fail while paused.",
+    )
+    @is_host()
+    @app_commands.guild_only()
+    async def pause(self, interaction: discord.Interaction) -> None:
+        """Freeze the event so a problem can be fixed without punishing the run."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        try:
+            async with self.monitor.lock:  # never race the 1s monitor tick
+                self.engine.pause(
+                    reason=f"requested by {interaction.user} ({interaction.user.id})"
+                )
+        except StartError as exc:
+            await interaction.followup.send(f"❌ {exc}", ephemeral=True)
+            return
+        # A roll call in flight is cancelled, never enforced: nobody gets
+        # kicked for failing to answer while the event is frozen.
+        if self.monitor.alive_checks.pending is not None:
+            await self.monitor.alive_checks.cancel(now_ts(), "the event was paused")
+        log.warning("Event PAUSED by %s (%s)", interaction.user, interaction.user.id)
+        await interaction.followup.send(TEXT.CMD_PAUSE_DONE, ephemeral=True)
+
+    @app_commands.command(
+        name="resume",
+        description="Unfreeze the event after /hell pause — timers continue where they stopped.",
+    )
+    @is_host()
+    @app_commands.guild_only()
+    async def resume(self, interaction: discord.Interaction) -> None:
+        """Unfreeze the event; the paused time is never counted."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        try:
+            async with self.monitor.lock:  # never race the 1s monitor tick
+                self.engine.resume()
+        except StartError as exc:
+            await interaction.followup.send(f"❌ {exc}", ephemeral=True)
+            return
+        if self.monitor.alive_checks.pending is not None:
+            # A check left over from before the pause can never be answered
+            # retroactively — clear it so fresh checks can be scheduled.
+            await self.monitor.alive_checks.cancel(now_ts(), "the event was resumed")
+        log.warning("Event RESUMED by %s (%s)", interaction.user, interaction.user.id)
+        await interaction.followup.send(TEXT.CMD_RESUME_DONE, ephemeral=True)
+
     # ------------------------------------------------------------------ stop
 
-    @app_commands.command(name="stop", description="Manually stop the event (CANCELLED, not FAILED).")
+    @app_commands.command(
+        name="stop",
+        description="Stop the event (CANCELLED). Needs the approval code from the operator's DMs.",
+    )
     @is_host()
     @app_commands.guild_only()
     async def stop(self, interaction: discord.Interaction) -> None:
@@ -567,35 +630,134 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             )
             return
 
-        elapsed = self.engine.elapsed()
-        view = ConfirmView(interaction.user.id, confirm_label="Stop the event")
-        await interaction.response.send_message(
-            say(TEXT.CMD_STOP_CONFIRM, elapsed=format_hm(elapsed), total=format_hm(TOTAL_SECONDS)),
-            view=view,
-            ephemeral=True,
-        )
-        await view.wait()
-        if not view.value:
-            if view.value is None:
-                await interaction.followup.send(TEXT.CMD_STOP_TIMEOUT, ephemeral=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await self._request_approval(interaction, "stop"):
             return
-
-        try:
-            async with self.monitor.lock:
-                event = self.engine.cancel(by_user_id=interaction.user.id)
-        except StartError as exc:
-            await interaction.followup.send(f"❌ {exc}", ephemeral=True)
-            return
-        await self.monitor.dispatch(event)
-        await interaction.followup.send(TEXT.CMD_STOP_DONE, ephemeral=True)
+        await interaction.followup.send(TEXT.CMD_APPROVAL_REQUESTED, ephemeral=True)
 
     # ----------------------------------------------------------------- reset
 
-    @app_commands.command(name="reset", description="Wipe all event data for a brand new run.")
+    @app_commands.command(
+        name="reset",
+        description="Wipe all event data for a fresh run. Needs the approval code from the operator's DMs.",
+    )
     @is_host()
     @app_commands.guild_only()
     async def reset(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_modal(ResetModal(self))
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await self._request_approval(interaction, "reset"):
+            return
+        await interaction.followup.send(TEXT.CMD_APPROVAL_REQUESTED, ephemeral=True)
+
+    # --------------------------------------------------------------- approve
+
+    @app_commands.command(
+        name="approve",
+        description="Confirm a dangerous action with the code sent to the operator's DMs.",
+    )
+    @app_commands.describe(code="The one-time code from the DM (6 characters).")
+    @is_host()
+    @app_commands.guild_only()
+    async def approve(self, interaction: discord.Interaction, code: str) -> None:
+        """Run the pending /hell stop or /hell reset once the operator's code is entered."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        expired = self.code_gate.expired_action
+        if expired is not None:
+            label = (
+                TEXT.DANGER_ACTION_STOP if expired == "stop" else TEXT.DANGER_ACTION_RESET
+            )
+            await interaction.followup.send(
+                say(TEXT.CMD_APPROVE_EXPIRED, action=label), ephemeral=True
+            )
+            return
+
+        action = self.code_gate.pending_action
+        if action is None:
+            await interaction.followup.send(TEXT.CMD_APPROVE_NOTHING_PENDING, ephemeral=True)
+            return
+
+        # Stale-code guard: an approval was requested for a specific event.  If
+        # that event ended and a NEW one is running, the code must not act on
+        # the new event — request a fresh code instead.
+        if action == "stop" and self.code_gate.pending_event_uid != self.engine.event_uid:
+            self.code_gate.invalidate()
+            await interaction.followup.send(TEXT.CMD_APPROVE_STALE_EVENT, ephemeral=True)
+            return
+
+        error = self.code_gate.redeem(action, code)
+        if error is not None:
+            await interaction.followup.send(
+                say(TEXT.CMD_APPROVE_FAILED, error=error), ephemeral=True
+            )
+            return
+
+        if action == "stop":
+            try:
+                async with self.monitor.lock:  # never race the 1s monitor tick
+                    event = self.engine.cancel(by_user_id=interaction.user.id)
+            except StartError as exc:
+                await interaction.followup.send(f"❌ {exc}", ephemeral=True)
+                return
+            await self.monitor.dispatch(event)
+            await interaction.followup.send(TEXT.CMD_STOP_DONE, ephemeral=True)
+        elif action == "reset":
+            async with self.monitor.lock:
+                was = self.engine.status
+                self.engine.reset()
+                self.monitor.alive_checks.reset()
+            self.announcer.forget_progress_message()
+            log.warning("Event data reset by %s (previous status: %s)", interaction.user, was.value)
+            await interaction.followup.send(
+                say(TEXT.CMD_RESET_DONE, previous_status=was.value), ephemeral=True
+            )
+        else:  # pragma: no cover - defensive
+            await interaction.followup.send(TEXT.CMD_APPROVE_NOTHING_PENDING, ephemeral=True)
+
+    async def _request_approval(self, interaction: discord.Interaction, action: str) -> bool:
+        """Issue a one-time code and DM it to the operator (Jaime Gaming).
+
+        Returns False — and replies to the interaction — when the code could
+        not be delivered; the dangerous action must never proceed without the
+        operator's code.  The code itself is never logged or echoed anywhere
+        except the operator's DMs.
+        """
+        code = self.code_gate.issue(action, event_uid=self.engine.event_uid)
+        label = TEXT.DANGER_ACTION_STOP if action == "stop" else TEXT.DANGER_ACTION_RESET
+        requester = getattr(interaction.user, "display_name", None) or str(interaction.user)
+        try:
+            user = self.bot.get_user(self.config.log_dm_user_id)
+            if user is None:
+                user = await self.bot.fetch_user(self.config.log_dm_user_id)
+            if user is None:
+                self.code_gate.invalidate()
+                await interaction.followup.send(
+                    say(TEXT.CMD_APPROVAL_UNAVAILABLE, error="the operator could not be resolved"),
+                    ephemeral=True,
+                )
+                return False
+            await user.send(
+                embed=discord.Embed(
+                    title=TEXT.DANGER_CODE_TITLE,
+                    description=say(
+                        TEXT.DANGER_CODE_BODY,
+                        action=label,
+                        code=code,
+                        expires=CODE_LIFETIME_SECONDS // 60,
+                        requester=requester,
+                    ),
+                    color=int(TEXT.COLOR_FAILED),
+                )
+            )
+        except (discord.Forbidden, discord.HTTPException) as exc:
+            log.error("Could not deliver the approval code for %s: %s", action, exc)
+            self.code_gate.invalidate()  # a code that never arrived must not be usable
+            await interaction.followup.send(
+                say(TEXT.CMD_APPROVAL_UNAVAILABLE, error=str(exc)[:400]), ephemeral=True
+            )
+            return False
+        log.info("Approval code issued for %s by %s (%s)", action, interaction.user, interaction.user.id)
+        return True
 
     # ------------------------------------------------------------ error path
 

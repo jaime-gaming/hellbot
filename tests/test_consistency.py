@@ -158,3 +158,24 @@ def test_no_module_hardcodes_a_milestone_reward():
         if "@hell-ist" in text or "@hell master" in text:
             offenders.append(path.name)
     assert not offenders, f"reward text hardcoded in: {offenders}"
+
+
+def test_boolean_settings_reject_typos_loudly(monkeypatch):
+    """`ALIVE_CHECK_ENABLED=flase` or `LOG_DM_ENABLED=ture` must not
+    silently flip a feature off — that is how events break invisibly."""
+    from hell.config import ConfigError, _bool_env
+
+    monkeypatch.setenv("HELL_TEST_BOOL", "ture")
+    with pytest.raises(ConfigError):
+        _bool_env("HELL_TEST_BOOL", True)
+    monkeypatch.setenv("HELL_TEST_BOOL", "flase")
+    with pytest.raises(ConfigError):
+        _bool_env("HELL_TEST_BOOL", False)
+
+    for raw, expected in (("true", True), ("1", True), ("on", True), ("yes", True),
+                          ("false", False), ("0", False), ("off", False), ("no", False)):
+        monkeypatch.setenv("HELL_TEST_BOOL", raw)
+        assert _bool_env("HELL_TEST_BOOL", True) is expected
+
+    monkeypatch.delenv("HELL_TEST_BOOL", raising=False)
+    assert _bool_env("HELL_TEST_BOOL", True) is True      # empty -> default

@@ -224,12 +224,15 @@ class EmbedFactory:
             color=status_color(snap.status),
         )
         self._brand(embed, thumbnail=getattr(TEXT, "PROGRESS_THUMBNAIL", ""))
-        template = (
-            TEXT.PROGRESS_STATUS_VALUE_EMPTY_VC if snap.grace_open else TEXT.PROGRESS_STATUS_VALUE
-        )
+        if snap.paused:
+            template, status = TEXT.PROGRESS_STATUS_VALUE_PAUSED, "PAUSED"
+        elif snap.grace_open:
+            template, status = TEXT.PROGRESS_STATUS_VALUE_EMPTY_VC, snap.status.value
+        else:
+            template, status = TEXT.PROGRESS_STATUS_VALUE, snap.status.value
         embed.add_field(
             name=TEXT.PROGRESS_STATUS_FIELD,
-            value=say(template, status=snap.status.value),
+            value=say(template, status=status),
             inline=True,
         )
         embed.add_field(
@@ -251,7 +254,9 @@ class EmbedFactory:
         embed.add_field(name=TEXT.PROGRESS_CURRENT_FIELD, value=current, inline=True)
 
         if snap.upcoming and snap.time_to_next is not None:
-            running = snap.status is EventStatus.RUNNING and snap.start_ts
+            # While paused the live countdown tag is meaningless (the clock is
+            # frozen), so fall back to the static "in X" rendering.
+            running = snap.status is EventStatus.RUNNING and snap.start_ts and not snap.paused
             nxt = say(
                 TEXT.PROGRESS_NEXT_VALUE_RUNNING if running else TEXT.PROGRESS_NEXT_VALUE,
                 next_milestone=snap.upcoming.hours,

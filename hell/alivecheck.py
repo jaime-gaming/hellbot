@@ -240,7 +240,20 @@ class AliveCheckManager:
     # ----------------------------------------------------------------- start
 
     async def start(self, now: float, participants: Sequence[ParticipantRef]) -> Optional[PendingCheck]:
-        """Post the roll call and start the 5-minute clock."""
+        """Post the roll call and start the 5-minute clock.
+
+        CRASH-SAFE ORDERING: The check is persisted to SQLite BEFORE the
+        Discord API call.  If the bot crashes after the DB write but before
+        ``send_check`` returns, the on-disk check has no ``channel_id`` /
+        ``message_id`` — on restart ``bind()`` loads it, ``backfill_replies``
+        sees the missing IDs and returns 0, ``is_due`` won't fire a new one
+        (pending is set), and the pending check sits there harmlessly until
+        it expires and gets cancelled.  Crucially, the DB never says "a check
+        exists" when Discord has no record of it.
+
+        If the Discord call fails, the tentative DB row is deleted and the
+        check is rescheduled.
+        """
         if self.pending is not None or not self._event_uid or not participants:
             return None
 
@@ -251,16 +264,29 @@ class AliveCheckManager:
             deadline_ts=now + timeout,
             required={p.user_id: p.display_name for p in participants},
         )
-        sent = await self.io.send_check(self.render_check(check), list(check.required))
+        # 1) Persist to DB first (tentative — no channel/message IDs yet).
+        self.pending = check
+        self.store.save_alive_check(self._event_uid, check.to_row())
+
+        # 2) Send to Discord.  If this fails (permission, rate-limit, net
+        #    partition, unexpected exception), clean up the tentative row so
+        #    we never end up with "DB says it's active, Discord says it
+        #    doesn't exist" — a phantom check would otherwise sit in memory
+        #    and later "resolve" by kicking people who never saw a message.
+        try:
+            sent = await self.io.send_check(self.render_check(check), list(check.required))
+        except Exception:
+            log.exception("Alive check could not be posted — cleaning up and rescheduling")
+            sent = None
         if sent is None:
-            # Could not post: try again on the next scheduling window rather
-            # than silently kicking people who never saw a message.
-            log.error("Alive check could not be posted — rescheduling")
+            log.error("Alive check could not be posted — cleaning up and rescheduling")
+            self.store.clear_alive_check(self._event_uid)
+            self.pending = None
             self.schedule_next(now)
             return None
-        check.channel_id, check.message_id = sent
 
-        self.pending = check
+        # 3) Update the DB record with the real Discord coordinates.
+        check.channel_id, check.message_id = sent
         self.store.save_alive_check(self._event_uid, check.to_row())
         log.info(
             "Alive check %s started for %d user(s); deadline in %.0fs",
@@ -323,7 +349,14 @@ class AliveCheckManager:
         cancelled: bool = False,
         reason: str = "",
     ) -> Optional[CheckResult]:
-        """Deadline reached: disconnect whoever stayed silent."""
+        """Deadline reached: disconnect whoever stayed silent.
+
+        CRASH-SAFE ORDERING: History is written to the DB BEFORE any Discord
+        API calls (kicks, result message).  If the bot crashes mid-kick, the
+        DB already has the full history record and the pending check has been
+        cleared — a restart will not see a stale pending check or try to
+        retroactively cancel it.
+        """
         check = self.pending
         if check is None or not self._event_uid:
             return None
@@ -335,6 +368,26 @@ class AliveCheckManager:
         to_kick = [uid for uid in silent if uid in present]
         left_early = [ParticipantRef(uid, check.required[uid]) for uid in silent if uid not in present]
 
+        # 1) Save history to DB BEFORE any Discord I/O.  We record the users
+        #    we *intend* to kick; actual kick results come after.  On crash
+        #    after this point the outcome is already recorded and the pending
+        #    check is gone — the bot will not replay or cancel a resolved check.
+        self.store.record_alive_check_history(
+            self._event_uid,
+            check_id=check.check_id,
+            started_ts=check.started_ts,
+            resolved_ts=now,
+            required=len(check.required),
+            responded=len(check.responded),
+            kicked=list(to_kick) if not cancelled else [],
+            cancelled=cancelled,
+        )
+        self.store.clear_alive_check(self._event_uid)
+        self.pending = None
+        self.schedule_next(now)
+
+        # 2) Now perform the Discord API calls.  Failures here are logged and
+        #    never corrupt the persisted state.
         kicked_ids: list[int] = []
         if not cancelled and to_kick:
             kicked_ids = await self.io.kick(
@@ -357,20 +410,6 @@ class AliveCheckManager:
             cancelled=cancelled,
             reason=reason,
         )
-
-        self.store.record_alive_check_history(
-            self._event_uid,
-            check_id=check.check_id,
-            started_ts=check.started_ts,
-            resolved_ts=now,
-            required=len(check.required),
-            responded=len(check.responded),
-            kicked=[k.user_id for k in kicked],
-            cancelled=cancelled,
-        )
-        self.store.clear_alive_check(self._event_uid)
-        self.pending = None
-        self.schedule_next(now)
 
         log.info(
             "Alive check %s resolved: %d/%d answered, %d disconnected%s",

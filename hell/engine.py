@@ -158,6 +158,7 @@ class Snapshot:
     grace_open: bool = False
     grace_seconds_left: float = 0.0
     grace_total: float = 0.0
+    paused: bool = False
 
 
 class StartError(RuntimeError):
@@ -198,6 +199,12 @@ class HellEngine:
         return self.state.event_uid
 
     @property
+    def is_paused(self) -> bool:
+        """The event is frozen: neither the global clock nor any user's
+        clock advances, and nothing can fail or trigger."""
+        return self.state.paused_ts is not None
+
+    @property
     def last_participants(self) -> tuple[ParticipantRef, ...]:
         return self._last_participants
 
@@ -208,14 +215,31 @@ class HellEngine:
             return None
         return EventTimeline(start_ts=self.state.start_ts, total=TOTAL_SECONDS)
 
+    def _effective_now(self, now: float) -> float:
+        """`now` with every pause the event has taken removed.
+
+        The event clock is absolute-timestamp based, so a pause is expressed
+        as a running offset: while paused, the offset keeps growing and the
+        effective time stands still; after a resume the offset is frozen and
+        the clock carries on exactly where it stopped.
+        """
+        paused = self.state.paused_seconds
+        if self.state.paused_ts is not None:
+            paused += max(0.0, now - self.state.paused_ts)
+        return now - paused
+
     def elapsed(self, now: Optional[float] = None) -> float:
-        """Elapsed event time, clamped to [0, 160h] and frozen once terminal."""
+        """Elapsed event time, clamped to [0, 160h] and frozen once terminal.
+
+        Pause time is never counted: while paused the value stands still, and
+        after a resume it continues exactly where it stopped.
+        """
         timeline = self.timeline
         if timeline is None:
             return 0.0
         now = now_ts() if now is None else now
         frozen = self.state.end_ts if (self.state.status.is_terminal and self.state.end_ts) else None
-        return timeline.elapsed(now, frozen_at=frozen)
+        return timeline.elapsed(self._effective_now(now), frozen_at=frozen)
 
     def snapshot(self, now: Optional[float] = None, participants: Optional[int] = None) -> Snapshot:
         now = now_ts() if now is None else now
@@ -235,9 +259,10 @@ class HellEngine:
             end_ts=self.state.end_ts,
             unverified=self.store.get_unverified_seconds(self.state.event_uid) if self.state.event_uid else 0.0,
             end_reason=self.state.end_reason,
-            grace_open=self.grace.is_open and self.is_running,
-            grace_seconds_left=self.grace.seconds_left(now),
+            grace_open=self.grace.is_open and self.is_running and not self.is_paused,
+            grace_seconds_left=self.grace.seconds_left(self._effective_now(now)),
             grace_total=self.grace.seconds,
+            paused=self.is_paused,
         )
 
     # --------------------------------------------------------------- control
@@ -283,13 +308,65 @@ class HellEngine:
         log.info("Event %s started at %.3f by %s", uid, now, started_by)
         return self.state
 
+    def pause(self, *, now: Optional[float] = None, reason: str = "") -> EventState:
+        """Freeze the whole event: global clock, per-user clocks, milestones,
+        grace countdown — nothing moves or can fail while paused.
+
+        Used when something goes wrong and the operator needs time to fix it
+        without the 160h run being punished.  Persisted, so a restart while
+        paused stays paused.
+        """
+        if not self.is_running:
+            raise StartError("Cannot pause — the event is not running.")
+        if self.is_paused:
+            raise StartError("The event is already paused.")
+        now = now_ts() if now is None else now
+        self.state.paused_ts = now
+        self.state.pause_reason = reason or None
+        self.store.save_state(self.state)
+        log.warning(
+            "Event %s PAUSED at %.3f%s", self.state.event_uid, now,
+            f" ({reason})" if reason else "",
+        )
+        return self.state
+
+    def resume(self, *, now: Optional[float] = None) -> EventState:
+        """Unfreeze the event after a pause.
+
+        The pause duration is banked so it is never counted against the 160h,
+        and an open empty-VC grace window is shifted forward by the pause so
+        its countdown resumes where it left off instead of expiring mid-pause.
+        """
+        if not self.is_paused:
+            raise StartError("The event is not paused.")
+        if not self.is_running:
+            raise StartError("Cannot resume — the event is not running.")
+        now = now_ts() if now is None else now
+        duration = max(0.0, now - (self.state.paused_ts or now))
+        self.state.paused_seconds += duration
+        self.state.paused_ts = None
+        self.state.pause_reason = None
+        # Resume the clock exactly where it stopped (no bogus observation gap).
+        self.state.last_tick_ts = self._effective_now(now)
+        # The grace window was frozen during the pause: shift it forward.
+        if self.state.grace_started_ts is not None:
+            self.state.grace_started_ts += duration
+            self.grace.restore(self.state.grace_started_ts)
+        self.store.save_state(self.state)
+        log.warning(
+            "Event %s resumed after %.1fs paused (total paused %.1fs)",
+            self.state.event_uid, duration, self.state.paused_seconds,
+        )
+        return self.state
+
     def cancel(self, *, now: Optional[float] = None, by_user_id: Optional[int] = None) -> EventCancelled:
         """Manual stop by a host — CANCELLED, explicitly not FAILED."""
         if not self.is_running:
             raise StartError("No event is currently running.")
         now = now_ts() if now is None else now
         elapsed = self.elapsed(now)
-        self._terminate(EventStatus.CANCELLED, now, "Manually stopped by a @gamenight host.")
+        self._terminate(EventStatus.CANCELLED, self._effective_now(now),
+                        "Manually stopped by a @gamenight host.")
         return EventCancelled(
             cancelled_ts=now,
             elapsed=elapsed,
@@ -326,14 +403,21 @@ class HellEngine:
         uid = self.state.event_uid
         timeline = self.timeline
         assert timeline is not None
-        effective_now = timeline.clamp(obs.now)
-        elapsed = timeline.elapsed(obs.now)
-        finished = timeline.is_finished(obs.now)
+        effective_now = timeline.clamp(self._effective_now(obs.now))
+        elapsed = self.elapsed(obs.now)
+        finished = timeline.is_finished(effective_now)
 
         events: list[DomainEvent] = []
         self._last_participants = tuple(obs.participants)
 
+        # While paused, the event is completely frozen: no credit, no grace
+        # evaluation, no milestones, no completion.  Only the participant
+        # list above stays fresh so `/hell status` shows reality.
+        if self.is_paused:
+            return []
+
         # 1) Timeline #2: advance each present user's own 0 -> Xh clock.
+        #    (Step 2 — last-valid-observed — is inserted after credit, below.)
         #    Nothing here can affect the global 0 -> 160h timeline.
         previous = self.state.last_tick_ts if self.state.last_tick_ts is not None else timeline.start_ts
         bridge_users, bridge_seconds = self._bridge(previous, effective_now, obs)
@@ -357,7 +441,17 @@ class HellEngine:
             self._presence_signature = signature
             self.store.replace_presence(uid, obs.participants, obs.now)
 
-        # 2) Empty-VC grace window (see hell/grace.py).
+        # 2) Track last-valid-observed timestamp for crash recovery.
+        #    This is the core reconstruction field: after a restart, the
+        #    system can tell *when* the VC was last occupied, which is
+        #    different from last_tick_ts (which is updated even on empty
+        #    observations).
+        if obs.count > 0:
+            if self.state.last_valid_observed_ts != effective_now:
+                self.state.last_valid_observed_ts = effective_now
+                self.store.set_last_valid_observed_ts(effective_now)
+
+        # 3) Empty-VC grace window (see hell/grace.py).
         if not finished:
             grace_event = self._evaluate_grace(obs, elapsed)
             if isinstance(grace_event, EventFailed):
@@ -365,20 +459,22 @@ class HellEngine:
             if grace_event is not None:
                 events.append(grace_event)
 
-        # 3) Milestone detection (global timeline only, each one exactly once).
+        # 4) Milestone detection (global timeline only, each one exactly once).
         #    Skipped while the VC is empty: nobody would be able to claim it,
         #    so the milestone waits for the first tick with people present.
         if obs.participants:
             events.extend(self._trigger_due_milestones(elapsed, obs))
 
-        # 4) Completion at exactly 160 hours — never counts beyond that.
+        # 5) Completion at exactly 160 hours — never counts beyond that.
+        #    `effective_now` is clamped to the deadline, so a completion that
+        #    lands right after a long pause still records exactly 160h.
         if finished:
-            self._terminate(EventStatus.COMPLETED, timeline.deadline, "160 consecutive hours survived.")
+            self._terminate(EventStatus.COMPLETED, effective_now, "160 consecutive hours survived.")
             board = self.leaderboard()
             log.info("Event %s COMPLETED", uid)
             events.append(
                 EventCompleted(
-                    completed_ts=timeline.deadline,
+                    completed_ts=effective_now,
                     leaderboard=board,
                     top3=top_participants(board, 3),
                 )
@@ -466,15 +562,22 @@ class HellEngine:
             # grace window can never inflate the survived time.
             empty_since = self.grace.empty_since or obs.now
             timeline = self.timeline
-            failed_elapsed = timeline.elapsed(empty_since) if timeline else elapsed
-            self.grace.close()
-            self._persist_grace(None)
+            failed_elapsed = self.elapsed(empty_since) if timeline else elapsed
+            # CRASH-SAFE ORDERING: _terminate() — which writes status="FAILED"
+            # to the DB and clears grace_started_ts — MUST run first, before we
+            # touch the grace state in memory.  If the bot crashes halfway, the
+            # DB event status is already FAILED, so a restart will not see it
+            # as still RUNNING with a missing grace window.
             self._terminate(
                 EventStatus.FAILED,
-                empty_since,
+                self._effective_now(empty_since),
                 "The voice channel stayed empty of valid participants for the whole "
                 f"{self.grace.seconds:.0f}s grace period.",
             )
+            # _terminate already cleared self.grace and persisted, so we skip
+            # the redundant self.grace.close() and self._persist_grace(None)
+            # that used to sit here (and would have created a crash window
+            # between "grace cleared" and "status=FAILED written").
             log.warning(
                 "Event %s FAILED — VC empty since %.3f, grace expired at %.3f (elapsed %.1fs)",
                 self.state.event_uid,
@@ -523,29 +626,42 @@ class HellEngine:
             )
         return out
 
-    def _terminate(self, status: EventStatus, ts: float, reason: str) -> None:
+    def _terminate(self, status: EventStatus, ts_effective: float, reason: str) -> None:
+        """End the event.  `ts_effective` is pause-adjusted event time — the
+        value `elapsed()` will freeze at, so a cancelled/failed/completed run
+        reports exactly the time it actually survived, never the pause.
+        """
+        self.state.status = status
+        self.state.end_ts = ts_effective
+        self.state.end_reason = reason
+        # A half-open grace window must not survive the run it belonged to,
+        # and an open pause is closed (its banked seconds stay in the clock).
+        self.grace.restore(None)
+        self.state.grace_started_ts = None
+        self.state.paused_ts = None
+        self.state.pause_reason = None
+        self.store.save_state(self.state)
         log.info(
             "Event %s: %s -> %s after %s (%s)",
             self.state.event_uid,
             self.state.status.value,
             status.value,
-            format_hm(self.elapsed(ts)),
+            format_hm(self.elapsed()),
             reason,
         )
-        self.state.status = status
-        self.state.end_ts = ts
-        self.state.end_reason = reason
-        # A half-open grace window must not survive the run it belonged to.
-        self.grace.restore(None)
-        self.state.grace_started_ts = None
-        self.store.save_state(self.state)
         self.freeze_leaderboard()
 
     # ----------------------------------------------------------- leaderboard
 
-    def leaderboard(self) -> list[LeaderboardEntry]:
-        """Live ranking, or the frozen final ranking once the event ended."""
-        uid = self.state.event_uid
+    def leaderboard(self, uid: Optional[str] = None) -> list[LeaderboardEntry]:
+        """Live ranking, or the frozen final ranking once the event ended.
+
+        `uid` defaults to the current event.  Passing an explicit UID lets
+        long-running jobs (end-of-event stat cards) pin the event they belong
+        to, so a brand new event starting mid-delivery can never make them
+        read the wrong leaderboard.
+        """
+        uid = uid or self.state.event_uid
         if uid is None:
             return []
         if self.state.status.is_terminal and self.state.final_saved:
@@ -572,8 +688,8 @@ class HellEngine:
 
     # ------------------------------------------------------------ milestones
 
-    def milestone_records(self) -> list[MilestoneRecord]:
-        uid = self.state.event_uid
+    def milestone_records(self, uid: Optional[str] = None) -> list[MilestoneRecord]:
+        uid = uid or self.state.event_uid
         return self.store.get_milestones(uid) if uid else []
 
     def pending_announcements(self) -> list[MilestoneRecord]:

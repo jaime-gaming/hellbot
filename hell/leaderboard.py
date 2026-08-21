@@ -54,7 +54,10 @@ def top_participants(entries: Sequence[LeaderboardEntry], n: int = 3) -> list[Pa
 
 def medals() -> dict[int, str]:
     """Podium markers, editable in Announcements.py."""
-    return {int(k): v for k, v in dict(TEXT.LEADERBOARD_MEDALS).items()}
+    try:
+        return {int(k): v for k, v in dict(TEXT.LEADERBOARD_MEDALS).items()}
+    except (TypeError, ValueError):  # pragma: no cover - human-editable text file
+        return {1: "🥇", 2: "🥈", 3: "🥉"}
 
 
 def format_entry(entry: LeaderboardEntry, use_mentions: bool = True) -> str:

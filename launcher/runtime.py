@@ -285,7 +285,7 @@ class BotSupervisor:
             engine = getattr(bot, "engine", None)
             if engine is not None:
                 snap = engine.snapshot()
-                stats.event_status = snap.status.value
+                stats.event_status = "PAUSED" if snap.paused else snap.status.value
                 stats.elapsed = snap.elapsed
                 stats.total = snap.total
                 stats.fraction = snap.fraction
@@ -322,9 +322,16 @@ class BotSupervisor:
                     return {"status": state.status.value, "elapsed": 0.0, "fraction": 0.0,
                             "remaining": TOTAL_SECONDS}
                 reference = state.end_ts if (state.status.is_terminal and state.end_ts) else time.time()
+                # Paused time is never counted, so mirror the engine's
+                # effective-now arithmetic for an honest offline readout.
+                paused = state.paused_seconds
+                if state.paused_ts is not None:
+                    paused += max(0.0, time.time() - state.paused_ts)
+                reference -= paused
                 elapsed = max(0.0, min(reference, state.start_ts + TOTAL_SECONDS) - state.start_ts)
+                status = "PAUSED" if state.paused_ts is not None else state.status.value
                 return {
-                    "status": state.status.value,
+                    "status": status,
                     "elapsed": elapsed,
                     "fraction": elapsed / TOTAL_SECONDS,
                     "remaining": max(0.0, TOTAL_SECONDS - elapsed),

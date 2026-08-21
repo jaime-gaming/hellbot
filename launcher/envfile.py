@@ -60,6 +60,10 @@ FIELDS: tuple[Field, ...] = (
     Field("LOG_DM_LEVEL", "Minimum severity", "Live logs", default="INFO",
           help="DEBUG / INFO / WARNING / ERROR."),
     Field("LOG_DM_FLUSH_SECONDS", "Flush interval (s)", "Live logs", default="3"),
+    Field("LOG_DM_PING_LEVEL", "Alert ping severity", "Live logs", default="ERROR",
+          help="ERROR+ lines (and rate limits) @-ping you by DM. DEBUG/INFO/WARNING/ERROR/CRITICAL."),
+    Field("LOG_DM_PING_COOLDOWN_SECONDS", "Alert ping cooldown (s)", "Live logs", default="300",
+          help="Minimum seconds between alert pings, so an error storm doesn't spam you."),
 
     Field("DATABASE_PATH", "Database file", "Advanced", default="data/hell.sqlite3"),
     Field("MONITOR_INTERVAL", "VC check interval (s)", "Advanced", default="1"),
@@ -74,7 +78,6 @@ FIELDS: tuple[Field, ...] = (
     Field("MAX_TICK_CREDIT_SECONDS", "Max credit per check (s)", "Advanced", default="5"),
     Field("DOWNTIME_CREDIT_SECONDS", "Credit back short outages (s)", "Advanced", default="300",
           help="After a restart, people who were in the VC before and after keep that time."),
-    Field("REQUIRE_OCCUPANTS_TO_START", "Refuse to start with an empty VC", "Advanced", default="true"),
     Field("HEARTBEAT_MINUTES", "Heartbeat log interval (min)", "Advanced", default="15"),
     Field("LOG_LEVEL", "Log level", "Advanced", default="INFO"),
 )

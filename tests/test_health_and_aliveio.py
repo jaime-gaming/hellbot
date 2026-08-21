@@ -82,11 +82,12 @@ def make_guild(config, *, voice=None, text=None, roles=None):
 
 
 class HealthBot:
-    def __init__(self, guild=None, *, members=True, voice_states=True):
+    def __init__(self, guild=None, *, members=True, voice_states=True, message_content=True):
         self._guild = guild
         self.intents = discord.Intents.default()
         self.intents.members = members
         self.intents.voice_states = voice_states
+        self.intents.message_content = message_content
 
     def get_guild(self, _gid):
         return self._guild
@@ -115,6 +116,15 @@ def test_missing_move_members_is_an_error(config):
     report = run(preflight(HealthBot(make_guild(config, voice=voice, text=make_text(config))), config))
     assert not report.ok
     assert any("Move Members" in e for e in report.errors)
+
+
+def test_missing_message_content_intent_is_an_error(config):
+    """Without it the bot cannot read alive-check replies — every roll call
+    would end by disconnecting everyone."""
+    guild = make_guild(config, voice=make_voice(config), text=make_text(config))
+    report = run(preflight(HealthBot(guild, message_content=False), config))
+    assert not report.ok
+    assert any("Message Content" in e for e in report.errors)
 
 
 def test_missing_mention_everyone_is_only_a_warning(config):

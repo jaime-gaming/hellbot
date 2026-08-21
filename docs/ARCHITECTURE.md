@@ -77,12 +77,42 @@ global clock while at least one valid human remains.
    placeholder, a failed send, a closed DM: all logged, none fatal.
 9. **Background work never blocks the 1-second loop** — roll-call I/O and DM
    delivery run through `hell/tasks.spawn()`, which also logs failures.
+10. **Crash-safe ordering: the DB is never left contradicting Discord.** Every
+    stateful operation writes its DB row *before* the Discord API call that
+    depends on it, and cleans up (or marks `pending`) on failure. Concretely:
+    - grace expiry runs `_terminate(FAILED)` (a single `save_state` that sets
+      `status` and clears `grace_started_ts`) before any in-memory grace
+      cleanup, so a crash can never leave the event RUNNING with no window;
+    - an alive check is persisted to `alive_check` *before* `send_check` is
+      called; a failed Discord send deletes the tentative row (never
+      "DB says active, Discord says it doesn't exist"), and a successful send
+      is followed by a second write adding the real `channel_id`/`message_id`;
+      an *exception* from `send_check` (network error) cleans up exactly like
+      a `None` result, so no phantom check can later kick people who never
+      saw a roll call;
+    - alive-check resolution writes `alive_check_history` and clears the
+      pending row *before* kicking anybody, so a crash mid-kick leaves a
+      resolvable history and no stale pending check;
+    - each stat-card DM is recorded in `dm_log` as `pending` *before* the DM
+      API call and updated to `sent`/`blocked`/`failed` after, so a crash
+      mid-delivery retries exactly the right recipients (and never
+      double-messages anyone marked `sent`).
+11. **Pause is an offset, not a stop.** `/hell pause` does not change the
+    event status — it records `paused_ts` and banks `paused_seconds` into the
+    `event` row. Every time reading is converted with `_effective_now()`
+    (`now − paused_seconds − in-progress pause`), so while paused both
+    timelines stand still, milestones/grace/completion are inert, and after
+    `/hell resume` the clocks continue exactly where they stopped. An open
+    empty-VC grace window is shifted forward by the pause on resume, so its
+    countdown resumes with the time it had left; a restart while paused comes
+    back paused; and the container healthcheck treats a paused event as
+    healthy (a frozen `last_tick_ts` is *not* a stalled monitor).
 
-## Data model (SQLite, schema v2)
+## Data model (SQLite, schema v3)
 
 | Table | Holds |
 |---|---|
-| `event` | one row: status, start/end timestamps, channel + message IDs, grace window |
+| `event` | one row: status, start/end timestamps, channel + message IDs, grace window, `last_valid_observed_ts`, pause state (`paused_ts`, `paused_seconds`, `pause_reason`) |
 | `user_time` | per-user accumulated seconds (timeline #2) |
 | `presence` | who is in the VC right now (written only on change) |
 | `milestones` / `milestone_members` | claims, timestamps, eligible snapshots |
@@ -92,6 +122,28 @@ global clock while at least one valid human remains.
 | `meta` | schema version, next roll-call time, unobserved seconds |
 
 Migrations are additive and run at startup (`Store._migrate`).
+
+### Crash reconstruction fields
+
+These fields on the `event` row are sufficient to reconstruct the full event
+state after any crash — everything else is derived:
+
+| Field | Stores |
+|---|---|
+| `start_ts` | when the event started |
+| `status` | IDLE / RUNNING / FAILED / COMPLETED / CANCELLED |
+| `last_tick_ts` | last trusted VC observation (any population) |
+| `last_valid_observed_ts` | last observation with ≥1 valid human |
+| `grace_started_ts` | when the empty-VC grace window began |
+| `paused_ts` / `paused_seconds` | whether the event is frozen and how much time has been banked as paused |
+| `end_ts` | when the event terminated (fail/complete/cancel), stored as pause-adjusted event time |
+| `milestones` table | which milestones were reached and when |
+| `user_time` table | per-user accumulated seconds |
+
+Given these plus the wall clock, `resume_after_restart()` can continue watching,
+resume a grace window, freeze the leaderboard, or re-send missed announcements
+without guessing — the same invariants are exercised by the crash-injection
+tests in `tests/test_resilience.py`.
 
 ## Testing
 
@@ -106,7 +158,7 @@ Migrations are additive and run at startup (`Store._migrate`).
 | `test_integration`, `test_command_flows`, `test_bot`, `test_monitor` | the Discord edge through fakes: monitor → engine → announcer → channel, every slash command callback, event routing |
 | `test_gui`, `test_launcher`, `test_logging`, `test_logsink` | the desktop launcher (headless via `tests/faketk.py`) and logging |
 | `test_deployment`, `test_consistency` | the container actually starts from the files it copies; config, commands and docs cannot drift apart |
-| `test_resilience` | the "Discord said no" paths: forbidden channels, rate limits, deleted messages, restarts mid-roll-call |
+| `test_resilience` | the "Discord said no" paths: forbidden channels, rate limits, deleted messages, restarts mid-roll-call — plus **crash injection** at every DB-write ↔ Discord-API boundary (grace termination, alive-check start/resolve, stat-card delivery, `last_valid_observed_ts` reconstruction) |
 
 ```bash
 ./tools/check.sh          # compile, pyflakes, ruff, mypy, pytest, simulations

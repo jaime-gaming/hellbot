@@ -25,7 +25,7 @@ from .models import EventState, EventStatus, LeaderboardEntry, MilestoneRecord, 
 
 log = logging.getLogger("hell.storage")
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -51,7 +51,11 @@ CREATE TABLE IF NOT EXISTS event (
     started_by           INTEGER,
     end_reason           TEXT,
     final_saved          INTEGER NOT NULL DEFAULT 0,
-    grace_started_ts     REAL              -- empty-VC grace window in progress
+    grace_started_ts     REAL,             -- empty-VC grace window in progress
+    last_valid_observed_ts REAL,           -- last tick with at least one valid human [crash-recovery]
+    paused_ts            REAL,             -- event paused: global + per-user timers frozen
+    paused_seconds       REAL NOT NULL DEFAULT 0,  -- total paused time, never counted
+    pause_reason         TEXT              -- why it was paused (audit trail)
 );
 
 CREATE TABLE IF NOT EXISTS user_time (
@@ -157,7 +161,13 @@ class Store:
     def _migrate(self) -> None:
         """Additive schema migrations for databases created by older versions."""
         columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(event)").fetchall()}
-        for name, ddl in (("grace_started_ts", "REAL"),):
+        for name, ddl in (
+            ("grace_started_ts", "REAL"),
+            ("last_valid_observed_ts", "REAL"),
+            ("paused_ts", "REAL"),
+            ("paused_seconds", "REAL NOT NULL DEFAULT 0"),
+            ("pause_reason", "TEXT"),
+        ):
             if name not in columns:
                 log.info("Migrating database: adding event.%s", name)
                 self._conn.execute(f"ALTER TABLE event ADD COLUMN {name} {ddl}")
@@ -218,6 +228,10 @@ class Store:
             end_reason=r["end_reason"],
             final_saved=bool(r["final_saved"]),
             grace_started_ts=r["grace_started_ts"],
+            last_valid_observed_ts=r["last_valid_observed_ts"],
+            paused_ts=r["paused_ts"],
+            paused_seconds=float(r["paused_seconds"] or 0),
+            pause_reason=r["pause_reason"],
         )
 
     def save_state(self, state: EventState) -> None:
@@ -228,7 +242,9 @@ class Store:
                     status = ?, event_uid = ?, start_ts = ?, end_ts = ?, last_tick_ts = ?,
                     guild_id = ?, voice_channel_id = ?, announce_channel_id = ?,
                     progress_channel_id = ?, progress_message_id = ?, started_by = ?,
-                    end_reason = ?, final_saved = ?, grace_started_ts = ?
+                    end_reason = ?, final_saved = ?, grace_started_ts = ?,
+                    last_valid_observed_ts = ?, paused_ts = ?, paused_seconds = ?,
+                    pause_reason = ?
                 WHERE id = 1
                 """,
                 (
@@ -246,12 +262,29 @@ class Store:
                     state.end_reason,
                     int(state.final_saved),
                     state.grace_started_ts,
+                    state.last_valid_observed_ts,
+                    state.paused_ts,
+                    state.paused_seconds,
+                    state.pause_reason,
                 ),
             )
 
     def set_last_tick(self, ts: float) -> None:
         with self._lock:
             self._conn.execute("UPDATE event SET last_tick_ts = ? WHERE id = 1", (ts,))
+
+    def set_last_valid_observed_ts(self, ts: Optional[float]) -> None:
+        """Persist the latest timestamp the VC was observed with valid humans.
+
+        This is a core reconstruction field (see crash-safety docs): after a
+        restart, ``last_valid_observed_ts`` tells ``resume_after_restart``
+        whether the VC was recently occupied, as opposed to ``last_tick_ts``
+        which is updated even on empty observations.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE event SET last_valid_observed_ts = ? WHERE id = 1", (ts,)
+            )
 
     def set_grace_started(self, ts: Optional[float]) -> None:
         """Persist the empty-VC grace window so a restart resumes it."""
@@ -514,6 +547,19 @@ class Store:
             ).fetchall()
         return {r["user_id"] for r in rows}
 
+    def dm_recipients_by_status(self, event_uid: str) -> dict[int, str]:
+        """All recipients mapped to their delivery status.
+
+        Returns ``{user_id: status}`` so callers can tell the difference
+        between ``sent``/``blocked``/``failed`` (terminal) and ``pending``
+        (in-flight — should be retried on restart).
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT user_id, status FROM dm_log WHERE event_uid = ?", (event_uid,)
+            ).fetchall()
+        return {r["user_id"]: r["status"] for r in rows}
+
     def dm_summary(self, event_uid: str) -> dict[str, int]:
         with self._lock:
             rows = self._conn.execute(
@@ -570,7 +616,8 @@ class Store:
                     "UPDATE event SET status = ?, event_uid = NULL, start_ts = NULL, end_ts = NULL, "
                     "last_tick_ts = NULL, progress_channel_id = NULL, progress_message_id = NULL, "
                     "started_by = NULL, end_reason = NULL, final_saved = 0, "
-                    "grace_started_ts = NULL WHERE id = 1",
+                    "grace_started_ts = NULL, last_valid_observed_ts = NULL, "
+                    "paused_ts = NULL, paused_seconds = 0, pause_reason = NULL WHERE id = 1",
                     (EventStatus.IDLE.value,),
                 )
                 self._conn.execute("COMMIT")

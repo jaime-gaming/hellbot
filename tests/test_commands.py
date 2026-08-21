@@ -7,8 +7,9 @@ import pytest
 from discord.ext import commands
 
 from hell.announcer import Announcer
-from hell.cog import RESET_PHRASE, HellCommands
+from hell.cog import HellCommands
 from hell.monitor import VoiceMonitor
+from hell.ui import CODE_LIFETIME_SECONDS, CodeGate
 
 
 @pytest.fixture
@@ -30,6 +31,7 @@ def test_command_group_exposes_the_expected_subcommands(bot, config, engine):
     assert names == {
         "start", "status", "leaderboard", "milestones", "mystats", "user", "help",
         "alivecheck", "logs", "reloadmessages", "doctor", "export", "stop", "reset",
+        "approve", "pause", "resume",
     }
     assert cog.app_command.name == "hell"  # type: ignore[union-attr]
 
@@ -40,15 +42,63 @@ def test_restricted_commands_carry_a_check(bot, config, engine):
     cog = HellCommands(bot, config, engine, monitor)
     by_name = {c.name: c for c in cog.app_command.commands}  # type: ignore[union-attr]
     for restricted in (
-        "start", "stop", "reset", "alivecheck", "logs", "reloadmessages", "doctor", "export",
+        "start", "stop", "reset", "approve", "pause", "resume",
+        "alivecheck", "logs", "reloadmessages", "doctor", "export",
     ):
         assert by_name[restricted].checks, f"/hell {restricted} must be host-restricted"
     for public in ("status", "leaderboard", "milestones", "mystats", "user", "help"):
         assert not by_name[public].checks
 
 
-def test_reset_phrase_is_strong():
-    assert RESET_PHRASE == "RESET WELCOME TO HELL"
+# ------------------------------------------------------------- approval codes
+
+
+def test_approval_codes_are_short_lived_and_single_use():
+    gate = CodeGate()
+    code = gate.issue("stop")
+    assert len(code) == 6
+    assert code.isalnum()
+    assert gate.pending_action == "stop"
+
+    # Case-insensitive, then gone forever.
+    assert gate.redeem("stop", code.lower()) is None
+    assert gate.redeem("stop", code) is not None          # already consumed
+    assert gate.pending_action is None
+
+
+def test_approval_codes_are_tied_to_their_action():
+    gate = CodeGate()
+    code = gate.issue("stop")
+    assert "different" in gate.redeem("reset", code)
+    assert gate.redeem("stop", "ZZZZZZ") == "that code is not correct"
+
+
+def test_approval_codes_expire():
+    import time
+
+    gate = CodeGate()
+    gate.issue("stop")
+    gate._pending.issued_at = time.time() - (CODE_LIFETIME_SECONDS + 1)
+    assert gate.pending_action is None                    # gone once stale
+    assert gate.expired_action == "stop"                  # …and reported
+
+
+def test_approval_codes_can_be_invalidated():
+    gate = CodeGate()
+    gate.issue("reset")
+    gate.invalidate()
+    assert gate.pending_action is None
+    assert gate.expired_action is None
+
+
+def test_approval_codes_bind_to_their_event():
+    """A code issued for event A must never be redeemable against event B."""
+    gate = CodeGate()
+    gate.issue("stop", event_uid="evt-A")
+    assert gate.pending_event_uid == "evt-A"
+    assert gate.redeem("stop", "X" * 6) == "that code is not correct"   # still pending
+    gate.issue("reset", event_uid="evt-B")                              # reissue rebinds
+    assert gate.pending_event_uid == "evt-B"
 
 
 def test_monitor_intervals_follow_config(bot, config, engine):

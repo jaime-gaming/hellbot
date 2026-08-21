@@ -21,6 +21,7 @@ import discord
 
 from .config import Config
 from .engine import HellEngine
+from .models import EventStatus
 from .reports import UserReport, build_reports, render_report
 from .tasks import spawn
 from .texts import TEXT, say
@@ -41,13 +42,27 @@ class FinalReportDM:
 
     # ------------------------------------------------------------- building
 
-    def reports(self) -> list[UserReport]:
-        """One report per contestant for the current (finished) event."""
+    def reports(
+        self,
+        uid: Optional[str] = None,
+        *,
+        status: Optional[EventStatus] = None,
+        event_elapsed: Optional[float] = None,
+    ) -> list[UserReport]:
+        """One report per contestant for the given (finished) event.
+
+        `uid` defaults to the current event.  Passing an explicit UID (plus
+        the captured status/elapsed) lets delivery stay pinned to the event it
+        belongs to even if a new event is started while the cards are going
+        out — otherwise the cards could be built from a different event's
+        leaderboard entirely.
+        """
+        uid = uid or self.engine.event_uid
         return build_reports(
-            self.engine.leaderboard(),
-            self.engine.milestone_records(),
-            status=self.engine.status,
-            event_elapsed=self.engine.elapsed(),
+            self.engine.leaderboard(uid),
+            self.engine.milestone_records(uid),
+            status=status if status is not None else self.engine.status,
+            event_elapsed=event_elapsed if event_elapsed is not None else self.engine.elapsed(),
         )
 
     def report_for(self, user_id: int) -> Optional[UserReport]:
@@ -67,13 +82,30 @@ class FinalReportDM:
 
     # -------------------------------------------------------------- sending
 
-    def pending(self) -> list[UserReport]:
-        """Contestants who have not been messaged yet for this event."""
-        uid = self.engine.event_uid
+    def pending(
+        self,
+        uid: Optional[str] = None,
+        *,
+        status: Optional[EventStatus] = None,
+        event_elapsed: Optional[float] = None,
+    ) -> list[UserReport]:
+        """Contestants who have not been successfully messaged yet for this event.
+
+        'pending' status means the DM was queued but the API call may not have
+        completed — those are retried.  Only 'sent', 'blocked' and 'failed'
+        are considered terminal.  `uid` defaults to the current event; pass an
+        explicit one (with the captured status/elapsed) when delivering for an
+        event that may no longer be the current one.
+        """
+        uid = uid or self.engine.event_uid
         if not uid:
             return []
-        done = self.engine.store.dm_recipients(uid)
-        return [r for r in self.reports() if r.user_id not in done]
+        done_statuses = self.engine.store.dm_recipients_by_status(uid)
+        attempted = done_statuses.keys()
+        return [
+            r for r in self.reports(uid, status=status, event_elapsed=event_elapsed)
+            if r.user_id not in attempted or done_statuses.get(r.user_id) == "pending"
+        ]
 
     def schedule(self) -> None:
         """Kick off delivery in the background (safe to call more than once)."""
@@ -85,7 +117,16 @@ class FinalReportDM:
         self._task = spawn(self.send_all(), name="stat-cards")
 
     async def send_all(self) -> dict[str, int]:
-        """Send every pending stat card.  Returns a small summary."""
+        """Send every pending stat card.  Returns a small summary.
+
+        CRASH-SAFE ORDERING: Each DM is recorded as ``pending`` in SQLite
+        BEFORE the Discord API call.  If the bot crashes after the DB write
+        but before the DM is sent, the ``pending`` status will cause a retry
+        on the next start (see ``pending()``).  If the crash happens after the
+        send but before the status update, the next start re-checks
+        ``dm_recipients_by_status`` and skips users with ``sent`` / ``blocked``
+        status — so nobody is double-messaged either.
+        """
         summary = {"sent": 0, "blocked": 0, "failed": 0, "total": 0}
         if not self.config.send_final_dms:
             return summary
@@ -94,20 +135,28 @@ class FinalReportDM:
             uid = self.engine.event_uid
             if not uid or not self.engine.status.is_terminal:
                 return summary
-            pending = self.pending()
+            # Capture status/elapsed NOW.  A host can start a new event while
+            # these cards are being sent; everything below stays pinned to
+            # `uid` so the wrong event's data is never used.
+            status = self.engine.status
+            event_elapsed = self.engine.elapsed()
+            pending = self.pending(uid, status=status, event_elapsed=event_elapsed)
             summary["total"] = len(pending)
             if not pending:
                 return summary
 
             log.info("Sending %d end-of-event stat card(s)", len(pending))
             for report in pending:
+                # 1) Mark as "pending" in DB before any Discord I/O.
+                self.engine.store.record_dm(uid, report.user_id, "pending")
                 try:
-                    status = await self._send_one(report)
-                    self.engine.store.record_dm(uid, report.user_id, status)
+                    outcome = await self._send_one(report)
                 except Exception:
                     log.exception("Could not deliver the stat card for %s", report.user_id)
-                    status = "failed"
-                summary[status] = summary.get(status, 0) + 1
+                    outcome = "failed"
+                # 2) Update the real status after the API call.
+                self.engine.store.record_dm(uid, report.user_id, outcome)
+                summary[outcome] = summary.get(outcome, 0) + 1
                 await asyncio.sleep(max(0.0, self.config.dm_delay_seconds))
 
             log.info(

@@ -241,7 +241,9 @@ class VoiceMonitor:
         for event in events:
             await self.dispatch(event)
 
-        if self.engine.is_running:
+        # While paused the event is frozen: no roll calls may start or resolve
+        # (nobody should be kicked for failing to answer during a freeze).
+        if self.engine.is_running and not self.engine.is_paused:
             self._ensure_alive_checks_bound(now)
             self._pump_alive_check(now, humans)
         self._heartbeat(len(humans))
@@ -285,9 +287,10 @@ class VoiceMonitor:
             return
         self._last_heartbeat = now
         snap = self.engine.snapshot(now=now, participants=participants)
+        status = "⏸️ PAUSED" if snap.paused else snap.status.value
         log.info(
             "Heartbeat: %s | %s / %s (%.1f%%) | %d in VC | next milestone: %s",
-            snap.status.value,
+            status,
             format_hm(snap.elapsed),
             format_hm(snap.total),
             snap.fraction * 100,
@@ -372,7 +375,9 @@ class VoiceMonitor:
 
     async def force_alive_check(self) -> bool:
         """Trigger a roll call immediately (used by /hell alivecheck)."""
-        if not self.engine.is_running or self.alive_checks.pending is not None:
+        if not self.engine.is_running or self.engine.is_paused:
+            return False
+        if self.alive_checks.pending is not None:
             return False
         self._ensure_alive_checks_bound(now_ts())
         collected = await self.collect()
@@ -395,6 +400,12 @@ class VoiceMonitor:
                 self.reports.schedule()
             return
         if state.status is not EventStatus.RUNNING:
+            return
+        if self.engine.is_paused:
+            # The event was frozen before the restart and stays frozen: no
+            # recovery work (roll calls, re-announcements) happens while
+            # paused — `/hell resume` handles the unpause.
+            log.warning("Event %s is PAUSED — restarting in frozen state", state.event_uid)
             return
         gap = now_ts() - (state.last_tick_ts or state.start_ts or now_ts())
         log.info(

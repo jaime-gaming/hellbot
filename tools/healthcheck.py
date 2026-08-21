@@ -35,9 +35,17 @@ def check(database: Path, max_lag: float) -> tuple[bool, str]:
     try:
         connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True, timeout=5)
         connection.row_factory = sqlite3.Row
-        row = connection.execute(
-            "SELECT status, last_tick_ts FROM event WHERE id = 1"
-        ).fetchone()
+        # Older databases (before the pause feature) have no paused_ts column;
+        # treat them as not paused rather than failing the healthcheck.
+        columns = {r["name"] for r in connection.execute("PRAGMA table_info(event)").fetchall()}
+        if "paused_ts" in columns:
+            row = connection.execute(
+                "SELECT status, last_tick_ts, paused_ts FROM event WHERE id = 1"
+            ).fetchone()
+        else:
+            row = connection.execute(
+                "SELECT status, last_tick_ts, NULL AS paused_ts FROM event WHERE id = 1"
+            ).fetchone()
         connection.close()
     except sqlite3.Error as exc:
         return False, f"cannot read {database}: {exc}"
@@ -48,6 +56,13 @@ def check(database: Path, max_lag: float) -> tuple[bool, str]:
     status = str(row["status"])
     if status != EventStatus.RUNNING.value:
         return True, f"status {status} — nothing to watch"
+
+    # A paused event intentionally stops ticking (the whole point is that
+    # nothing runs).  Treating the stale `last_tick_ts` as a stall would make
+    # Docker/systemd kill the bot mid-pause, so a paused event is healthy.
+    paused_ts = row["paused_ts"] if "paused_ts" in row.keys() else None
+    if paused_ts is not None:
+        return True, "RUNNING but PAUSED — the timer is frozen, not stalled"
 
     last_tick = row["last_tick_ts"]
     if last_tick is None:

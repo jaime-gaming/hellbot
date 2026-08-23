@@ -25,7 +25,8 @@ empties and nobody returns within the grace period, the run is dead — permanen
 **The event**
 
 * Duration **160 consecutive hours**, five milestones: **32h · 64h · 96h · 128h · 160h**
-* Started by hand with `/hell start`, restricted to `@gamenight host`
+* Started by hand with `/hell start`, restricted to `@gamenight host` — and the VC **must** contain
+  at least one valid human, or the start is refused
 * Bots never count · `@clanker` is kicked on sight · AFK still counts
 * **15-second grace period** when the VC empties, with a no-ping warning
 * **Random alive checks** every 1–6 h: reply `Yes` in 5 minutes or get disconnected
@@ -37,6 +38,11 @@ empties and nobody returns within the grace period, the run is dead — permanen
   outage is credited back to whoever never left the VC
 * **Live log stream** DM'd to the operator: joins, leaves, kicks, milestones, errors
   (`/hell logs tail` shows recent lines in-channel when DMs are off)
+* **Dangerous commands need the operator's approval**: `/hell stop` and `/hell reset` only run
+  after a one-time code DM'd to the operator is entered with `/hell approve`
+* **`/hell pause` freezes the run** (global + per-user timers) so a bug can be fixed without the
+  160h clock punishing the event; `/hell resume` continues exactly where it stopped, with the
+  paused time never counted
 * **All wording in one file** — [`Announcements.py`](Announcements.py) — hot-reloadable
 * A **desktop control panel** (no console) and a one-file **`.exe`** build
 * A large test suite (engine, persistence, Discord edge, GUI, deployment) — ruff + mypy clean
@@ -123,7 +129,9 @@ network) appear as pop-ups and on the dashboard instead of vanishing into a cons
 
 ## Discord setup checklist
 
-1. **Developer Portal → Bot → Privileged Gateway Intents**: enable **Server Members Intent**.
+1. **Developer Portal → Bot → Privileged Gateway Intents**: enable **Server Members Intent** and
+   **Message Content Intent** (the latter is required so the bot can read alive-check replies — without
+   it nobody can ever answer a roll call).
 2. Invite the bot with these permissions:
 
 | Permission | Why |
@@ -157,10 +165,15 @@ in the log, and in the launcher's Dashboard.
 | `LOG_DM_USER_ID` | optional | default `984083829767675965` (Jaime Gaming) — who receives it |
 | `LOG_DM_LEVEL` | optional | default `INFO` — `DEBUG`/`INFO`/`WARNING`/`ERROR` |
 | `LOG_DM_FLUSH_SECONDS` | optional | default `3` — batching interval |
+| `LOG_DM_PING_LEVEL` | optional | default `ERROR` — lines at this severity or worse, plus any Discord rate limit, @-ping the operator by DM |
+| `LOG_DM_PING_COOLDOWN_SECONDS` | optional | default `300` — minimum seconds between alert pings |
 | `MAX_TICK_CREDIT_SECONDS` | optional | default `5` — cap on leaderboard credit per check, so downtime is never silently credited |
 | `DOWNTIME_CREDIT_SECONDS` | optional | default `300` — an outage up to this long is credited back to whoever was in the VC before *and* after it |
-| `REQUIRE_OCCUPANTS_TO_START` | optional | default `true` — refuses to start into an empty VC |
 | `HEARTBEAT_MINUTES` | optional | default `15` — proof-of-life line in the log |
+
+> **The VC requirement is not configurable.** `/hell start` refuses to start the event while the
+> target VC has no valid human in it — an empty-VC start is impossible, no matter what the `.env`
+> says. This is a hard rule, not a toggle.
 | `ALIVE_CHECK_ENABLED` | optional | default `true` |
 | `ALIVE_CHECK_MIN_HOURS` / `ALIVE_CHECK_MAX_HOURS` | optional | default `1` / `6` — the random window |
 | `ALIVE_CHECK_TIMEOUT_MINUTES` | optional | default `5` — time to answer |
@@ -171,13 +184,17 @@ in the log, and in the launcher's Dashboard.
 > **Rewards are announcement-only.** The bot never assigns roles; it posts exactly who is eligible
 > at each milestone so a human can hand them out.
 
+> **Booleans are parsed strictly.** `true`/`yes`/`on`/`1` and `false`/`no`/`off`/`0` are accepted;
+> anything else (e.g. a typo like `ture` or `flase`) fails startup with a clear error instead of
+> silently disabling the feature it was meant to turn on.
+
 ---
 
 ## Commands
 
 | Command | Who | What |
 |---|---|---|
-| `/hell start` | `@gamenight host` | Starts the event: status → `RUNNING`, records the absolute start timestamp, starts the 160 h timer, begins VC monitoring + per-user tracking, posts the start announcement. Rejected if one is already running or the VC is empty. |
+| `/hell start` | `@gamenight host` | Starts the event: status → `RUNNING`, records the absolute start timestamp, starts the 160 h timer, begins VC monitoring + per-user tracking, posts the start announcement. Rejected if one is already running or the VC is empty (hard requirement). |
 | `/hell status` | everyone | Status, elapsed, remaining, % complete, progress bar, live VC headcount, current + next milestone, and the milestones already reached. |
 | `/hell leaderboard` | everyone | Current (or frozen final) leaderboard: Top 3 on the podium, everyone else below. |
 | `/hell alivecheck` | `@gamenight host` | Runs a roll call immediately instead of waiting for the random timer. |
@@ -189,8 +206,14 @@ in the log, and in the launcher's Dashboard.
 | `/hell user` | everyone | How long someone has spent in Hell: time, rank, share of the event, milestones claimed. |
 | `/hell export` | `@gamenight host` | The leaderboard as a CSV attachment, for handing out rewards outside Discord. |
 | `/hell milestones` | everyone | All five milestones, their rewards, when each was reached and how many users were eligible. |
-| `/hell stop` | `@gamenight host` | Button confirmation → marks the event **CANCELLED** (explicitly *not* FAILED) and freezes the leaderboard. |
-| `/hell reset` | `@gamenight host` | Modal requiring the exact phrase `RESET WELCOME TO HELL` → wipes all event data for a fresh run. |
+| `/hell stop` | `@gamenight host` | **Two-step, operator-approved.** The bot DMs a one-time code to the operator's DMs, then the host runs `/hell approve` with it → event marked **CANCELLED** (explicitly *not* FAILED), leaderboard frozen. |
+| `/hell reset` | `@gamenight host` | **Two-step, operator-approved.** The bot DMs a one-time code to the operator's DMs, then the host runs `/hell approve` with it → all event data wiped for a fresh run. |
+| `/hell approve` | `@gamenight host` | Enter the 6-character code DM'd to the operator to confirm the pending `/hell stop` or `/hell reset`. Codes expire after 5 minutes and work exactly once; a new request invalidates the previous code. |
+| `/hell pause` | `@gamenight host` | **Emergency freeze.** Stops the 160h clock *and* every contestant's clock instantly — no milestones can fire, no alive check can kick, and the empty-VC grace countdown is frozen too. Nothing can fail while paused. Persisted, so a restart stays paused. |
+| `/hell resume` | `@gamenight host` | Unfreezes after a pause. Every clock continues exactly where it stopped; the paused time is never counted against the 160h, and a grace window resumes with the time it had left. |
+| `/hell restart` | operator DM only | **Restart the bot process.** Exits with code 42 so Docker/systemd/the launcher picks it up again. The event state is preserved in SQLite and recovers automatically. Only usable via DM to the bot by the operator (LOG_DM_USER_ID). |
+| `/hell security` | `@gamenight host` | **Anti-cheat report.** Shows alive-check dodging, VC flapping, rate-limit spikes and monitor health. Anything suspicious also triggers an automatic alert to the operator's DMs. |
+| `/hell errors` | everyone | Look up an error code (e.g. `/hell errors HEL-100`) for its full explanation, including what it means and what to do about it. |
 
 All output is embeds. Mentions inside an embed never ping, so a milestone can list 250 eligible
 users without 250 notifications — while the `@everyone` ping stays in the message content.
@@ -312,9 +335,15 @@ Everything the bot logs is mirrored to the operator's DMs in real time, batched 
   nothing can be visible in one place but missing in another.
 * Rate-limit safe: lines are buffered and flushed every `LOG_DM_FLUSH_SECONDS` (3 s), at most three
   messages per flush; floods are summarised as `… N line(s) dropped` instead of spamming.
-* Self-protecting: records from the stream itself and from discord.py's HTTP layer are excluded (no
-  feedback loops), and if the operator's DMs are closed the stream disables itself and says so in
-  the file log.
+* **Alarm bell**: when something goes seriously wrong — a log line at `LOG_DM_PING_LEVEL` (default
+  `ERROR`) or worse, or any Discord rate limit — the operator gets a DM that **@-pings them**, with
+  the offending lines in a code block. Pings are throttled to one per `LOG_DM_PING_COOLDOWN_SECONDS`
+  (default 5 min), so an error storm buzzes once, not once per line. The regular batched stream
+  follows without mentions.
+* Self-protecting: records from the stream itself are excluded, and discord.py's HTTP/gateway
+  records are suppressed while the stream is posting (no feedback loops) — rate-limit warnings from
+  normal operation *do* reach the stream and trigger the ping. If the operator's DMs are closed the
+  stream disables itself and says so in the file log.
 * Attached before the gateway connects, so startup problems (bad token, missing intent, failed
   preflight) are delivered as soon as the DM channel opens.
 * `/hell logs` toggles it live, changes severity, or sends a test line.
@@ -426,6 +455,7 @@ CANCELLED.
 | No internet / bad token / missing intent | Clean one-line error and a distinct exit code, full traceback in `logs/` |
 | Rapid join/leave churn | 1-second sampling keeps per-user totals correct |
 | Bot restarts mid-event | State reloaded from SQLite; elapsed = `now - start_ts`; nothing resets |
+| Bot restarts while paused | The event comes back paused — both clocks stay frozen until `/hell resume` |
 | Bot restarts around a milestone | Atomic DB claim prevents duplicates; unsent announcements are re-posted on boot |
 | 160 h hits during a 10 s update | The 1 s tick clamps everything to `start_ts + 160h`; completion wins over an empty VC at the deadline |
 | User leaves and returns | Totals continue accumulating |
@@ -435,6 +465,9 @@ CANCELLED.
 | Bot offline for a long time | The timer still keeps running, but the unobserved window is **not** credited to anyone and is reported in the progress message |
 | Alive check + restart | Check state is persisted; replies sent while offline are recovered, and an expired check is cancelled instead of kicking people |
 | Alive check ignored by everyone | Everyone is disconnected, the VC empties, and the normal failure rule ends the run |
+| Event paused during a bug | Global + per-user clocks freeze; no milestones, no roll calls, no grace expiry, no failure — pause time is never counted |
+| Grace window open when paused | The countdown freezes too; on `/hell resume` it continues with the time it had left |
+| Pause crosses the 160h mark | Completion waits until *effective* time reaches 160h — a paused run can never complete early |
 | Someone joins mid-check | Not pinged, not required to answer, never kicked for it |
 | Discord API hiccup on a message | Logged and retried on the next cycle; the event state is untouched |
 

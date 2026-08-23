@@ -118,7 +118,10 @@ def render_report(report: UserReport) -> str:
     else:
         lines.append(TEXT.CARD_NO_REWARDS)
 
-    outcome = dict(TEXT.CARD_OUTCOME).get(report.status.value, TEXT.CARD_OUTCOME_DEFAULT)
+    try:
+        outcome = dict(TEXT.CARD_OUTCOME).get(report.status.value, TEXT.CARD_OUTCOME_DEFAULT)
+    except (TypeError, ValueError):  # pragma: no cover - human-editable text file
+        outcome = TEXT.CARD_OUTCOME_DEFAULT
     lines += [
         "",
         outcome,

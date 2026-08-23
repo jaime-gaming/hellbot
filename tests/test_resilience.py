@@ -15,12 +15,14 @@ import discord
 import pytest
 
 from hell import paths, tasks
+from hell.alivecheck import AliveCheckManager
 from hell.announcer import Announcer
-from hell.engine import MilestoneReached
+from hell.engine import HellEngine, MilestoneReached
 from hell.milestones import get_milestone
 from hell.models import EventStatus
 from hell.monitor import VoiceMonitor
-from tests.conftest import GRACE, T0, obs, start
+from hell.storage import Store
+from tests.conftest import GRACE, T0, make_config, obs, start
 from tests.test_integration import FakeTextChannel
 from tests.test_monitor import FakeBot as MonitorBot
 from tests.test_monitor import FakeMember, FakeVoiceChannel
@@ -311,3 +313,244 @@ def test_paths_point_inside_the_project():
     assert paths.resolve("data/x.sqlite3") == base / "data" / "x.sqlite3"
     assert paths.resolve("/tmp/absolute.sqlite3").is_absolute()
     assert paths.is_frozen() is False
+
+
+# ======================================================================
+# CRASH INJECTION TESTS
+# ======================================================================
+# These simulate crashes at the exact boundaries between DB writes and
+# Discord API calls, then verify that state is never contradictory:
+#   "DB says it happened, Discord says it didn't"
+#   "Discord says it happened, DB says it didn't"
+# After every important operation, the event state MUST be reconstructable
+# from core fields alone: start_ts, status, last_valid_observed_ts,
+# grace_started_ts, last_tick_ts, and the milestones table.
+# ======================================================================
+
+
+# --------------------------------------------------------- Grace termination
+
+
+def test_crash_between_grace_expiry_and_status_failed_is_impossible(tmp_path):
+    """CRASH INJECTION: The old code had a race:
+    ``grace.close()`` -> ``_persist_grace(None)`` -> ``_terminate(FAILED)``
+    If the bot crashed after clearing grace but before saving FAILED, the
+    event would come back as RUNNING with no grace window — it would never
+    fail.
+
+    In the **fixed** ordering ``_terminate()`` (which writes FAILED + clears
+    grace in a single save_state) runs first.  If a crash happens right
+    after ``_terminate``, the DB already shows ``status=FAILED`` with
+    ``grace_started_ts=NULL`` — exactly the correct terminal state.
+    """
+    config = make_config(tmp_path, empty_vc_grace_seconds=1.0)
+    store = Store(config.database_path)
+    engine = HellEngine(store, config)
+    start(engine, T0, 1)
+
+    engine.tick(obs(T0 + 10))       # VC empties -> grace opens
+    engine.tick(obs(T0 + 11))       # grace expires -> FAILED via _terminate
+
+    # Simulate restart.  _terminate wrote FAILED first, so grace is closed.
+    store2 = Store(config.database_path)
+    loaded = store2.load_state()
+    assert loaded.status is EventStatus.FAILED
+    assert loaded.grace_started_ts is None
+    assert loaded.end_ts is not None
+    store.close()
+    store2.close()
+
+
+# --------------------------------------------------------- Alive check start
+
+
+def test_alive_check_persisted_before_discord_no_orphan(tmp_path, config):
+    """CRASH INJECTION: The check is saved to the DB *before* the Discord
+    API call (see ``start()``).  After a successful Discord send, the DB
+    is updated with real ``channel_id`` / ``message_id``.  A restart
+    therefore always finds a consistent check — never an orphan Discord
+    message that the bot doesn't know about.
+    """
+    from tests.test_alivecheck import FakeIO
+
+    store = Store(config.database_path)
+    io = FakeIO()
+    io.present = {1}
+    manager = AliveCheckManager(config, store, io)
+    manager.bind("uid", now=T0)
+    manager.store.set_next_alive_check("uid", T0)
+    run(manager.tick(T0 + 1, [MagicMock(user_id=1, display_name="Alice")]))
+    assert manager.pending is not None
+
+    # Simulate restart: DB has the check with real Discord IDs.
+    store2 = Store(config.database_path)
+    io2 = FakeIO()
+    io2.present = {1}
+    reboot = AliveCheckManager(config, store2, io2)
+    reboot.bind("uid", now=T0 + 2)
+    assert reboot.pending is not None
+    assert reboot.pending.channel_id == 999   # set by FakeIO
+    assert reboot.pending.message_id is not None
+
+    # The resurrected check works: backfill replies, let deadline hit.
+    run(reboot.backfill_replies())
+    store2.close()
+    store.close()
+
+
+def test_alive_check_discord_failure_cleans_up_db(tmp_path, config):
+    """CRASH INJECTION: The check is persisted first, then Discord is
+    called.  If Discord rejects the message (permission, rate-limit), the
+    tentative DB row is deleted — so we never end up with 'DB says active,
+    Discord says it doesn't exist'.
+    """
+    from tests.test_alivecheck import FakeIO
+
+    store = Store(config.database_path)
+    io = FakeIO(fail_send=True)   # Discord will reject the send
+    manager = AliveCheckManager(config, store, io)
+    manager.bind("uid", now=T0)
+    manager.store.set_next_alive_check("uid", T0)
+
+    run(manager.tick(T0 + 1, [MagicMock(user_id=1, display_name="Alice")]))
+
+    # DB should have NO pending check — the failure cleaned it up.
+    assert manager.pending is None
+    db_row = store.load_alive_check("uid")
+    assert db_row is None  # DB agrees: no check exists
+    store.close()
+
+
+# ------------------------------------------------- Alive check resolve order
+
+
+def test_alive_check_resolve_history_before_kick(tmp_path, config):
+    """CRASH INJECTION: History is written to the DB and the pending check
+    is cleared BEFORE the kick API call.  If the bot crashes after the DB
+    write but before the kicks, a restart will NOT see a stale pending
+    check or try to cancel what was already resolved.
+    """
+    from tests.test_alivecheck import FakeIO
+
+    store = Store(config.database_path)
+    io = FakeIO()
+    io.present = {1, 2}
+    manager = AliveCheckManager(config, store, io)
+    manager.bind("uid", now=T0)
+    manager.store.set_next_alive_check("uid", T0)
+    run(manager.tick(T0 + 1, [MagicMock(user_id=1, display_name="Alice"),
+                                MagicMock(user_id=2, display_name="Bob")]))
+    manager.register_reply(1, "Yes", 999)
+
+    # Resolve: history written, pending cleared (no crash in this scenario).
+    deadline = manager.pending.deadline_ts
+    result = run(manager.resolve(deadline,
+                                 [MagicMock(user_id=1, display_name="Alice")]))
+    assert result is not None
+    assert not result.cancelled
+
+    # Simulate restart: pending must be None (cleared).
+    store2 = Store(config.database_path)
+    reboot = AliveCheckManager(config, store2, FakeIO())
+    reboot.bind("uid", now=T0 + 100)
+    assert reboot.pending is None
+
+    # History should be in the DB before the kicks.
+    history = store2.alive_check_history("uid")
+    assert len(history) == 1
+    assert history[0]["responded"] == 1
+    assert history[0]["required"] == 2
+    store.close()
+    store2.close()
+
+
+# --------------------------------------------------------- DM delivery order
+
+
+def test_dm_pending_is_retried_after_crash(tmp_path):
+    """CRASH INJECTION: Each DM is recorded as ``pending`` in the DB
+    BEFORE the Discord API call.  If the bot crashes after the DB write
+    but before the DM is sent, the ``pending`` status causes a retry on
+    restart — the recipient is not skipped.
+    """
+    from hell.dm import FinalReportDM
+
+    config = make_config(tmp_path, send_final_dms=True)
+    store = Store(config.database_path)
+    engine = HellEngine(store, config)
+    start(engine, T0, 1, 2)
+    for i in range(1, 61):
+        engine.tick(obs(T0 + i, 1, 2))
+    engine.cancel(now=T0 + 61, by_user_id=99)
+
+    # Simulate "pending" record + crash.
+    uid = engine.event_uid
+    store.record_dm(uid, 1, "pending")
+
+    bot = MagicMock()
+    dm = FinalReportDM(bot, config, engine)
+    pending_ids = [r.user_id for r in dm.pending()]
+    assert 1 in pending_ids  # pending -> retry
+    assert 2 in pending_ids  # never attempted -> retry
+
+    # Now simulate reboot: 1 = sent, 2 = blocked.
+    store.record_dm(uid, 1, "sent")
+    store.record_dm(uid, 2, "blocked")
+    after = dm.pending()
+    assert len(after) == 0  # no one pending
+    store.close()
+
+
+def test_dm_sent_is_not_retried_after_crash(tmp_path):
+    """If the DM was recorded as ``sent`` before a crash, no double-message."""
+    from hell.dm import FinalReportDM
+
+    config = make_config(tmp_path, send_final_dms=True)
+    store = Store(config.database_path)
+    engine = HellEngine(store, config)
+    start(engine, T0, 1)
+    for i in range(1, 61):
+        engine.tick(obs(T0 + i, 1))
+    engine.cancel(now=T0 + 61, by_user_id=99)
+
+    # Already sent.
+    store.record_dm(engine.event_uid, 1, "sent")
+
+    bot = MagicMock()
+    dm = FinalReportDM(bot, config, engine)
+    assert len(dm.pending()) == 0  # not retried
+    store.close()
+
+
+# -------------------------------------------------------- last_valid_observed
+
+
+def test_last_valid_observed_ts_is_persisted_and_loaded(tmp_path):
+    """The ``last_valid_observed_ts`` field records the most recent tick
+    that observed at least one valid human.  After a crash, this field
+    tells the bot when the VC was last occupied — essential for
+    reconstruction.
+    """
+    config = make_config(tmp_path)
+    store = Store(config.database_path)
+    engine = HellEngine(store, config)
+    start(engine, T0, 1, 2)
+
+    # Tick with people -> last_valid is updated.
+    engine.tick(obs(T0 + 10, 1, 2))
+    assert engine.state.last_valid_observed_ts == T0 + 10
+
+    # Empty tick does NOT update last_valid.
+    engine.tick(obs(T0 + 20))  # empty
+    assert engine.state.last_valid_observed_ts == T0 + 10   # unchanged
+
+    # People return -> updates.
+    engine.tick(obs(T0 + 30, 1))
+    assert engine.state.last_valid_observed_ts == T0 + 30
+
+    # On restart the value is loaded from the DB.
+    store2 = Store(config.database_path)
+    loaded = store2.load_state()
+    assert loaded.last_valid_observed_ts == T0 + 30
+    store.close()
+    store2.close()

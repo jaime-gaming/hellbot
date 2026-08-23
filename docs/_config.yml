@@ -1,0 +1,7 @@
+# GitHub Pages configuration for the bot status dashboard.
+# The index.html and status.json files in /docs are deployed automatically
+# by .github/workflows/gh-pages.yml.
+
+title: "Welcome to Hell — Bot Status"
+description: "Live health dashboard for the 160-hour Discord endurance event bot. Shows errors, warnings, rate limits, and monitor health only — no participant data, no tokens."
+theme: jekyll-theme-cayman

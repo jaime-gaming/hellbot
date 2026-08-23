@@ -94,3 +94,7 @@ class EventState:
     end_reason: Optional[str] = None
     final_saved: bool = False
     grace_started_ts: Optional[float] = None   # empty-VC grace window in progress
+    last_valid_observed_ts: Optional[float] = None  # last tick with at least one valid human
+    paused_ts: Optional[float] = None          # when the event was paused; None = running
+    paused_seconds: float = 0.0                # total time paused — never counted anywhere
+    pause_reason: Optional[str] = None         # why it was paused (audit trail)

@@ -22,7 +22,7 @@ import aiohttp
 import discord
 from discord.ext import commands
 
-from . import __version__
+from . import RESTART_EXIT_CODE, __version__
 from .announcer import Announcer
 from .cog import HellCommands
 from .config import Config, ConfigError
@@ -46,6 +46,12 @@ class HellBot(commands.Bot):
         intents.members = True        # required to read VC members and their roles
         intents.voice_states = True   # required to see who is in the VC
         intents.guilds = True
+        # Required to READ message content: alive-check replies ("Yes") are
+        # ordinary chat messages that never mention the bot — without this
+        # intent Discord delivers an empty content and no one can ever answer
+        # a roll call.  It is a privileged intent: enable "Message Content
+        # Intent" in the Developer Portal or login fails (PrivilegedIntents).
+        intents.message_content = True
         super().__init__(command_prefix=commands.when_mentioned, intents=intents, help_command=None)
 
         self.config = config
@@ -195,6 +201,10 @@ def main() -> None:
 
     try:
         asyncio.run(run(config))
+    except SystemExit as exc:
+        if exc.code == RESTART_EXIT_CODE:
+            raise  # let the restart signal propagate to the launcher / Docker
+        # Other exit codes (normal shutdown, config errors) are handled below.
     except KeyboardInterrupt:  # pragma: no cover
         pass
     except discord.LoginFailure:

@@ -40,6 +40,8 @@ from .engine import (
     Observation,
 )
 from .models import EventStatus, ParticipantRef
+from .security import SuspicionTracker
+from .status_writer import get_status as get_status_writer
 from .tasks import spawn
 from .timeutil import format_hm, now_ts
 
@@ -62,6 +64,7 @@ class VoiceMonitor:
         self.alive_checks = AliveCheckManager(config, engine.store, self.alive_io)
         self.alive_checks.bind(engine.event_uid)
         self.reports = FinalReportDM(bot, config, engine, announcer)
+        self.security = SuspicionTracker(self.alive_checks)
         self._ready_at: Optional[float] = None
         self._kick_attempts: dict[int, float] = {}
         self._lock = asyncio.Lock()  # serialises ticks; no milestone can race
@@ -132,6 +135,7 @@ class VoiceMonitor:
             self._note_blind(f"voice channel {self.config.voice_channel_id} not visible")
             return None
         self._note_sighted()
+        self.security.record_collect()
 
         humans: list[ParticipantRef] = []
         clankers: list[discord.Member] = []
@@ -158,6 +162,14 @@ class VoiceMonitor:
                 log.info("➕ %s joined the VC (%d valid human(s) inside)", name, len(current))
             for name in left:
                 log.info("➖ %s left the VC (%d valid human(s) inside)", name, len(current))
+        # Feed join/leave to the security tracker for flap detection and
+        # alive-check dodging analysis.
+        for uid in [uid for uid in current if uid not in self._known_presence]:
+            self.security.record_join(uid)
+        for uid in [uid for uid in self._known_presence if uid not in current]:
+            self.security.record_leave(uid)
+            if self.alive_checks.pending is not None:
+                self.security.record_check_departure(uid, before_check=True)
         self._known_presence = current
 
     def _note_blind(self, reason: str) -> None:
@@ -241,10 +253,15 @@ class VoiceMonitor:
         for event in events:
             await self.dispatch(event)
 
-        if self.engine.is_running:
+        # While paused the event is frozen: no roll calls may start or resolve
+        # (nobody should be kicked for failing to answer during a freeze).
+        if self.engine.is_running and not self.engine.is_paused:
             self._ensure_alive_checks_bound(now)
             self._pump_alive_check(now, humans)
         self._heartbeat(len(humans))
+        # Security/anomaly checks (run on every tick, cheap).
+        self.security.check_stale()
+        self.security.check_rate_limit_spike()
 
     def _ensure_alive_checks_bound(self, now: float) -> None:
         """Keep the roll-call manager attached to the current event.
@@ -285,15 +302,21 @@ class VoiceMonitor:
             return
         self._last_heartbeat = now
         snap = self.engine.snapshot(now=now, participants=participants)
+        status = "⏸️ PAUSED" if snap.paused else snap.status.value
         log.info(
             "Heartbeat: %s | %s / %s (%.1f%%) | %d in VC | next milestone: %s",
-            snap.status.value,
+            status,
             format_hm(snap.elapsed),
             format_hm(snap.total),
             snap.fraction * 100,
             participants,
             f"{snap.upcoming.hours}h" if snap.upcoming else "none",
         )
+        # Write the GitHub Pages status JSON on every heartbeat.
+        try:
+            get_status_writer().write("docs/status.json", engine=self.engine, monitor=self, stream=getattr(self.bot, "log_stream", None))
+        except Exception:
+            log.debug("Could not write status.json", exc_info=True)
 
     @tasks.loop(seconds=20.0)
     async def _progress_loop(self) -> None:
@@ -372,7 +395,9 @@ class VoiceMonitor:
 
     async def force_alive_check(self) -> bool:
         """Trigger a roll call immediately (used by /hell alivecheck)."""
-        if not self.engine.is_running or self.alive_checks.pending is not None:
+        if not self.engine.is_running or self.engine.is_paused:
+            return False
+        if self.alive_checks.pending is not None:
             return False
         self._ensure_alive_checks_bound(now_ts())
         collected = await self.collect()
@@ -396,12 +421,25 @@ class VoiceMonitor:
             return
         if state.status is not EventStatus.RUNNING:
             return
-        gap = now_ts() - (state.last_tick_ts or state.start_ts or now_ts())
+        if self.engine.is_paused:
+            # The event was frozen before the restart and stays frozen: no
+            # recovery work (roll calls, re-announcements) happens while
+            # paused — `/hell resume` handles the unpause.
+            log.warning("Event %s is PAUSED — restarting in frozen state", state.event_uid)
+            return
+        # Reconstruct the real-time observation timestamp: the effective
+        # last_tick_ts is pause-adjusted, so computing the gap against it
+        # would include the paused duration — leading to misleading log
+        # messages and over-10s announcements.
+        gap_raw = now_ts() - (state.last_tick_ts or state.start_ts or now_ts())
+        gap_raw = max(0.0, gap_raw)
+        real_last = (state.start_ts or now_ts()) + self.engine.elapsed() + state.paused_seconds
+        gap = max(0.0, now_ts() - real_last)
         log.info(
-            "Resuming event %s — elapsed %s, unobserved gap %.0fs",
+            "Resuming event %s — elapsed %s, unobserved gap %.0fs (raw %.0fs)",
             state.event_uid,
             format_hm(self.engine.elapsed()),
-            gap,
+            gap, gap_raw,
         )
         # A roll call interrupted by the restart is cancelled, never enforced:
         # nobody gets disconnected because the bot was offline.
@@ -430,3 +468,20 @@ class VoiceMonitor:
         self.announcer.forget_progress_message()
         self._terminal_rendered = False
         await self.announcer.update_progress(self.engine.snapshot(), force=True)
+
+        # Let the guild know the bot recovered from a restart.
+        if gap > 10.0:
+            embed = discord.Embed(
+                title="🔄 Bot restart recovered",
+                description=(
+                    f"The bot was restarted and is back online. "
+                    f"The event was unobserved for **{gap:.0f}s** — "
+                    f"the timer never stopped and nobody was penalised. "
+                    f"Elapsed: **{format_hm(self.engine.elapsed())}** / 160h."
+                ),
+                color=0xE25822,
+            )
+            try:
+                await self.announcer.send([embed])
+            except Exception:
+                log.exception("Could not post the restart-recovery announcement")

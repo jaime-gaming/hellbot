@@ -350,3 +350,116 @@ def test_the_allowance_is_configurable(tmp_path):
     engine.tick(obs(T0 + 61, 1))                        # a 60s gap, over the 30s allowance
     assert engine.leaderboard()[0].seconds < 20
     store.close()
+
+
+# --------------------------------------------------------------- pause/resume
+
+def test_pause_freezes_the_global_timer(engine):
+    start(engine, T0, 1)
+    engine.tick(obs(T0 + 60, 1))
+    engine.pause(now=T0 + 60)
+    assert engine.is_paused
+    # Ticks during the pause are inert — even a day of wall time changes nothing.
+    engine.tick(obs(T0 + 60 + 86_400, 1))
+    assert engine.elapsed(T0 + 60 + 86_400) == pytest.approx(60.0)
+    engine.resume(now=T0 + 60 + 86_400)
+    assert not engine.is_paused
+    assert engine.elapsed(T0 + 60 + 86_400) == pytest.approx(60.0)
+    engine.tick(obs(T0 + 60 + 86_400 + 1, 1))
+    assert engine.elapsed(T0 + 60 + 86_400 + 1) == pytest.approx(61.0)
+
+
+def test_pause_freezes_per_user_clocks(engine):
+    start(engine, T0, 1)
+    engine.tick(obs(T0 + 60, 1))
+    engine.pause(now=T0 + 60)
+    for t in range(61, 3600):
+        engine.tick(obs(T0 + t, 1))               # an hour of paused ticks
+    engine.resume(now=T0 + 3600)
+    engine.tick(obs(T0 + 3601, 1))
+    seconds = engine.leaderboard()[0].seconds
+    assert seconds == pytest.approx(61.0)         # 60 before + 1 after, none during
+
+
+def test_pause_prevents_milestones_and_completion(engine):
+    start(engine, T0, 1)
+    engine.tick(obs(T0 + 31 * 3600, 1))
+    engine.pause(now=T0 + 31 * 3600)
+    engine.tick(obs(T0 + 33 * 3600, 1))           # effective 31h — no milestone yet
+    assert engine.milestone_records() == []
+    assert engine.status is EventStatus.RUNNING
+    engine.resume(now=T0 + 33 * 3600)
+    engine.tick(obs(T0 + 34 * 3600, 1))           # effective 32h — milestone fires
+    assert [r.hours for r in engine.milestone_records()] == [32]
+
+
+def test_grace_window_is_frozen_during_a_pause(engine):
+    start(engine, T0, 1)
+    opened = engine.tick(obs(T0 + 10))            # VC empties -> 15s grace opens
+    assert isinstance(opened[0], GraceStarted)
+    engine.pause(now=T0 + 10)
+    # Wall time sails far past the original deadline while paused...
+    engine.tick(obs(T0 + 10 + 9_999))
+    assert engine.status is EventStatus.RUNNING   # ...and nothing fails
+    engine.resume(now=T0 + 10 + 10_000)           # deadline shifts forward by the pause
+    engine.tick(obs(T0 + 10 + 10_001))            # still inside the shifted window
+    assert engine.status is EventStatus.RUNNING
+    engine.tick(obs(T0 + 10 + 10_016))            # window finally expires
+    assert engine.status is EventStatus.FAILED
+
+
+def test_pause_is_refused_unless_running(engine):
+    with pytest.raises(StartError):
+        engine.pause(now=T0)
+
+
+def test_double_pause_is_refused(engine):
+    start(engine, T0, 1)
+    engine.pause(now=T0 + 1)
+    with pytest.raises(StartError):
+        engine.pause(now=T0 + 2)
+    # ...but a pause then resume works
+    engine.resume(now=T0 + 4)
+    assert not engine.is_paused
+
+
+def test_resume_when_not_paused_is_refused(engine):
+    start(engine, T0, 1)
+    with pytest.raises(StartError):
+        engine.resume(now=T0 + 1)
+
+
+def test_pause_survives_a_restart(tmp_path):
+    from hell.storage import Store
+
+    config = make_config(tmp_path)
+    store = Store(config.database_path)
+    engine = HellEngine(store, config)
+    start(engine, T0, 1)
+    engine.tick(obs(T0 + 60, 1))
+    engine.pause(now=T0 + 60, reason="bug fixing")
+    store.close()
+
+    # Restart while still paused: the event must come back frozen.
+    store2 = Store(config.database_path)
+    engine2 = HellEngine(store2, config)
+    assert engine2.is_paused
+    assert engine2.state.pause_reason == "bug fixing"
+    assert engine2.elapsed(T0 + 7200) == pytest.approx(60.0)
+    engine2.tick(obs(T0 + 7200, 1))               # inert while paused
+    assert engine2.elapsed(T0 + 7200) == pytest.approx(60.0)
+    engine2.resume(now=T0 + 7200)
+    assert engine2.state.paused_seconds == pytest.approx(7140.0)
+    engine2.tick(obs(T0 + 7201, 1))
+    assert engine2.elapsed(T0 + 7201) == pytest.approx(61.0)
+    store2.close()
+
+
+def test_completion_after_a_pause_counts_exactly_160h(engine):
+    start(engine, T0, 1)
+    engine.tick(obs(T0 + 159 * HOUR, 1))
+    engine.pause(now=T0 + 159 * HOUR)
+    engine.resume(now=T0 + 159 * HOUR + 3 * HOUR)     # a 3h pause
+    engine.tick(obs(T0 + 159 * HOUR + 3 * HOUR + 3601, 1))  # effective 160h 1s
+    assert engine.status is EventStatus.COMPLETED
+    assert engine.elapsed() == pytest.approx(TOTAL_SECONDS)  # clamped, not 163h

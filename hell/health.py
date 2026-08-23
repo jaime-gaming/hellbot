@@ -59,8 +59,7 @@ async def preflight(bot: discord.Client, config: Config) -> HealthReport:
 
     guild = bot.get_guild(config.guild_id)
     if guild is None:
-        report.errors.append(
-            f"Guild {config.guild_id} not found — is GUILD_ID correct and the bot invited to it?"
+        report.errors.append(f"HEL-002 Guild {config.guild_id} not found — is GUILD_ID correct and the bot invited to it?"
         )
         return report
     report.info.append(f"Connected to guild '{guild.name}' ({guild.id})")
@@ -71,12 +70,16 @@ async def preflight(bot: discord.Client, config: Config) -> HealthReport:
         return report
 
     if not bot.intents.members:
-        report.errors.append(
-            "The Server Members intent is disabled — the bot cannot read who is in the VC. "
+        report.errors.append("[HEL-010] The Server Members intent is disabled — the bot cannot read who is in the VC. "
             "Enable it in the Discord Developer Portal."
         )
     if not bot.intents.voice_states:
-        report.errors.append("The Voice States intent is disabled — VC monitoring cannot work.")
+        report.errors.append("[HEL-010] The Voice States intent is disabled — VC monitoring cannot work.")
+    if not bot.intents.message_content:
+        report.errors.append("[HEL-010] The Message Content intent is disabled — alive-check replies ('Yes') cannot be "
+            "read and every roll call would end by disconnecting everyone. Enable 'Message "
+            "Content Intent' in the Developer Portal (Bot -> Privileged Gateway Intents)."
+        )
 
     # --- voice channel -----------------------------------------------------
     vc = guild.get_channel(config.voice_channel_id)
@@ -176,5 +179,35 @@ async def preflight(bot: discord.Client, config: Config) -> HealthReport:
             report.warnings.append(
                 f"{label}={role_id} does not match any role; rewards will be shown as plain text."
             )
+
+    # --- operator DM (live log stream) -------------------------------------
+    if config.log_dm_enabled:
+        stream = getattr(bot, "log_stream", None)
+        if stream is not None and stream.disabled_reason:
+            report.warnings.append(
+                f"Live log stream is disabled: {stream.disabled_reason}. "
+                "The operator (LOG_DM_USER_ID) will not receive alerts or log messages."
+            )
+        if stream is not None and stream.running:
+            try:
+                user = bot.get_user(config.log_dm_user_id) or await bot.fetch_user(config.log_dm_user_id)
+                dm = user.dm_channel or await user.create_dm()
+                # A quick test: try fetching the DM channel's history (1 message)
+                # to see if the operator has DMs open.  This is a read-only probe
+                # that leaves no trace.
+                async for _ in dm.history(limit=1):
+                    break
+                report.info.append(
+                    f"Operator DM stream → @{user.name} ({config.log_dm_user_id}) — DMs appear open"
+                )
+            except discord.Forbidden:
+                report.warnings.append(
+                    f"Operator {config.log_dm_user_id} has DMs closed — "
+                    "the live log stream will fail."
+                )
+            except discord.HTTPException as exc:
+                report.warnings.append(
+                    f"Could not verify operator DMs ({config.log_dm_user_id}): {exc}"
+                )
 
     return report

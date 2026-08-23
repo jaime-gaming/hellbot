@@ -390,3 +390,26 @@ def test_manager_rebinds_itself_to_a_new_event(config, store, engine, monkeypatc
 
     assert monitor.alive_checks.bound_uid == engine.event_uid
     assert store.get_next_alive_check(engine.event_uid) is not None
+
+
+def test_a_raising_send_check_never_leaves_a_phantom_check(store, config):
+    """Regression: an *exception* from send_check (network error) used to
+    leave the tentative DB row and `pending` in place — a check that had
+    never been posted would later 'resolve' and kick people who never saw
+    a roll call.  Exceptions must clean up exactly like a `None` result."""
+    from unittest.mock import MagicMock
+
+    class ExplodingIO(FakeIO):
+        async def send_check(self, text, user_ids):
+            raise TimeoutError("gateway went away")
+
+    io = ExplodingIO()
+    manager = AliveCheckManager(config, store, io, rng=random.Random(1))
+    manager.bind("uid", now=T0)
+    manager.store.set_next_alive_check("uid", T0)
+
+    run(manager.tick(T0 + 1, [MagicMock(user_id=1, display_name="Alice")]))
+
+    assert manager.pending is None                     # no phantom check
+    assert store.load_alive_check("uid") is None       # DB agrees
+    assert store.get_next_alive_check("uid") is not None  # rescheduled

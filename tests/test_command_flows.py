@@ -19,7 +19,7 @@ from hell.cog import HellCommands
 from hell.models import EventStatus
 from hell.monitor import VoiceMonitor
 from hell.timeutil import now_ts
-from hell.ui import RESET_PHRASE, NotAHost
+from hell.ui import NotAHost
 from tests.conftest import GRACE, T0, obs, start
 from tests.test_integration import FakeTextChannel
 from tests.test_monitor import FakeMember, FakeVoiceChannel
@@ -113,6 +113,20 @@ class Choice:
         self.value = value
 
 
+class FakeOperator:
+    """The account that receives approval codes — records what it was sent."""
+
+    def __init__(self, uid: int):
+        self.id = uid
+        self.sent_text = ""
+
+    async def send(self, content=None, **kwargs):
+        from hell.announcer import embed_to_text
+
+        embed = kwargs.get("embed")
+        self.sent_text = embed_to_text(embed) if embed is not None else (content or "")
+
+
 def run(coro):
     return asyncio.run(coro)
 
@@ -132,6 +146,7 @@ def wired(config, engine):
             super().__init__(command_prefix="!", intents=intents)
             self.config = config
             self.log_stream: Any = None
+            self.operator = FakeOperator(config.log_dm_user_id)
 
         def is_ready(self):
             return True
@@ -145,8 +160,11 @@ def wired(config, engine):
         def get_guild(self, _gid):
             return None
 
-        def get_user(self, _uid):
-            return None
+        def get_user(self, uid):
+            return self.operator if uid == self.operator.id else None
+
+        async def fetch_user(self, uid):
+            return self.operator if uid == self.operator.id else None
 
     bot = Bot()
     announcer = Announcer(bot, config, engine)
@@ -510,68 +528,160 @@ def test_stop_needs_a_running_event(wired, host):
     assert "Nothing to stop" in interaction.text()
 
 
-def _press(view, label: str, interaction):
-    for child in view.children:
-        if getattr(child, "label", "").lower().startswith(label):
-            return child.callback(interaction)
-    raise AssertionError(f"no button labelled {label!r}")
+def _operator_code(bot) -> str:
+    """The 6-character approval code from the operator's DM."""
+    import re
+
+    text = bot.operator.sent_text
+    match = re.search(r"\*\*Code:\*\* `([A-Z2-9]{6})`", text)
+    assert match, f"no code in operator DM: {text!r}"
+    return match.group(1)
 
 
-def test_stop_cancels_after_confirmation(wired, host, engine):
+def test_stop_requires_the_operators_approval_code(wired, host, engine):
     cog, bot, _text, _voice = wired
     start(engine, now_ts() - 60, 1)
+    interaction = FakeInteraction(bot, host)
 
-    async def scenario():
-        interaction = FakeInteraction(bot, host)
-        task = asyncio.create_task(cog.stop.callback(cog, interaction))
-        await asyncio.sleep(0)
-        view = interaction.response.sent[0]["view"]
-        await _press(view, "stop", FakeInteraction(bot, host))
-        await task
-        return interaction
+    call(cog, "stop", interaction)
 
-    interaction = run(scenario())
-    assert cog.engine.status is EventStatus.CANCELLED
-    assert "cancelled" in interaction.text().lower()
+    assert cog.engine.status is EventStatus.RUNNING      # nothing happened yet
+    assert "approval" in interaction.text().lower()      # the host is told
+    assert bot.operator.sent_text                        # the code was DM'd
+    assert len(_operator_code(bot)) == 6
 
 
-def test_stop_can_be_declined(wired, host, engine):
+def test_stop_is_cancelled_only_with_the_right_code(wired, host, engine):
     cog, bot, _text, _voice = wired
     start(engine, now_ts() - 60, 1)
+    call(cog, "stop", FakeInteraction(bot, host))
+    code = _operator_code(bot)
 
-    async def scenario():
-        interaction = FakeInteraction(bot, host)
-        task = asyncio.create_task(cog.stop.callback(cog, interaction))
-        await asyncio.sleep(0)
-        view = interaction.response.sent[0]["view"]
-        await _press(view, "cancel", FakeInteraction(bot, host))
-        await task
-
-    run(scenario())
+    wrong = FakeInteraction(bot, host)
+    call(cog, "approve", wrong, code="ZZZZZZ")
     assert cog.engine.status is EventStatus.RUNNING
+    assert "not correct" in wrong.text()
+
+    right = FakeInteraction(bot, host)
+    call(cog, "approve", right, code=code.lower())       # case-insensitive
+    assert cog.engine.status is EventStatus.CANCELLED
+    assert "cancelled" in right.text().lower()
+
+    again = FakeInteraction(bot, host)
+    call(cog, "approve", again, code=code)               # single-use
+    assert "nothing is waiting" in again.text().lower()
+
+
+def test_stop_does_nothing_until_approved(wired, host, engine):
+    cog, bot, _text, _voice = wired
+    start(engine, now_ts() - 60, 1)
+    interaction = FakeInteraction(bot, host)
+
+    call(cog, "stop", interaction)                       # code sent, never entered
+
+    assert cog.engine.status is EventStatus.RUNNING
+
+
+def test_stale_approval_code_cannot_act_on_a_new_event(wired, host, engine):
+    """An approval issued for event A must never cancel a NEW event B that is
+    running by the time the code is entered."""
+    cog, bot, _text, _voice = wired
+    start(engine, now_ts() - 60, 1)                      # event A
+    call(cog, "stop", FakeInteraction(bot, host))
+    code = _operator_code(bot)
+
+    engine.cancel()                                      # A ends...
+    start(engine, now_ts() + 5, 2)                       # ...and B starts
+
+    approve = FakeInteraction(bot, host)
+    call(cog, "approve", approve, code=code)
+
+    assert cog.engine.status is EventStatus.RUNNING      # B untouched
+    assert "event changed" in approve.text().lower()
+    assert cog.code_gate.pending_action is None          # stale code invalidated
+
+
+def test_stat_cards_are_pinned_to_the_event_they_belong_to(wired, engine):
+    """If a new event starts while the old one's stat cards are pending, the
+    cards must still be built from the OLD event's leaderboard — never the
+    new event's (empty) data."""
+    cog, _bot, _text, _voice = wired
+    start(engine, T0, 1, 2)                              # event A
+    for i in range(1, 61):
+        engine.tick(obs(T0 + i, 1, 2))
+    engine.tick(obs(T0 + 61))                            # VC empties
+    engine.tick(obs(T0 + 61 + GRACE))                    # A FAILED, board frozen
+    uid_a = engine.event_uid
+    assert engine.status.is_terminal
+    assert {e.user_id for e in engine.leaderboard()} == {1, 2}
+
+    start(engine, T0 + 1000, 3)                          # event B, different users
+    assert engine.event_uid != uid_a
+
+    dm = cog.monitor.reports
+    reports_a = dm.reports(uid_a)                        # pinned to A
+    assert {r.user_id for r in reports_a} == {1, 2}
+    pending_a = dm.pending(uid_a)
+    assert {r.user_id for r in pending_a} == {1, 2}      # nobody from B leaks in
+    assert {r.user_id for r in dm.reports()} == {3}      # current event is B only
+
+
+def test_approval_code_expires(wired, host, engine):
+    import time
+
+    cog, bot, _text, _voice = wired
+    start(engine, now_ts() - 60, 1)
+    call(cog, "stop", FakeInteraction(bot, host))
+    cog.code_gate._pending.issued_at = time.time() - 10_000   # made stale
+
+    approve = FakeInteraction(bot, host)
+    call(cog, "approve", approve, code=_operator_code(bot))
+
+    assert cog.engine.status is EventStatus.RUNNING
+    assert "expired" in approve.text().lower()
+
+
+class _Resp:
+    status = 403
+    reason = "Forbidden"
+
+
+def test_stop_approval_dm_failure_aborts(wired, host, engine, monkeypatch):
+    cog, bot, _text, _voice = wired
+    start(engine, now_ts() - 60, 1)
+
+    async def broken_send(*_a, **_k):
+        raise discord.Forbidden(_Resp(), "DMs closed")
+
+    monkeypatch.setattr(bot.operator, "send", broken_send)
+    interaction = FakeInteraction(bot, host)
+
+    call(cog, "stop", interaction)
+
+    assert cog.engine.status is EventStatus.RUNNING
+    assert "could not send the approval code" in interaction.text().lower()
+    assert cog.code_gate.pending_action is None          # the code was invalidated
 
 
 # --------------------------------------------------------------- /hell reset
 
 
-def test_reset_requires_the_exact_phrase(wired, host, engine):
+def test_reset_requires_the_operators_approval_code(wired, host, engine):
     cog, bot, _text, _voice = wired
     start(engine, T0, 1)
     interaction = FakeInteraction(bot, host)
 
     call(cog, "reset", interaction)
-    modal = interaction.response.modal
-    assert modal is not None
+    assert cog.engine.status is EventStatus.RUNNING      # not reset yet
+    assert "approval" in interaction.text().lower()
+    code = _operator_code(bot)
 
     wrong = FakeInteraction(bot, host)
-    modal.phrase._value = "reset please"
-    run(modal.on_submit(wrong))
+    call(cog, "approve", wrong, code="WRONG1")
     assert cog.engine.status is EventStatus.RUNNING
-    assert "did not match" in wrong.text()
 
     right = FakeInteraction(bot, host)
-    modal.phrase._value = RESET_PHRASE
-    run(modal.on_submit(right))
+    call(cog, "approve", right, code=code)
     assert cog.engine.status is EventStatus.IDLE
     assert "reset" in right.text().lower()
     assert cog.monitor.alive_checks.pending is None
@@ -733,3 +843,73 @@ def test_every_command_use_is_logged(wired, host, caplog):
 
     assert "/hell status by" in caplog.text
     assert str(host.id) in caplog.text
+
+
+# -------------------------------------------------------------- /hell pause
+
+
+def test_pause_freezes_and_resume_continues(wired, host, engine):
+    cog, bot, _text, _voice = wired
+    start(engine, now_ts() - 3600, 1)              # 1h in
+    pause = FakeInteraction(bot, host)
+
+    call(cog, "pause", pause)
+
+    assert engine.is_paused
+    assert "paused" in pause.text().lower()
+    frozen = engine.elapsed()
+    engine.tick(obs(now_ts(), 1))                  # inert while paused
+    assert engine.elapsed() == frozen
+
+    resume = FakeInteraction(bot, host)
+    call(cog, "resume", resume)
+
+    assert not engine.is_paused
+    assert "resumed" in resume.text().lower()
+
+
+def test_pause_is_refused_when_nothing_runs(wired, host):
+    cog, bot, _text, _voice = wired
+    interaction = FakeInteraction(bot, host)
+
+    call(cog, "pause", interaction)
+
+    assert "not running" in interaction.text().lower()
+    assert not engine_is_paused(cog)
+
+
+def engine_is_paused(cog):
+    return cog.engine.is_paused
+
+
+def test_resume_is_refused_when_not_paused(wired, host, engine):
+    cog, bot, _text, _voice = wired
+    start(engine, now_ts() - 60, 1)
+    interaction = FakeInteraction(bot, host)
+
+    call(cog, "resume", interaction)
+
+    assert "not paused" in interaction.text().lower()
+    assert not engine_is_paused(cog)
+
+
+def test_pause_cancels_a_pending_alive_check(wired, host, engine):
+    cog, bot, _text, _voice = wired
+    start(engine, now_ts(), 1, 2)
+    call(cog, "alivecheck", FakeInteraction(bot, host))
+    assert cog.monitor.alive_checks.pending is not None
+
+    call(cog, "pause", FakeInteraction(bot, host))
+
+    assert cog.monitor.alive_checks.pending is None   # cancelled, never enforced
+
+
+def test_alivecheck_refuses_while_paused(wired, host, engine):
+    cog, bot, _text, _voice = wired
+    start(engine, now_ts(), 1)
+    call(cog, "pause", FakeInteraction(bot, host))
+
+    interaction = FakeInteraction(bot, host)
+    call(cog, "alivecheck", interaction)
+
+    assert "paused" in interaction.text().lower()

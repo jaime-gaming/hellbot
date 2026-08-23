@@ -213,6 +213,7 @@ in the log, and in the launcher's Dashboard.
 | `/hell resume` | `@gamenight host` | Unfreezes after a pause. Every clock continues exactly where it stopped; the paused time is never counted against the 160h, and a grace window resumes with the time it had left. |
 | `/hell restart` | operator DM only | **Restart the bot process.** Exits with code 42 so Docker/systemd/the launcher picks it up again. The event state is preserved in SQLite and recovers automatically. Only usable via DM to the bot by the operator (LOG_DM_USER_ID). |
 | `/hell security` | `@gamenight host` | **Anti-cheat report.** Shows alive-check dodging, VC flapping, rate-limit spikes and monitor health. Anything suspicious also triggers an automatic alert to the operator's DMs. |
+| `/hell errors` | everyone | Look up an error code (e.g. `/hell errors HEL-100`) for its full explanation, including what it means and what to do about it. |
 
 All output is embeds. Mentions inside an embed never ping, so a milestone can list 250 eligible
 users without 250 notifications — while the `@everyone` ping stays in the message content.

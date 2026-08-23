@@ -34,6 +34,7 @@ from typing import Optional
 from .alivecheck import AliveCheckManager
 from .timeutil import now_ts
 
+
 log = logging.getLogger("hell.security")
 
 # ---- thresholds -----------------------------------------------------------
@@ -168,7 +169,7 @@ class SuspicionTracker:
         recent = [t for t in self._rate_limits if now - t < RATE_LIMIT_SPIKE_WINDOW]
         if len(recent) >= RATE_LIMIT_SPIKE_THRESHOLD:
             log.error(
-                "🚨 Rate-limit spike — %d Discord 429 responses in the last %.0fs. "
+                "🚨 [HEL-120] Rate-limit spike — %d Discord 429 responses in the last %.0fs. "
                 "The bot may be hitting API limits.",
                 len(recent), RATE_LIMIT_SPIKE_WINDOW,
             )
@@ -192,7 +193,7 @@ class SuspicionTracker:
         lag = now_ts() - self._last_collect_ts
         if lag > STALE_MONITOR_LIMIT:
             log.error(
-                "🚨 VC monitor appears stalled — last successful observation "
+                "🚨 [HEL-130] VC monitor appears stalled — last successful observation "
                 "was %.0fs ago. The event timer keeps running but nobody's "
                 "presence is being verified.",
                 lag,

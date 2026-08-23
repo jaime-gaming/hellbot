@@ -78,11 +78,38 @@ class StatusFile:
             "operator_dm_ok": operator_dm_ok,
         }
 
+    def clear_stale_errors(self) -> None:
+        """Self-healing: automatically clear resolved error conditions.
+
+        Errors older than 1 hour are dropped when the event is running and
+        the monitor reports no problems.  This keeps the dashboard tidy
+        without losing useful history.
+        """
+        now = time.time()
+        cutoff = now - 3600  # 1 hour — everything older is stale
+        self._errors = deque(
+            [e for e in self._errors if self._ts_from_line(e) is not None and self._ts_from_line(e) > cutoff],
+            maxlen=self._errors.maxlen,
+        )
+        self._warnings = deque(
+            [w for w in self._warnings if self._ts_from_line(w) is not None and self._ts_from_line(w) > cutoff],
+            maxlen=self._warnings.maxlen,
+        )
+
     def write(self, path: str | Path, *, engine=None, monitor=None, stream=None) -> None:
         """Convenience: snapshot and write to a JSON file in one call."""
         if engine is None or monitor is None:
+            self.clear_stale_errors()
             payload = self.snapshot(bot_connected=False, event_status="UNKNOWN")
         else:
+            elapsed = engine.elapsed()
+            sec = monitor.security if hasattr(monitor, "security") else None
+            security_snapshot = sec.snapshot() if sec else {}
+            # Self-healing: clear old errors when the event is running fine
+            if engine.status.is_active:
+                stale = security_snapshot.get("stale_seconds")
+                if stale is None or stale < 300:
+                    self.clear_stale_errors()
             elapsed = engine.elapsed()
             sec = monitor.security if hasattr(monitor, "security") else None
             security_snapshot = sec.snapshot() if sec else {}

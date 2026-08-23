@@ -12,6 +12,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from . import RESTART_EXIT_CODE, __version__
+from .errorcodes import lookup as _ec_lookup
 from .config import Config
 from .embeds import add_chunked_field
 from .engine import HellEngine, StartError
@@ -541,6 +542,36 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             color=int(TEXT.COLOR_IDLE),
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
+
+    # --------------------------------------------------------------- errors
+
+    @app_commands.command(
+        name="errors",
+        description="Look up an error code like HEL-100 for its full explanation.",
+    )
+    @app_commands.describe(code="The error code to look up (e.g. HEL-100).")
+    @app_commands.guild_only()
+    async def errors(self, interaction: discord.Interaction, code: str) -> None:
+        """Show the full explanation of an error code."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        code = code.strip().upper()
+        if not code.startswith("HEL-"):
+            # Accept bare numbers too.
+            code = f"HEL-{code}" if code.isdigit() else code
+        ec = _ec_lookup(code)
+        if ec is None:
+            await interaction.followup.send(
+                f"Unknown code: **{code}**. See the documentation for valid codes.",
+                ephemeral=True,
+            )
+            return
+        embed = discord.Embed(
+            title=f"Error code {ec.code}",
+            description=ec.format(),
+            color=int(TEXT.COLOR_RUNNING),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
 
     # ---------------------------------------------------------------- doctor
 

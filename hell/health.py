@@ -59,8 +59,7 @@ async def preflight(bot: discord.Client, config: Config) -> HealthReport:
 
     guild = bot.get_guild(config.guild_id)
     if guild is None:
-        report.errors.append(
-            f"Guild {config.guild_id} not found — is GUILD_ID correct and the bot invited to it?"
+        report.errors.append(f"HEL-002 Guild {config.guild_id} not found — is GUILD_ID correct and the bot invited to it?"
         )
         return report
     report.info.append(f"Connected to guild '{guild.name}' ({guild.id})")
@@ -71,15 +70,13 @@ async def preflight(bot: discord.Client, config: Config) -> HealthReport:
         return report
 
     if not bot.intents.members:
-        report.errors.append(
-            "The Server Members intent is disabled — the bot cannot read who is in the VC. "
+        report.errors.append("[HEL-010] The Server Members intent is disabled — the bot cannot read who is in the VC. "
             "Enable it in the Discord Developer Portal."
         )
     if not bot.intents.voice_states:
-        report.errors.append("The Voice States intent is disabled — VC monitoring cannot work.")
+        report.errors.append("[HEL-010] The Voice States intent is disabled — VC monitoring cannot work.")
     if not bot.intents.message_content:
-        report.errors.append(
-            "The Message Content intent is disabled — alive-check replies ('Yes') cannot be "
+        report.errors.append("[HEL-010] The Message Content intent is disabled — alive-check replies ('Yes') cannot be "
             "read and every roll call would end by disconnecting everyone. Enable 'Message "
             "Content Intent' in the Developer Portal (Bot -> Privileged Gateway Intents)."
         )

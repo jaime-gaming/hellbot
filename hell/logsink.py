@@ -332,17 +332,13 @@ class DiscordLogStream:
             log.exception("Live log stream flush failed — will retry")
 
     async def _try_re_able(self) -> None:
-        """Periodically re-test the DM channel after a transient failure.
+        """Periodically re-test the DM channel after a failure.
 
-        If the stream was disabled due to temporary HTTP failures (not DMs
-        closed), try a single test message every so often.  If it goes
-        through, re-enable everything without operator intervention.
+        After transient HTTP failures or DMs being closed, periodically test
+        if the DM is reachable again.  If it goes through, re-enable everything.
         """
-        if self.disabled_reason is not None and "DMs closed" in self.disabled_reason:
-            return  # permanent — operator must action
         if self.handler.enabled or self._user is None:
             return
-        # Wait a few flush cycles before attempting recovery.
         now = time.time()
         if now - self._last_alert_ts < self._alert_cooldown:
             return
@@ -353,10 +349,10 @@ class DiscordLogStream:
             )
             self._sent += 1
         except discord.Forbidden:
-            return  # still blocked, retry next cycle
+            return
         except discord.HTTPException:
-            return  # still failing, retry next cycle
-        # Success — re-enable.
+            return
+        log.info("Log stream re-enabled after successful DM test")
         self.disabled_reason = None
         self._failures = 0
         self.handler.set_enabled(True)

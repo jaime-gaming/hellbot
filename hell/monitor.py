@@ -427,12 +427,19 @@ class VoiceMonitor:
             # paused — `/hell resume` handles the unpause.
             log.warning("Event %s is PAUSED — restarting in frozen state", state.event_uid)
             return
-        gap = now_ts() - (state.last_tick_ts or state.start_ts or now_ts())
+        # Reconstruct the real-time observation timestamp: the effective
+        # last_tick_ts is pause-adjusted, so computing the gap against it
+        # would include the paused duration — leading to misleading log
+        # messages and over-10s announcements.
+        gap_raw = now_ts() - (state.last_tick_ts or state.start_ts or now_ts())
+        gap_raw = max(0.0, gap_raw)
+        real_last = (state.start_ts or now_ts()) + self.engine.elapsed() + state.paused_seconds
+        gap = max(0.0, now_ts() - real_last)
         log.info(
-            "Resuming event %s — elapsed %s, unobserved gap %.0fs",
+            "Resuming event %s — elapsed %s, unobserved gap %.0fs (raw %.0fs)",
             state.event_uid,
             format_hm(self.engine.elapsed()),
-            gap,
+            gap, gap_raw,
         )
         # A roll call interrupted by the restart is cancelled, never enforced:
         # nobody gets disconnected because the bot was offline.

@@ -31,7 +31,7 @@ def test_command_group_exposes_the_expected_subcommands(bot, config, engine):
     assert names == {
         "start", "status", "leaderboard", "milestones", "mystats", "user", "help",
         "alivecheck", "logs", "reloadmessages", "doctor", "export", "stop", "reset",
-        "approve", "pause", "resume", "restart", "security",
+        "approve", "pause", "resume", "restart", "security", "errors",
     }
     assert cog.app_command.name == "hell"  # type: ignore[union-attr]
 

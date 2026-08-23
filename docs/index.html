@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Welcome to Hell — Bot Status</title>
+  <style>
+    :root {
+      --bg: #0d0d0d;
+      --card: #1a1a1a;
+      --border: #333;
+      --text: #eee;
+      --muted: #999;
+      --green: #2ecc71;
+      --red: #e74c3c;
+      --orange: #f39c12;
+      --ember: #e25822;
+      --blue: #3498db;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 2rem;
+      min-height: 100vh;
+    }
+    .container { max-width: 900px; margin: 0 auto; }
+    header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 1.5rem;
+    }
+    header h1 {
+      font-size: 2.2rem;
+      background: linear-gradient(135deg, var(--ember), var(--orange));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    header p {
+      color: var(--muted);
+      margin-top: 0.5rem;
+      font-size: 0.95rem;
+    }
+    header .badge {
+      display: inline-block;
+      margin-top: 0.75rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 1rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .badge.ok { background: var(--green); color: #000; }
+    .badge.warn { background: var(--orange); color: #000; }
+    .badge.err { background: var(--red); color: #fff; }
+    .badge.idle { background: var(--border); color: var(--muted); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+    }
+    .card h3 {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 0.5rem;
+    }
+    .card .value {
+      font-size: 1.8rem;
+      font-weight: 700;
+    }
+    .card .value.green { color: var(--green); }
+    .card .value.red { color: var(--red); }
+    .card .value.orange { color: var(--orange); }
+    .card .value.blue { color: var(--blue); }
+    .card .sub { font-size: 0.85rem; color: var(--muted); margin-top: 0.25rem; }
+    .section { margin-bottom: 2rem; }
+    .section h2 {
+      font-size: 1.1rem;
+      margin-bottom: 0.75rem;
+      color: var(--ember);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.5rem;
+    }
+    .event-list { list-style: none; }
+    .event-list li {
+      padding: 0.5rem 0.75rem;
+      border-left: 3px solid transparent;
+      margin-bottom: 0.25rem;
+      border-radius: 0.25rem;
+      font-size: 0.9rem;
+    }
+    .event-list li.error {
+      border-left-color: var(--red);
+      background: rgba(231, 76, 60, 0.08);
+    }
+    .event-list li.warn {
+      border-left-color: var(--orange);
+      background: rgba(243, 156, 18, 0.08);
+    }
+    .empty { color: var(--muted); font-style: italic; }
+    .github-section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+      margin-bottom: 2rem;
+    }
+    .github-section h3 {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 0.5rem;
+    }
+    .info-block {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+      margin-bottom: 2rem;
+    }
+    .info-block h3 {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 0.5rem;
+    }
+    .info-block p {
+      font-size: 0.9rem;
+      line-height: 1.5;
+      color: var(--muted);
+    }
+    .info-block a { color: var(--blue); }
+    footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.8rem;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border);
+    }
+    footer a { color: var(--blue); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🔥 Welcome to Hell — Bot Status</h1>
+      <p>Real-time monitor of the 160-hour Discord endurance event</p>
+      <div id="statusBadge" class="badge idle">Connecting&hellip;</div>
+    </header>
+
+    <div class="grid" id="summaryGrid">
+      <!-- Populated by JavaScript -->
+    </div>
+
+    <div class="section">
+      <h2>❌ Errors (last 24 h)</h2>
+      <ul class="event-list" id="errorList">
+        <li class="empty"><em>No errors recorded.</em></li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <h2>⚠️ Warnings (last 24 h)</h2>
+      <ul class="event-list" id="warningList">
+        <li class="empty"><em>No warnings recorded.</em></li>
+      </ul>
+    </div>
+
+    <div class="github-section">
+      <h3>🔗 GitHub</h3>
+      <div id="githubStats">Loading&hellip;</div>
+    </div>
+
+    <div class="info-block">
+      <h3>📋 How this works</h3>
+      <p>
+        The bot writes its error and warning summary to <code>docs/status.json</code>
+        on every heartbeat (default every 15 minutes). The JSON is pushed to the
+        <code>main</code> branch and served by GitHub Pages.
+      </p>
+      <p>
+        If the status hasn&rsquo;t updated in more than 2 heartbeats (&gt;30 minutes),
+        the bot may be offline or the push failed.
+      </p>
+      <p>
+        🔒 This page shows <strong>errors and warnings only</strong>. No full logs,
+        no participant data, no tokens.
+      </p>
+    </div>
+
+    <footer>
+      <p>Welcome to Hell &middot; <a href="https://github.com/jaime-gaming/hellbot">github.com/jaime-gaming/hellbot</a></p>
+    </footer>
+  </div>
+
+  <script>
+  (async function () {
+    var res = await fetch('status.json');
+    var text = await res.text();
+    var data;
+    try {
+      data = JSON.parse(text);
+    } catch(e) {
+      document.getElementById('statusBadge').textContent = 'Status file corrupt';
+      document.getElementById('statusBadge').className = 'badge err';
+      return;
+    }
+
+    var badge = document.getElementById('statusBadge');
+    var elapsed = data.event_elapsed_hours ? ' ' + data.event_elapsed_hours.toFixed(1) + 'h' : '';
+    if (!data.bot_connected) {
+      badge.textContent = 'Offline' + elapsed;
+      badge.className = 'badge err';
+    } else if (data.event_status === 'RUNNING') {
+      badge.textContent = 'Running' + elapsed;
+      badge.className = 'badge ok';
+    } else if (data.event_status === 'COMPLETED') {
+      badge.textContent = 'Completed';
+      badge.className = 'badge ok';
+    } else if (data.event_status === 'FAILED') {
+      badge.textContent = 'Failed';
+      badge.className = 'badge err';
+    } else if (data.event_status === 'CANCELLED') {
+      badge.textContent = 'Cancelled';
+      badge.className = 'badge warn';
+    } else {
+      badge.textContent = 'Idle';
+      badge.className = 'badge idle';
+    }
+
+    var errCount = data.errors_last_24h ? data.errors_last_24h.length : 0;
+    var warnCount = data.warnings_last_24h ? data.warnings_last_24h.length : 0;
+    var lastUpdate = data.last_updated ? new Date(data.last_updated).toLocaleString() : 'N/A';
+    var rl = data.rate_limits_5min || 0;
+    var stale = data.monitor_stale_seconds;
+
+    document.getElementById('summaryGrid').innerHTML =
+      '<div class="card"><h3>Errors (24h)</h3><div class="value ' + (errCount > 0 ? 'red' : 'green') + '">' + errCount + '</div></div>' +
+      '<div class="card"><h3>Warnings (24h)</h3><div class="value ' + (warnCount > 0 ? 'orange' : 'green') + '">' + warnCount + '</div></div>' +
+      '<div class="card"><h3>Event Status</h3><div class="value blue">' + (data.event_status || 'N/A') + '</div><div class="sub">' + (elapsed || 'No event') + '</div></div>' +
+      '<div class="card"><h3>Last Updated</h3><div class="value" style="font-size:1rem">' + lastUpdate + '</div></div>' +
+      '<div class="card"><h3>Rate Limits (5min)</h3><div class="value ' + (rl > 5 ? 'red' : rl > 0 ? 'orange' : 'green') + '">' + rl + '</div><div class="sub">Discord 429 responses</div></div>' +
+      '<div class="card"><h3>Monitor</h3><div class="value ' + (stale && stale > 120 ? 'red' : 'green') + '">' + (stale ? Math.round(stale) + 's ago' : 'Active') + '</div><div class="sub">Last VC observation</div></div>' +
+      '<div class="card"><h3>Alive Check</h3><div class="value ' + (data.alive_check_pending ? 'orange' : 'green') + '">' + (data.alive_check_pending ? 'Pending' : 'Idle') + '</div></div>' +
+      '<div class="card"><h3>Operator DM</h3><div class="value ' + (data.operator_dm_ok ? 'green' : 'red') + '">' + (data.operator_dm_ok ? 'Open' : 'Closed') + '</div></div>';
+
+    var el = document.getElementById('errorList');
+    if (data.errors_last_24h && data.errors_last_24h.length) {
+      el.innerHTML = '';
+      for (var i = 0; i < data.errors_last_24h.length; i++) {
+        var li = document.createElement('li');
+        li.className = 'error';
+        li.textContent = data.errors_last_24h[i];
+        el.appendChild(li);
+      }
+    }
+
+    var wl = document.getElementById('warningList');
+    if (data.warnings_last_24h && data.warnings_last_24h.length) {
+      wl.innerHTML = '';
+      for (var i = 0; i < data.warnings_last_24h.length; i++) {
+        var li = document.createElement('li');
+        li.className = 'warn';
+        li.textContent = data.warnings_last_24h[i];
+        wl.appendChild(li);
+      }
+    }
+
+    fetch('https://api.github.com/repos/jaime-gaming/hellbot/commits?per_page=3&sha=main')
+      .then(function(r) { return r.json(); })
+      .then(function(commits) {
+        var html = '';
+        for (var i = 0; i < commits.length; i++) {
+          var c = commits[i];
+          html += '<div style="margin-bottom:0.5rem"><a href="' + c.html_url + '" style="color:var(--blue)">' +
+            c.commit.message.split('\\n')[0] + '</a><br><span style="color:var(--muted);font-size:0.85rem">' +
+            c.commit.author.name + ' &middot; ' + new Date(c.commit.author.date).toLocaleString() + '</span></div>';
+        }
+        document.getElementById('githubStats').innerHTML = commits.length ? html : '<span class="empty">No commits.</span>';
+      })
+      .catch(function() {
+        document.getElementById('githubStats').innerHTML = '<span class="empty">GitHub API unreachable.</span>';
+      });
+  })();
+  </script>
+</body>
+</html>

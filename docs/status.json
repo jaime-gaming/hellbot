@@ -1,0 +1,12 @@
+{
+  "last_updated": "2026-08-23T19:57:41Z",
+  "bot_connected": true,
+  "event_status": "RUNNING",
+  "event_elapsed_hours": 160.0,
+  "errors_last_24h": [],
+  "warnings_last_24h": [],
+  "alive_check_pending": false,
+  "monitor_stale_seconds": null,
+  "rate_limits_5min": 0,
+  "operator_dm_ok": true
+}

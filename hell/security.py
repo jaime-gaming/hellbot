@@ -68,6 +68,8 @@ class SuspicionTracker:
         self._rate_limits: deque[float] = deque(maxlen=100)
         # Whether we already alerted about a rate-limit spike
         self._rate_limit_alerted = False
+        # Timestamp when a rate-limit spike was last alerted (cooldown)
+        self._rate_limit_last_alert_ts = 0.0
         # Last successful VC collect timestamp
         self._last_collect_ts: Optional[float] = None
         # Whether we already alerted about a stale monitor
@@ -153,7 +155,10 @@ class SuspicionTracker:
     def record_rate_limit(self) -> None:
         now = now_ts()
         self._rate_limits.append(now)
-        self._rate_limit_alerted = False  # reset so next spike re-alerts
+        # Only re-arm the alert after a quiet cooldown period, otherwise
+        # ongoing rate limits keep firing alerts every tick.
+        if now - self._rate_limit_last_alert_ts > RATE_LIMIT_SPIKE_WINDOW:
+            self._rate_limit_alerted = False
 
     def check_rate_limit_spike(self) -> None:
         """Log an error if rate limits are spiking."""
@@ -193,15 +198,6 @@ class SuspicionTracker:
                 lag,
             )
             self._stale_alerted = True
-
-    # ----------------------------------------------------- presence tracking
-
-    def record_known_presence_change(self, joined: list[str], left: list[str]) -> None:
-        """Track join/leave events and link with alive checks."""
-        # (This is called from the monitor's _log_presence_changes)
-        # We don't have user_ids here, just names, so we use the
-        # already-existing _note_blind / presence tracking.
-        pass
 
     # ------------------------------------------------------------- snapshot
 

@@ -41,6 +41,7 @@ from .engine import (
 )
 from .models import EventStatus, ParticipantRef
 from .security import SuspicionTracker
+from .status_writer import get_status as get_status_writer
 from .tasks import spawn
 from .timeutil import format_hm, now_ts
 
@@ -165,10 +166,10 @@ class VoiceMonitor:
         # alive-check dodging analysis.
         for uid in [uid for uid in current if uid not in self._known_presence]:
             self.security.record_join(uid)
-            if self.alive_checks.pending is not None:
-                self.security.record_check_departure(uid, before_check=True)
         for uid in [uid for uid in self._known_presence if uid not in current]:
             self.security.record_leave(uid)
+            if self.alive_checks.pending is not None:
+                self.security.record_check_departure(uid, before_check=True)
         self._known_presence = current
 
     def _note_blind(self, reason: str) -> None:
@@ -311,6 +312,11 @@ class VoiceMonitor:
             participants,
             f"{snap.upcoming.hours}h" if snap.upcoming else "none",
         )
+        # Write the GitHub Pages status JSON on every heartbeat.
+        try:
+            get_status_writer().write("docs/status.json", engine=self.engine, monitor=self, stream=getattr(self.bot, "log_stream", None))
+        except Exception:
+            log.debug("Could not write status.json", exc_info=True)
 
     @tasks.loop(seconds=20.0)
     async def _progress_loop(self) -> None:

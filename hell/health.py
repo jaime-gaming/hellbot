@@ -183,4 +183,34 @@ async def preflight(bot: discord.Client, config: Config) -> HealthReport:
                 f"{label}={role_id} does not match any role; rewards will be shown as plain text."
             )
 
+    # --- operator DM (live log stream) -------------------------------------
+    if config.log_dm_enabled:
+        stream = getattr(bot, "log_stream", None)
+        if stream is not None and stream.disabled_reason:
+            report.warnings.append(
+                f"Live log stream is disabled: {stream.disabled_reason}. "
+                "The operator (LOG_DM_USER_ID) will not receive alerts or log messages."
+            )
+        if stream is not None and stream.running:
+            try:
+                user = bot.get_user(config.log_dm_user_id) or await bot.fetch_user(config.log_dm_user_id)
+                dm = user.dm_channel or await user.create_dm()
+                # A quick test: try fetching the DM channel's history (1 message)
+                # to see if the operator has DMs open.  This is a read-only probe
+                # that leaves no trace.
+                async for _ in dm.history(limit=1):
+                    break
+                report.info.append(
+                    f"Operator DM stream → @{user.name} ({config.log_dm_user_id}) — DMs appear open"
+                )
+            except discord.Forbidden:
+                report.warnings.append(
+                    f"Operator {config.log_dm_user_id} has DMs closed — "
+                    "the live log stream will fail."
+                )
+            except discord.HTTPException as exc:
+                report.warnings.append(
+                    f"Could not verify operator DMs ({config.log_dm_user_id}): {exc}"
+                )
+
     return report

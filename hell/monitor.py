@@ -441,3 +441,20 @@ class VoiceMonitor:
         self.announcer.forget_progress_message()
         self._terminal_rendered = False
         await self.announcer.update_progress(self.engine.snapshot(), force=True)
+
+        # Let the guild know the bot recovered from a restart.
+        if gap > 10.0:
+            embed = discord.Embed(
+                title="🔄 Bot restart recovered",
+                description=(
+                    f"The bot was restarted and is back online. "
+                    f"The event was unobserved for **{gap:.0f}s** — "
+                    f"the timer never stopped and nobody was penalised. "
+                    f"Elapsed: **{format_hm(self.engine.elapsed())}** / 160h."
+                ),
+                color=0xE25822,
+            )
+            try:
+                await self.announcer.send([embed])
+            except Exception:
+                log.exception("Could not post the restart-recovery announcement")

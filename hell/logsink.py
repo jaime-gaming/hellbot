@@ -260,6 +260,7 @@ class DiscordLogStream:
         self.handler.set_enabled(value)
         if value:
             self.disabled_reason = None
+            self._last_alert_ts = 0.0  # reset the cooldown; the operator is back
 
     def tail(self, limit: int = 20) -> list[str]:
         return self.handler.tail(limit)
@@ -313,8 +314,12 @@ class DiscordLogStream:
         interval = max(1.0, self.config.log_dm_flush_seconds)
         while True:
             await asyncio.sleep(interval)
+            # Transient-failure recovery: if the stream disabled itself due
+            # to temporary HTTP failures, re-test the DM periodically.
+            if not self.enabled:
+                await self._try_re_able()
             # A transient bug (bad template, unexpected exception) must never
-            # kill the stream for the rest of the event — retry next interval.
+            # kill the stream for rest of the event — retry next interval.
             await self._flush_safely()
 
     async def _flush_safely(self) -> None:
@@ -325,6 +330,36 @@ class DiscordLogStream:
             raise
         except Exception:
             log.exception("Live log stream flush failed — will retry")
+
+    async def _try_re_able(self) -> None:
+        """Periodically re-test the DM channel after a transient failure.
+
+        If the stream was disabled due to temporary HTTP failures (not DMs
+        closed), try a single test message every so often.  If it goes
+        through, re-enable everything without operator intervention.
+        """
+        if self.disabled_reason is not None and "DMs closed" in self.disabled_reason:
+            return  # permanent — operator must action
+        if self.handler.enabled or self._user is None:
+            return
+        # Wait a few flush cycles before attempting recovery.
+        now = time.time()
+        if now - self._last_alert_ts < self._alert_cooldown:
+            return
+        try:
+            await self._user.send(
+                "📡 **Re-connection test** — the bot is checking whether DMs work again.",
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            self._sent += 1
+        except discord.Forbidden:
+            return  # still blocked, retry next cycle
+        except discord.HTTPException:
+            return  # still failing, retry next cycle
+        # Success — re-enable.
+        self.disabled_reason = None
+        self._failures = 0
+        self.handler.set_enabled(True)
 
     # -------------------------------------------------------------- sending
 

@@ -11,7 +11,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from . import __version__
+from . import RESTART_EXIT_CODE, __version__
 from .config import Config
 from .embeds import add_chunked_field
 from .engine import HellEngine, StartError
@@ -24,7 +24,7 @@ from .texts import TEXT, message_count, say
 from .texts import reload as reload_texts
 from .texts import source as texts_source
 from .timeutil import discord_ts, format_hm, now_ts
-from .ui import CODE_LIFETIME_SECONDS, CodeGate, NotAHost, is_host
+from .ui import CODE_LIFETIME_SECONDS, CodeGate, NotAHost, dm_operator_only, is_host
 
 __all__ = ["CodeGate", "HellCommands", "NotAHost", "is_host"]
 
@@ -468,6 +468,28 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             file=payload,
             ephemeral=True,
         )
+
+    # -------------------------------------------------------------- restart
+
+    @app_commands.command(
+        name="restart",
+        description="Restart the bot to apply updates. Only from DMs, operator only.",
+    )
+    @dm_operator_only()
+    async def restart(self, interaction: discord.Interaction) -> None:
+        """Exit the process so the process manager restarts it with new code."""
+        await interaction.response.send_message(TEXT.CMD_RESTART_DONE, ephemeral=True)
+        log.warning(
+            "Bot restart requested by %s (%s) — exiting with code %d",
+            interaction.user, interaction.user.id, RESTART_EXIT_CODE,
+        )
+        stream = getattr(self.bot, "log_stream", None)
+        if stream is not None:
+            try:
+                await stream.flush()
+            except Exception:
+                pass
+        raise SystemExit(RESTART_EXIT_CODE)
 
     # ---------------------------------------------------------------- doctor
 

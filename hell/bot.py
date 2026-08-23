@@ -22,7 +22,7 @@ import aiohttp
 import discord
 from discord.ext import commands
 
-from . import __version__
+from . import RESTART_EXIT_CODE, __version__
 from .announcer import Announcer
 from .cog import HellCommands
 from .config import Config, ConfigError
@@ -201,6 +201,10 @@ def main() -> None:
 
     try:
         asyncio.run(run(config))
+    except SystemExit as exc:
+        if exc.code == RESTART_EXIT_CODE:
+            raise  # let the restart signal propagate to the launcher / Docker
+        # Other exit codes (normal shutdown, config errors) are handled below.
     except KeyboardInterrupt:  # pragma: no cover
         pass
     except discord.LoginFailure:

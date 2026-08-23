@@ -575,6 +575,14 @@ CMD_LOGS_TEST = "✅ Test line sent to the operator's DMs."
 CMD_LOGS_FLUSHED = "📨 Flushed **{sent}** message(s)."
 CMD_LOGS_STATUS = "📡 Live log stream: **{status}**"
 
+CMD_RESTART_DONE = (
+    "♻️ **Bot restarting** — the process will exit now and the process manager "
+    "should bring it back automatically. The event timer is untouched; the bot "
+    "will resume where it left off."
+)
+CMD_RESTART_NOT_OPERATOR = "⛔ Only the bot operator can restart the bot."
+CMD_RESTART_DM_ONLY = "⛔ This command can only be used in a DM to the bot."
+
 CMD_MESSAGES_RELOADED = (
     "✅ **Announcements.py reloaded** — {count} message(s) in memory, {milestones} milestone(s). "
     "New wording applies from the next message."

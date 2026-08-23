@@ -114,6 +114,14 @@ class NotAHost(app_commands.CheckFailure):
     """Raised when a non-host tries to run a restricted command."""
 
 
+class DMsClosed(app_commands.CheckFailure):
+    """Raised when a command that needs DMs is used in a guild."""
+
+
+class NotOperator(app_commands.CheckFailure):
+    """Raised when a non-operator tries a DM-only operator command."""
+
+
 def is_host():
     """Restrict a command to members holding the `@gamenight host` role."""
 
@@ -126,6 +134,25 @@ def is_host():
             raise NotAHost(
                 say(TEXT.CMD_NOT_ALLOWED, host_role=f"<@&{config.gamenight_host_role_id}>")
             )
+        return True
+
+    return app_commands.check(predicate)
+
+
+def dm_operator_only():
+    """Restrict a command to the operator (LOG_DM_USER_ID) via DM only.
+
+    Only the bot operator can trigger a restart, and only from inside a DM
+    session where the bot can confirm the user's identity without needing a
+    guild role check.
+    """
+
+    async def predicate(interaction: discord.Interaction) -> bool:
+        if interaction.guild is not None:
+            raise DMsClosed("This command can only be used in DMs.")
+        config: Config = interaction.client.config  # type: ignore[attr-defined]
+        if interaction.user.id != config.log_dm_user_id:
+            raise NotOperator("Only the bot operator can run this command.")
         return True
 
     return app_commands.check(predicate)

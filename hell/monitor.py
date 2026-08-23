@@ -40,6 +40,7 @@ from .engine import (
     Observation,
 )
 from .models import EventStatus, ParticipantRef
+from .security import SuspicionTracker
 from .tasks import spawn
 from .timeutil import format_hm, now_ts
 
@@ -62,6 +63,7 @@ class VoiceMonitor:
         self.alive_checks = AliveCheckManager(config, engine.store, self.alive_io)
         self.alive_checks.bind(engine.event_uid)
         self.reports = FinalReportDM(bot, config, engine, announcer)
+        self.security = SuspicionTracker(self.alive_checks)
         self._ready_at: Optional[float] = None
         self._kick_attempts: dict[int, float] = {}
         self._lock = asyncio.Lock()  # serialises ticks; no milestone can race
@@ -132,6 +134,7 @@ class VoiceMonitor:
             self._note_blind(f"voice channel {self.config.voice_channel_id} not visible")
             return None
         self._note_sighted()
+        self.security.record_collect()
 
         humans: list[ParticipantRef] = []
         clankers: list[discord.Member] = []
@@ -158,6 +161,14 @@ class VoiceMonitor:
                 log.info("➕ %s joined the VC (%d valid human(s) inside)", name, len(current))
             for name in left:
                 log.info("➖ %s left the VC (%d valid human(s) inside)", name, len(current))
+        # Feed join/leave to the security tracker for flap detection and
+        # alive-check dodging analysis.
+        for uid in [uid for uid in current if uid not in self._known_presence]:
+            self.security.record_join(uid)
+            if self.alive_checks.pending is not None:
+                self.security.record_check_departure(uid, before_check=True)
+        for uid in [uid for uid in self._known_presence if uid not in current]:
+            self.security.record_leave(uid)
         self._known_presence = current
 
     def _note_blind(self, reason: str) -> None:
@@ -247,6 +258,9 @@ class VoiceMonitor:
             self._ensure_alive_checks_bound(now)
             self._pump_alive_check(now, humans)
         self._heartbeat(len(humans))
+        # Security/anomaly checks (run on every tick, cheap).
+        self.security.check_stale()
+        self.security.check_rate_limit_spike()
 
     def _ensure_alive_checks_bound(self, now: float) -> None:
         """Keep the roll-call manager attached to the current event.

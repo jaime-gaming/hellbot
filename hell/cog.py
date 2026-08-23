@@ -24,7 +24,7 @@ from .texts import TEXT, message_count, say
 from .texts import reload as reload_texts
 from .texts import source as texts_source
 from .timeutil import discord_ts, format_hm, now_ts
-from .ui import CODE_LIFETIME_SECONDS, CodeGate, NotAHost, dm_operator_only, is_host
+from .ui import CODE_LIFETIME_SECONDS, CodeGate, DMsClosed, NotAHost, NotOperator, dm_operator_only, is_host
 
 __all__ = ["CodeGate", "HellCommands", "NotAHost", "is_host"]
 
@@ -491,6 +491,57 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
                 pass
         raise SystemExit(RESTART_EXIT_CODE)
 
+    # ------------------------------------------------------------- security
+
+    @app_commands.command(
+        name="security",
+        description="Anti-cheat and anomaly report for the operator.",
+    )
+    @is_host()
+    @app_commands.guild_only()
+    async def security(self, interaction: discord.Interaction) -> None:
+        """Show security-relevant stats: flap detection, alive-check dodging,
+        rate-limit bursts, and monitor health."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        snap = self.monitor.security.snapshot()
+        lines: list[str] = []
+
+        dodgers = snap.get("dodgers", [])
+        if dodgers:
+            lines.append(
+                "🚨 **Alive-check dodgers**\n"
+                + "\n".join(f"• <@{uid}> — {c} dodge(s)" for uid, c in dodgers)
+            )
+        else:
+            lines.append("✅ **Alive-check dodging**: none detected")
+
+        flappers = snap.get("flappers", [])
+        if flappers:
+            lines.append(
+                "\n⚠️ **VC flapping**\n"
+                + "\n".join(
+                    f"• <@{uid}> — {c} join(s)/leave(s)" for uid, c in flappers[:5]
+                )
+            )
+        else:
+            lines.append("✅ **VC flapping**: none detected")
+
+        rl = snap.get("rate_limits_5min", 0)
+        lines.append(f"\n📊 **Rate limits (5 min)**: {rl}")
+
+        stale = snap.get("stale_seconds")
+        if stale is not None and stale > 60:
+            lines.append(f"⚠️ **Monitor stale**: last VC observation {stale:.0f}s ago")
+        else:
+            lines.append("✅ **Monitor health**: ok")
+
+        embed = discord.Embed(
+            title="🛡️ Welcome to Hell — Security Report",
+            description="\n".join(lines) or "No data collected yet.",
+            color=int(TEXT.COLOR_IDLE),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
     # ---------------------------------------------------------------- doctor
 
     @app_commands.command(
@@ -795,6 +846,11 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         else:
             log.exception("Command error", exc_info=error)
             message = TEXT.CMD_ERROR
+        # DM-only and operator-only specific messages
+        if isinstance(error, DMsClosed):
+            message = TEXT.CMD_DM_ONLY
+        elif isinstance(error, NotOperator):
+            message = TEXT.CMD_OPERATOR_ONLY
         try:
             if interaction.response.is_done():
                 await interaction.followup.send(message, ephemeral=True)

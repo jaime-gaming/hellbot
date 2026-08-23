@@ -483,6 +483,8 @@ CMD_RESET_DONE = (
 CMD_NOT_A_HOST = "⛔ You are not a `@gamenight host`."
 CMD_NOT_ALLOWED = "⛔ You cannot use this command. ({host_role} only)"
 CMD_ERROR = "💥 Something went wrong running that command. The event state is untouched."
+CMD_DM_ONLY = "⛔ This command can only be used in a DM to the bot, not in a server channel."
+CMD_OPERATOR_ONLY = "⛔ Only the bot operator can run this command."
 
 # --- approval codes for dangerous commands ------------------------------
 DANGER_CODE_TITLE = "🔐 Welcome to Hell — approval code"
@@ -582,6 +584,12 @@ CMD_RESTART_DONE = (
 )
 CMD_RESTART_NOT_OPERATOR = "⛔ Only the bot operator can restart the bot."
 CMD_RESTART_DM_ONLY = "⛔ This command can only be used in a DM to the bot."
+
+CMD_SECURITY_TITLE = "🛡️ WELCOME TO HELL — SECURITY REPORT"
+CMD_SECURITY_DESCRIPTION = (
+    "This report shows what the bot's anti-cheat system has detected. "
+    "Anything suspicious triggers an automatic alert to the operator's DMs."
+)
 
 CMD_MESSAGES_RELOADED = (
     "✅ **Announcements.py reloaded** — {count} message(s) in memory, {milestones} milestone(s). "

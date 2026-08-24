@@ -29,6 +29,7 @@ from .aliveio import DiscordAliveCheckIO
 from .announcer import Announcer
 from .config import Config
 from .dm import FinalReportDM
+from .embeds import theme_color
 from .engine import (
     EventCancelled,
     EventCompleted,
@@ -506,8 +507,9 @@ class VoiceMonitor:
                     f"the timer never stopped and nobody was penalised. "
                     f"Elapsed: **{format_hm(self.engine.elapsed())}** / 160h."
                 ),
-                color=0xE25822,
+                color=theme_color("RUNNING"),
             )
+            self.announcer.embeds._brand(embed)
             try:
                 await self.announcer.send([embed])
             except Exception:

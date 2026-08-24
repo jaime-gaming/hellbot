@@ -201,7 +201,7 @@ def main() -> None:
                     print(ann.render_cancelled(ev))
             if not printed_progress and hours >= 73.4:
                 printed_progress = True
-                banner("LIVE PROGRESS MESSAGE (edited every 10s)")
+                banner("LIVE PROGRESS MESSAGE (edited every 20s)")
                 print(ann.render_progress(engine.snapshot(now=t, participants=len(people))))
 
         banner("EMPTY-VC GRACE PERIOD")

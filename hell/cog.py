@@ -143,7 +143,8 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         board = self.engine.leaderboard()
         entry = next((e for e in board if e.user_id == user_id), None)
         if entry is None:
-            return None, say(TEXT.CMD_USER_NO_TIME, who=f"<@{user_id}>")
+            who_str = display_name if display_name.startswith("<@") else f"<@{user_id}>"
+            return None, say(TEXT.CMD_USER_NO_TIME, who=who_str)
 
         elapsed = self.engine.elapsed()
         claimed = [
@@ -153,8 +154,11 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         ]
         present = any(p.user_id == user_id for p in self.engine.last_participants)
 
+        name_to_show = display_name
+        if display_name.startswith("<@") or display_name.isdigit():
+            name_to_show = entry.display_name or display_name
         embed = discord.Embed(
-            title=say(TEXT.CMD_USER_TITLE, name=display_name),
+            title=say(TEXT.CMD_USER_TITLE, name=name_to_show),
             description=TEXT.CMD_USER_PRESENT if present else TEXT.CMD_USER_ABSENT,
             color=int(TEXT.COLOR_RUNNING),
         )
@@ -181,8 +185,11 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
 
     def _build_errors_payload(self, code: str) -> tuple[Optional[discord.Embed], Optional[str]]:
         code = code.strip().upper()
-        if not code.startswith("HEL-"):
-            code = f"HEL-{code}" if code.isdigit() else code
+        m = re.match(r"^(?:HEL-)?(\d+)$", code)
+        if m:
+            code = f"HEL-{m.group(1).zfill(3)}"
+        elif not code.startswith("HEL-"):
+            code = f"HEL-{code}"
         ec = _ec_lookup(code)
         if ec is None:
             return None, f"Unknown code: **{code}**. See the documentation for valid codes."

@@ -113,7 +113,7 @@ MILESTONES = (
     },
     {
         "hours": 160,
-        "title": "🏆🔥 160 HOURS — WELCOME TO HELL COMPLETED",
+        "title": "🏆🔥 160 HOURS — WELCOME TO HELL",
         "blurb": "The full 160 consecutive hours have been survived. The final milestone is "
                  "complete.",
         "flavour": "There is nothing left to survive. Hell has been conquered.",

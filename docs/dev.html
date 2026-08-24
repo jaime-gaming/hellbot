@@ -240,6 +240,13 @@
 
     <div class="section">
       <h2>
+        <span>📅 Full Milestone Roadmap <span style="font-size:0.72rem;color:var(--muted)">all states — the public page hides locked ones</span></span>
+      </h2>
+      <ul class="event-list" id="devMilestones" style="max-height:260px"><li class="empty">No milestone data</li></ul>
+    </div>
+
+    <div class="section">
+      <h2>
         <span>📜 Live Log Tail <span style="font-size:0.75rem;color:var(--muted)">(last 50 lines)</span></span>
         <button class="btn-action" onclick="copyLogs()">Copy Logs</button>
       </h2>
@@ -343,6 +350,7 @@
         health_errors: d.errors_last_24h || d.health_errors || [],
         health_warnings: d.warnings_last_24h || d.health_warnings || [],
         health_info: d.health_info || [],
+        milestones: d.milestones || [],
         log_tail: d.log_tail || [],
         version: d.version || '?',
       });
@@ -414,12 +422,34 @@
       renderList('errorList', d.health_errors, 'error', 'errCount', 'some');
       renderList('warningList', d.health_warnings, 'warn', 'warnCount', 'warn');
       renderList('infoList', d.health_info, 'info-item', 'infoCount', 'zero');
-      
+
+      renderDevMilestones(d.milestones, d.elapsed, status);
+
       rawLogs = d.log_tail || [];
       renderLogs();
 
       document.getElementById('lastUpdate').textContent = d.ts ? new Date(d.ts * 1000).toLocaleTimeString() : '—';
       document.getElementById('versionLabel').textContent = 'v' + (d.version || '1.0.0');
+    }
+
+    function renderDevMilestones(milestones, elapsed, status) {
+      var ul = document.getElementById('devMilestones');
+      if (!milestones || !milestones.length) {
+        ul.innerHTML = '<li class="empty">No milestone data</li>';
+        return;
+      }
+      var h = '';
+      for (var i = 0; i < milestones.length; i++) {
+        var m = milestones[i];
+        var reached = m.reached != null ? m.reached : (elapsed >= (m.hours * 3600));
+        var label = reached ? '✅ Cleared' : (status === 'RUNNING' ? '🔒 Locked' : '—');
+        if (m.time_to != null && !reached && status === 'RUNNING') label = '🔥 in ' + fmtHm(m.time_to);
+        var cls = 'info-item';
+        if (!reached) cls = 'warn';
+        h += '<li class="' + cls + '"><strong>' + m.hours + 'h</strong> · ' + esc(m.title) +
+             ' <span style="color:var(--muted)">(' + esc(m.short_reward || m.reward || '') + ')</span> — ' + label + '</li>';
+      }
+      ul.innerHTML = h;
     }
 
     function renderList(id, items, cls, cid, cc) {

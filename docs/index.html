@@ -213,6 +213,35 @@
       padding-top: 0.5rem;
     }
 
+    /* Difficulty progress */
+    .diff-bar-outer {
+      width: 100%;
+      height: 14px;
+      background: #0d0f17;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      position: relative;
+      margin-top: 0.55rem;
+    }
+    .diff-bar-inner {
+      height: 100%;
+      background: linear-gradient(90deg, var(--blue), var(--purple));
+      border-radius: 8px;
+      transition: width 0.8s ease-in-out;
+      box-shadow: 0 0 10px rgba(155, 89, 182, 0.35);
+    }
+    .diff-bar-inner.max { background: linear-gradient(90deg, var(--ember), var(--gold)); box-shadow: 0 0 10px var(--ember-glow); }
+    .diff-times {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 0.5rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .diff-times strong { color: var(--text); }
+
     /* Grid Stats */
     .grid {
       display: grid;
@@ -455,17 +484,21 @@
       </div>
     </div>
 
-    <!-- Live Configuration -->
+    <!-- Difficulty Progress (basic view) -->
     <div class="section">
       <div class="section-header">
-        <h2>⚙️ Live Configuration</h2>
+        <h2>⚡ Difficulty Progress</h2>
         <span id="configMode" style="font-size:0.8rem;color:var(--muted)">&mdash;</span>
+      </div>
+      <div class="diff-bar-outer">
+        <div class="diff-bar-inner" id="diffBar" style="width:0%"></div>
+      </div>
+      <div class="diff-times">
+        <span id="diffCurrent">Current difficulty: &mdash;</span>
+        <span id="diffNext">Next: &mdash;</span>
       </div>
       <div class="chips">
         <span class="chip hell2" id="chipHell2">🔥 Hell 1</span>
-        <span class="chip" id="chipDifficulty">⚡ Difficulty: &mdash;</span>
-        <span class="chip off" id="chipDead">💀 Dead checks: off</span>
-        <span class="chip off" id="chipGamble">🎲 Gambling: off</span>
         <span class="chip" id="chipAlive">🚨 Alive: random</span>
       </div>
     </div>
@@ -520,9 +553,7 @@
         <ul style="font-size:0.85rem;color:var(--muted);padding-left:1.2rem;margin-top:0.4rem;line-height:1.6">
           <li><strong>Continuous presence:</strong> VC must have &ge;1 real human at all times.</li>
           <li><strong>Random roll calls:</strong> Reply <code>Yes</code> (or <code>yeah</code>, <code>yep</code>, <code>si</code>, <code>okay</code>, <code>i'm alive</code>&hellip;) within 5 minutes. Saying <code>No</code> immediately kicks you and replies <em>Alright then</em>.</li>
-          <li><strong>Dead checks:</strong> If the bot asks a trick roll call, <strong>replying at all</strong> gets you muted — stay silent to survive.</li>
           <li><strong>Empty VC Grace:</strong> 15s countdown to rejoin (120s if alive check caused empty VC).</li>
-          <li><strong>Hell 2:</strong> If the 160h vote passes, the same run continues to <strong>320h</strong> with no milestones — only one final secret reward.</li>
           <li><strong>Bots &amp; Clankers:</strong> Kicked on sight and earn no time.</li>
         </ul>
       </div>
@@ -536,11 +567,6 @@
           <span class="cmd-pill" onclick="copyCmd('/hell milestones', this)">/hell milestones</span>
           <span class="cmd-pill" onclick="copyCmd('/hell difficulty', this)">/hell difficulty</span>
           <span class="cmd-pill" onclick="copyCmd('/hell alivecheck', this)">/hell alivecheck</span>
-        </div>
-        <p style="font-size:0.82rem;color:var(--muted);margin:0.6rem 0 0.4rem">Host-only tools:</p>
-        <div>
-          <span class="cmd-pill" onclick="copyCmd('/hell broadcast', this)">/hell broadcast</span>
-          <span class="cmd-pill" onclick="copyCmd('/hell resume', this)">/hell resume (Hell 2)</span>
         </div>
       </div>
     </div>
@@ -901,8 +927,8 @@
       document.getElementById('totalLbSub').textContent = (isFailed || isStopped || isCompleted) ? 'final participants' : 'on the leaderboard';
       document.getElementById('lbTotalCount').textContent = totalLbCount + ' contestant(s)';
 
-      // 5. Milestone Roadmap Track
-      renderMilestoneRoadmap(d.milestones || defaultMilestones, d.elapsed, status, isHell2, totalH, d.remaining);
+      // 5. Milestone Roadmap Track (public view: only unlocked + the next one)
+      renderMilestoneRoadmap(d.milestones || defaultMilestones, d.elapsed, status, isHell2, totalH, d.remaining, true);
 
       // 6. Leaderboard
       var lbHeading = document.getElementById('lbHeading');
@@ -943,31 +969,67 @@
       document.getElementById('versionFoot').textContent = 'v' + (d.version || '?');
     }
 
+    var DIFF_BOUNDS = [0, 32 * 3600, 64 * 3600, 96 * 3600, 128 * 3600];
+    var DIFF_NAMES = ['Starter', 'Heating Up', 'Inferno', 'Torment', 'Cataclysm'];
+
+    function inferDifficultyLevel(elapsed) {
+      var h = (elapsed || 0) / 3600;
+      if (h >= 128) return 4;
+      if (h >= 96) return 3;
+      if (h >= 64) return 2;
+      if (h >= 32) return 1;
+      return 0;
+    }
+
     function renderConfig(d, isHell2, totalH) {
       document.getElementById('configMode').textContent = isHell2 ? 'Hell 2 · ' + totalH + 'h' : 'Hell 1 · 160h';
       document.getElementById('clockLabel').textContent = 'Global Event Clock (' + totalH + 'h)';
+
       var h2 = document.getElementById('chipHell2');
       h2.className = 'chip ' + (isHell2 ? 'hell2' : 'off');
       h2.textContent = isHell2 ? '🔥 Hell 2 · ' + totalH + 'h' : '🔥 Hell 1 · 160h';
-      document.getElementById('chipDifficulty').textContent = '⚡ Difficulty: ' + (d.difficulty_name || '—') + (d.difficulty_level != null ? ' (L' + d.difficulty_level + ')' : '');
-      var deadEl = document.getElementById('chipDead');
-      deadEl.textContent = '💀 Dead checks: ' + (d.dead_checks_enabled ? 'on' : 'off');
-      deadEl.className = 'chip ' + (d.dead_checks_enabled ? 'on' : 'off');
-      var gambleEl = document.getElementById('chipGamble');
-      gambleEl.textContent = '🎲 Gambling: ' + (d.gamble_enabled ? 'on' : 'off');
-      gambleEl.className = 'chip ' + (d.gamble_enabled ? 'on' : 'off');
+
       var aliveEl = document.getElementById('chipAlive');
       aliveEl.className = 'chip on';
       aliveEl.textContent = (d.alive_check && (d.status || '').toUpperCase() === 'RUNNING' && !d.paused) ? '🚨 Roll call live' : '🚨 Alive: random';
+
+      // Basic difficulty progress: only the current tier and the road to the next.
+      var elapsed = Number(d.elapsed) || 0;
+      var level = d.difficulty_level != null ? Number(d.difficulty_level) : inferDifficultyLevel(elapsed);
+      var name = d.difficulty_name || DIFF_NAMES[level];
+      var start = DIFF_BOUNDS[level];
+      var next = level < DIFF_BOUNDS.length - 1 ? DIFF_BOUNDS[level + 1] : null;
+      var pct = next ? (elapsed - start) / (next - start) : 1;
+      pct = Math.max(0, Math.min(1, pct));
+
+      var bar = document.getElementById('diffBar');
+      bar.style.width = (pct * 100).toFixed(1) + '%';
+      bar.className = 'diff-bar-inner' + (next ? '' : ' max');
+
+      document.getElementById('diffCurrent').innerHTML = 'Current difficulty: <strong>' + esc(name) + '</strong>';
+      if (next) {
+        document.getElementById('diffNext').innerHTML = 'Next: <strong>' + esc(DIFF_NAMES[level + 1]) + '</strong> at ' + Math.round(next / 3600) + 'h';
+      } else {
+        document.getElementById('diffNext').textContent = 'Max difficulty reached';
+      }
     }
 
-    function renderMilestoneRoadmap(milestones, elapsedSeconds, status, isHell2, totalH, remaining) {
+    function renderMilestoneRoadmap(milestones, elapsedSeconds, status, isHell2, totalH, remaining, publicMode) {
       var track = document.getElementById('milestonesTrack');
       var html = '';
+      var hiddenLocked = 0;
+      var shownNext = false;
       for (var i = 0; i < milestones.length; i++) {
         var m = milestones[i];
         var thresholdSec = m.hours * 3600;
         var reached = m.reached != null ? m.reached : (elapsedSeconds >= thresholdSec);
+
+        // Public view: hide locked milestones beyond the next one.
+        if (publicMode && !reached) {
+          if (shownNext) { hiddenLocked++; continue; }
+          shownNext = true;
+        }
+
         var isCurrent = !reached && (i === 0 || (milestones[i-1].reached || elapsedSeconds >= milestones[i-1].hours * 3600)) && status === 'RUNNING';
         
         var cls = 'ms-item' + (reached ? ' reached' : (isCurrent ? ' current' : ''));
@@ -1024,7 +1086,11 @@
             '<div class="ms-status-label">' + finalStatus + '</div>' +
           '</div>';
         }
-      } else {
+      }
+
+      if (publicMode && hiddenLocked) {
+        html += '<p style="font-size:0.78rem;color:var(--muted);margin-top:0.6rem">🔒 More rewards unlock as the run progresses.</p>';
+      } else if (!isHell2) {
         html += '<p style="font-size:0.78rem;color:var(--muted);margin-top:0.6rem">💡 If the 160h <em>keep on Hell?</em> vote passes, the run continues to <strong>320h</strong> with no more milestones — only one final secret reward.</p>';
       }
       track.innerHTML = html;

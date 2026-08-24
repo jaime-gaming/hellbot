@@ -6,7 +6,6 @@ import asyncio
 import csv
 import io
 import logging
-import random
 from typing import Optional
 
 import discord
@@ -14,15 +13,16 @@ from discord import app_commands
 from discord.ext import commands
 
 from . import RESTART_EXIT_CODE, __version__
-from .errorcodes import lookup as _ec_lookup
 from .config import Config
 from .embeds import add_chunked_field
 from .engine import HellEngine, StartError
+from .errorcodes import lookup as _ec_lookup
 from .health import preflight
 from .milestones import MILESTONES, TOTAL_SECONDS
 from .models import EventStatus
 from .monitor import VoiceMonitor
-from .tasks import active as active_tasks, spawn
+from .tasks import active as active_tasks
+from .tasks import spawn
 from .texts import TEXT, message_count, say
 from .texts import reload as reload_texts
 from .texts import source as texts_source
@@ -122,6 +122,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         snap = self.engine.snapshot(participants=len(humans))
         await self.announcer.announce_start(snap, interaction.user, humans)
         await self.announcer.update_progress(snap)
+        self.monitor.sync_status()
         await interaction.followup.send(
             say(
                 TEXT.CMD_STARTED,
@@ -176,7 +177,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         embeds = self.announcer.build_leaderboard_live_embeds(entries, title=title)
         if frozen and embeds:
             embeds[-1].set_footer(text="These rankings are frozen; the event is over.")
-        msg = await interaction.followup.send(embeds=embeds)
+        msg = await interaction.followup.send(embeds=embeds, wait=True)
 
         # Start auto-update if the event is running.
         if self.engine.is_running and not frozen:
@@ -738,16 +739,24 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         if self.monitor.alive_checks.pending is not None:
             await self.monitor.alive_checks.cancel(now_ts(), "the event was paused")
         log.warning("Event PAUSED by %s (%s)", interaction.user, interaction.user.id)
+        self.monitor.sync_status()
         await interaction.followup.send(TEXT.CMD_PAUSE_DONE, ephemeral=True)
 
     @app_commands.command(
         name="resume",
-        description="Unfreeze the event after /hell pause — timers continue where they stopped.",
+        description="Unfreeze the event after /hell pause or continue a failed run (needs MFA).",
     )
     @is_host()
     @app_commands.guild_only()
     async def resume(self, interaction: discord.Interaction) -> None:
-        """Unfreeze the event; the paused time is never counted."""
+        """Unfreeze the event; or continue a failed run (needs operator MFA approval)."""
+        if self.engine.status is EventStatus.FAILED:
+            await interaction.response.defer(thinking=True, ephemeral=True)
+            if not await self._request_approval(interaction, "resume"):
+                return
+            await interaction.followup.send(TEXT.CMD_APPROVAL_REQUESTED, ephemeral=True)
+            return
+
         await interaction.response.defer(thinking=True, ephemeral=True)
         try:
             async with self.monitor.lock:  # never race the 1s monitor tick
@@ -760,6 +769,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             # retroactively — clear it so fresh checks can be scheduled.
             await self.monitor.alive_checks.cancel(now_ts(), "the event was resumed")
         log.warning("Event RESUMED by %s (%s)", interaction.user, interaction.user.id)
+        self.monitor.sync_status()
         await interaction.followup.send(TEXT.CMD_RESUME_DONE, ephemeral=True)
 
     # ------------------------------------------------------------------ stop
@@ -806,13 +816,19 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
     @is_host()
     @app_commands.guild_only()
     async def approve(self, interaction: discord.Interaction, code: str) -> None:
-        """Run the pending /hell stop or /hell reset once the operator's code is entered."""
+        """Run the pending /hell stop, /hell reset, or /hell resume once the operator's code is entered."""
         await interaction.response.defer(thinking=True, ephemeral=True)
 
         expired = self.code_gate.expired_action
         if expired is not None:
             label = (
-                TEXT.DANGER_ACTION_STOP if expired == "stop" else TEXT.DANGER_ACTION_RESET
+                TEXT.DANGER_ACTION_STOP
+                if expired == "stop"
+                else (
+                    TEXT.DANGER_ACTION_RESET
+                    if expired == "reset"
+                    else getattr(TEXT, "DANGER_ACTION_RESUME", "Resuming the failed event")
+                )
             )
             await interaction.followup.send(
                 say(TEXT.CMD_APPROVE_EXPIRED, action=label), ephemeral=True
@@ -827,7 +843,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         # Stale-code guard: an approval was requested for a specific event.  If
         # that event ended and a NEW one is running, the code must not act on
         # the new event — request a fresh code instead.
-        if action == "stop" and self.code_gate.pending_event_uid != self.engine.event_uid:
+        if action in ("stop", "resume") and self.code_gate.pending_event_uid != self.engine.event_uid:
             self.code_gate.invalidate()
             await interaction.followup.send(TEXT.CMD_APPROVE_STALE_EVENT, ephemeral=True)
             return
@@ -847,6 +863,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
                 await interaction.followup.send(f"❌ {exc}", ephemeral=True)
                 return
             await self.monitor.dispatch(event)
+            self.monitor.sync_status()
             await interaction.followup.send(TEXT.CMD_STOP_DONE, ephemeral=True)
         elif action == "reset":
             async with self.monitor.lock:
@@ -855,9 +872,26 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
                 self.monitor.alive_checks.reset()
             self.announcer.forget_progress_message()
             log.warning("Event data reset by %s (previous status: %s)", interaction.user, was.value)
+            self.monitor.sync_status()
             await interaction.followup.send(
                 say(TEXT.CMD_RESET_DONE, previous_status=was.value), ephemeral=True
             )
+        elif action == "resume":
+            try:
+                async with self.monitor.lock:  # never race the 1s monitor tick
+                    self.engine.resume_failed()
+            except StartError as exc:
+                await interaction.followup.send(f"❌ {exc}", ephemeral=True)
+                return
+            if self.monitor.alive_checks.pending is not None:
+                await self.monitor.alive_checks.cancel(now_ts(), "the event was resumed")
+            self.announcer.forget_progress_message()
+            count = len(self.engine.last_participants)
+            snap = self.engine.snapshot(participants=count)
+            await self.announcer.update_progress(snap, force=True)
+            log.warning("Failed event RESUMED by %s (%s)", interaction.user, interaction.user.id)
+            self.monitor.sync_status()
+            await interaction.followup.send(TEXT.CMD_RESUME_DONE, ephemeral=True)
         else:  # pragma: no cover - defensive
             await interaction.followup.send(TEXT.CMD_APPROVE_NOTHING_PENDING, ephemeral=True)
 
@@ -870,7 +904,15 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         except the operator's DMs.
         """
         code = self.code_gate.issue(action, event_uid=self.engine.event_uid)
-        label = TEXT.DANGER_ACTION_STOP if action == "stop" else TEXT.DANGER_ACTION_RESET
+        label = (
+            TEXT.DANGER_ACTION_STOP
+            if action == "stop"
+            else (
+                TEXT.DANGER_ACTION_RESET
+                if action == "reset"
+                else getattr(TEXT, "DANGER_ACTION_RESUME", "Resuming the failed event")
+            )
+        )
         requester = getattr(interaction.user, "display_name", None) or str(interaction.user)
         try:
             user = self.bot.get_user(self.config.log_dm_user_id)

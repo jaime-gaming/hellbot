@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS event (
     end_reason           TEXT,
     final_saved          INTEGER NOT NULL DEFAULT 0,
     grace_started_ts     REAL,             -- empty-VC grace window in progress
+    grace_duration       REAL,             -- duration of the active grace window
     last_valid_observed_ts REAL,           -- last tick with at least one valid human [crash-recovery]
     paused_ts            REAL,             -- event paused: global + per-user timers frozen
     paused_seconds       REAL NOT NULL DEFAULT 0,  -- total paused time, never counted
@@ -163,6 +164,7 @@ class Store:
         columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(event)").fetchall()}
         for name, ddl in (
             ("grace_started_ts", "REAL"),
+            ("grace_duration", "REAL"),
             ("last_valid_observed_ts", "REAL"),
             ("paused_ts", "REAL"),
             ("paused_seconds", "REAL NOT NULL DEFAULT 0"),
@@ -209,6 +211,24 @@ class Store:
     def get_unverified_seconds(self, event_uid: str) -> float:
         return float(self.get_meta(f"unverified:{event_uid}", "0") or 0)
 
+    def set_alive_check_emptied(self, event_uid: str, ts: float) -> None:
+        """Remember that an alive check just emptied the VC."""
+        self.set_meta(f"alive_check_emptied:{event_uid}", repr(float(ts)))
+
+    def get_alive_check_emptied(self, event_uid: str) -> Optional[float]:
+        """Check if an alive check recently emptied the VC."""
+        raw = self.get_meta(f"alive_check_emptied:{event_uid}")
+        try:
+            return float(raw) if raw is not None else None
+        except ValueError:
+            return None
+
+    def clear_alive_check_emptied(self, event_uid: str) -> None:
+        """Clear the alive check emptied flag."""
+        key = f"alive_check_emptied:{event_uid}"
+        with self._lock:
+            self._conn.execute("DELETE FROM meta WHERE key = ?", (key,))
+
     # ----------------------------------------------------------- event state
 
     def load_state(self) -> EventState:
@@ -228,6 +248,7 @@ class Store:
             end_reason=r["end_reason"],
             final_saved=bool(r["final_saved"]),
             grace_started_ts=r["grace_started_ts"],
+            grace_duration=r["grace_duration"] if "grace_duration" in r.keys() else None,
             last_valid_observed_ts=r["last_valid_observed_ts"],
             paused_ts=r["paused_ts"],
             paused_seconds=float(r["paused_seconds"] or 0),
@@ -243,8 +264,8 @@ class Store:
                     guild_id = ?, voice_channel_id = ?, announce_channel_id = ?,
                     progress_channel_id = ?, progress_message_id = ?, started_by = ?,
                     end_reason = ?, final_saved = ?, grace_started_ts = ?,
-                    last_valid_observed_ts = ?, paused_ts = ?, paused_seconds = ?,
-                    pause_reason = ?
+                    grace_duration = ?, last_valid_observed_ts = ?, paused_ts = ?,
+                    paused_seconds = ?, pause_reason = ?
                 WHERE id = 1
                 """,
                 (
@@ -262,6 +283,7 @@ class Store:
                     state.end_reason,
                     int(state.final_saved),
                     state.grace_started_ts,
+                    state.grace_duration,
                     state.last_valid_observed_ts,
                     state.paused_ts,
                     state.paused_seconds,
@@ -286,10 +308,13 @@ class Store:
                 "UPDATE event SET last_valid_observed_ts = ? WHERE id = 1", (ts,)
             )
 
-    def set_grace_started(self, ts: Optional[float]) -> None:
+    def set_grace_started(self, ts: Optional[float], duration: Optional[float] = None) -> None:
         """Persist the empty-VC grace window so a restart resumes it."""
         with self._lock:
-            self._conn.execute("UPDATE event SET grace_started_ts = ? WHERE id = 1", (ts,))
+            self._conn.execute(
+                "UPDATE event SET grace_started_ts = ?, grace_duration = ? WHERE id = 1",
+                (ts, duration if ts is not None else None),
+            )
 
     def set_progress_message(self, channel_id: Optional[int], message_id: Optional[int]) -> None:
         with self._lock:
@@ -610,13 +635,13 @@ class Store:
                 ):
                     self._conn.execute(f"DELETE FROM {table}")
                 self._conn.execute(
-                    "DELETE FROM meta WHERE key LIKE 'next_alive_check:%' OR key LIKE 'unverified:%'"
+                    "DELETE FROM meta WHERE key LIKE 'next_alive_check:%' OR key LIKE 'unverified:%' OR key LIKE 'alive_check_emptied:%'"
                 )
                 self._conn.execute(
                     "UPDATE event SET status = ?, event_uid = NULL, start_ts = NULL, end_ts = NULL, "
                     "last_tick_ts = NULL, progress_channel_id = NULL, progress_message_id = NULL, "
                     "started_by = NULL, end_reason = NULL, final_saved = 0, "
-                    "grace_started_ts = NULL, last_valid_observed_ts = NULL, "
+                    "grace_started_ts = NULL, grace_duration = NULL, last_valid_observed_ts = NULL, "
                     "paused_ts = NULL, paused_seconds = 0, pause_reason = NULL WHERE id = 1",
                     (EventStatus.IDLE.value,),
                 )

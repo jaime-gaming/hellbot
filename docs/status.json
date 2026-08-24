@@ -1,12 +1,49 @@
 {
-  "last_updated": "2026-08-24T00:28:17Z",
+  "last_updated": "2026-08-24T00:55:10Z",
+  "ts": 1787532910.3112469,
   "bot_connected": true,
   "event_status": "RUNNING",
+  "status": "RUNNING",
+  "paused": false,
+  "pause_reason": null,
+  "end_reason": null,
   "event_elapsed_hours": 160.0,
+  "elapsed_seconds": 576000.0,
+  "total_seconds": 576000.0,
+  "remaining_seconds": 0.0,
+  "fraction": 1.0,
+  "participants": 1,
+  "start_ts": 1700000000.0,
+  "end_ts": null,
+  "grace_open": false,
+  "grace_seconds_left": 15.0,
+  "grace_total": 15.0,
+  "current_milestone": {
+    "hours": 160,
+    "title": "\ud83c\udfc6\ud83d\udd25 160 HOURS \u2014 WELCOME TO HELL COMPLETED",
+    "short_reward": "@hell master"
+  },
+  "upcoming_milestone": null,
+  "leaderboard": [
+    {
+      "rank": 1,
+      "name": "User1",
+      "seconds": 0.0,
+      "time": "0h 00m 00s"
+    }
+  ],
+  "leaderboard_total": 1,
+  "alive_check_pending": false,
+  "alive_check": null,
   "errors_last_24h": [],
   "warnings_last_24h": [],
-  "alive_check_pending": false,
-  "monitor_stale_seconds": null,
+  "health_errors": [],
+  "health_warnings": [],
+  "health_info": [],
   "rate_limits_5min": 0,
-  "operator_dm_ok": true
+  "monitor_stale_seconds": null,
+  "blind_seconds": 0.0,
+  "active_tasks": 0,
+  "operator_dm_ok": true,
+  "version": "1.4.0"
 }

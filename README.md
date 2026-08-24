@@ -38,7 +38,7 @@ empties and nobody returns within the grace period, the run is dead — permanen
   outage is credited back to whoever never left the VC
 * **Live log stream** DM'd to the operator: joins, leaves, kicks, milestones, errors
   (`/hell logs tail` shows recent lines in-channel when DMs are off)
-* **Dangerous commands need the operator's approval**: `/hell stop` and `/hell reset` only run
+* **Dangerous commands need the operator's approval**: `/hell stop`, `/hell reset` and resuming a failed run with `/hell resume` only run
   after a one-time code DM'd to the operator is entered with `/hell approve`
 * **`/hell pause` freezes the run** (global + per-user timers) so a bug can be fixed without the
   160h clock punishing the event; `/hell resume` continues exactly where it stopped, with the
@@ -208,9 +208,9 @@ in the log, and in the launcher's Dashboard.
 | `/hell milestones` | everyone | All five milestones, their rewards, when each was reached and how many users were eligible. |
 | `/hell stop` | `@gamenight host` | **Two-step, operator-approved.** The bot DMs a one-time code to the operator's DMs, then the host runs `/hell approve` with it → event marked **CANCELLED** (explicitly *not* FAILED), leaderboard frozen. |
 | `/hell reset` | `@gamenight host` | **Two-step, operator-approved.** The bot DMs a one-time code to the operator's DMs, then the host runs `/hell approve` with it → all event data wiped for a fresh run. |
-| `/hell approve` | `@gamenight host` | Enter the 6-character code DM'd to the operator to confirm the pending `/hell stop` or `/hell reset`. Codes expire after 5 minutes and work exactly once; a new request invalidates the previous code. |
+| `/hell approve` | `@gamenight host` | Enter the 6-character code DM'd to the operator to confirm the pending `/hell stop`, `/hell reset` or resuming a failed run. Codes expire after 5 minutes and work exactly once; a new request invalidates the previous code. |
 | `/hell pause` | `@gamenight host` | **Emergency freeze.** Stops the 160h clock *and* every contestant's clock instantly — no milestones can fire, no alive check can kick, and the empty-VC grace countdown is frozen too. Nothing can fail while paused. Persisted, so a restart stays paused. |
-| `/hell resume` | `@gamenight host` | Unfreezes after a pause. Every clock continues exactly where it stopped; the paused time is never counted against the 160h, and a grace window resumes with the time it had left. |
+| `/hell resume` | `@gamenight host` | Unfreezes after a pause, or continues a failed run (requires operator MFA via `/hell approve`). Every clock continues exactly where it stopped; the paused/failed time is never counted against the 160h. |
 | `/hell restart` | operator DM only | **Restart the bot process.** Exits with code 42 so Docker/systemd/the launcher picks it up again. The event state is preserved in SQLite and recovers automatically. Only usable via DM to the bot by the operator (LOG_DM_USER_ID). |
 | `/hell security` | `@gamenight host` | **Anti-cheat report.** Shows alive-check dodging, VC flapping, rate-limit spikes and monitor health. Anything suspicious also triggers an automatic alert to the operator's DMs. |
 | `/hell errors` | everyone | Look up an error code (e.g. `/hell errors HEL-100`) for its full explanation, including what it means and what to do about it. |
@@ -464,7 +464,7 @@ CANCELLED.
 | Bot offline briefly (restart, deploy, crash) | The timer keeps running, and anyone in the VC before *and* after the outage gets that time credited back — nobody loses progress for the bot's downtime |
 | Bot offline for a long time | The timer still keeps running, but the unobserved window is **not** credited to anyone and is reported in the progress message |
 | Alive check + restart | Check state is persisted; replies sent while offline are recovered, and an expired check is cancelled instead of kicking people |
-| Alive check ignored by everyone | Everyone is disconnected, the VC empties, and the normal failure rule ends the run |
+| Alive check ignored by everyone | Everyone is disconnected, the VC empties, and a 2-minute recovery grace period starts before failure |
 | Event paused during a bug | Global + per-user clocks freeze; no milestones, no roll calls, no grace expiry, no failure — pause time is never counted |
 | Grace window open when paused | The countdown freezes too; on `/hell resume` it continues with the time it had left |
 | Pause crosses the 160h mark | Completion waits until *effective* time reaches 160h — a paused run can never complete early |

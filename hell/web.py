@@ -15,14 +15,11 @@ Design constraints:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import time
 from pathlib import Path
 from typing import Any, Optional
 
-import aiohttp
 from aiohttp import web
 
 log = logging.getLogger("hell.web")
@@ -56,7 +53,7 @@ async def _handle_ws(request: web.Request) -> web.WebSocketResponse:
     _clients.add(ws)
     log.debug("WebSocket client connected (%d total)", len(_clients))
     try:
-        async for msg in ws:
+        async for _msg in ws:
             # We don't expect client messages; ignore them.
             pass
     finally:

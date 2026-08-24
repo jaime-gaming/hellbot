@@ -40,9 +40,9 @@ from .engine import (
     Observation,
 )
 from .models import EventStatus, ParticipantRef
+from .pages_sync import push_docs
 from .security import SuspicionTracker
 from .status_writer import get_status as get_status_writer
-from .pages_sync import push_docs
 from .tasks import spawn
 from .timeutil import format_hm, now_ts
 
@@ -62,7 +62,7 @@ class VoiceMonitor:
         self.engine = engine
         self.announcer = announcer
         self.alive_io = DiscordAliveCheckIO(bot, config)
-        self.alive_checks = AliveCheckManager(config, engine.store, self.alive_io)
+        self.alive_checks = AliveCheckManager(config, engine.store, self.alive_io, engine=engine)
         self.alive_checks.bind(engine.event_uid)
         self.reports = FinalReportDM(bot, config, engine, announcer)
         self.security = SuspicionTracker(self.alive_checks)
@@ -292,11 +292,32 @@ class VoiceMonitor:
 
         async def runner() -> None:
             try:
-                await self.alive_checks.tick(now, list(humans))
+                res = await self.alive_checks.tick(now, list(humans))
+                if res is not None and res.emptied_vc:
+                    self.engine.notify_alive_check_emptied(now)
             except Exception:  # pragma: no cover - never break the event loop
                 log.exception("Alive check tick failed")
 
         self._alive_task = spawn(runner(), name="alive-check")
+
+    def sync_status(self) -> None:
+        """Write docs/status.json and trigger GitHub Pages sync if enabled."""
+        try:
+            get_status_writer().write(
+                "docs/status.json",
+                engine=self.engine,
+                monitor=self,
+                stream=getattr(self.bot, "log_stream", None),
+                bot=self.bot,
+            )
+        except Exception:
+            log.debug("Could not write status.json", exc_info=True)
+
+        if getattr(self.config, "github_pages_sync", False):
+            try:
+                spawn(push_docs(), name="pages-sync")
+            except RuntimeError:
+                pass  # no running event loop (e.g. in tests)
 
     def _heartbeat(self, participants: int) -> None:
         """Periodic proof-of-life in the log file, useful when running headless."""
@@ -316,17 +337,8 @@ class VoiceMonitor:
             participants,
             f"{snap.upcoming.hours}h" if snap.upcoming else "none",
         )
-        # Write the GitHub Pages status JSON on every heartbeat.
-        try:
-            get_status_writer().write("docs/status.json", engine=self.engine, monitor=self, stream=getattr(self.bot, "log_stream", None))
-        except Exception:
-            log.debug("Could not write status.json", exc_info=True)
-        # Push docs/ to GitHub so Pages stays current (only when explicitly enabled).
-        if getattr(self.config, "github_pages_sync", False):
-            try:
-                spawn(push_docs(), name="pages-sync")
-            except RuntimeError:
-                pass  # no running event loop (e.g. in tests)
+        # Write the GitHub Pages status JSON and trigger Pages sync.
+        self.sync_status()
 
     @tasks.loop(seconds=20.0)
     async def _progress_loop(self) -> None:
@@ -369,18 +381,22 @@ class VoiceMonitor:
             await self._final_progress(terminal=False)
         elif isinstance(event, MilestoneReached):
             await self.announcer.announce_milestone(event)
+            self.sync_status()
         elif isinstance(event, EventFailed):
             await self.announcer.announce_failure(event)
             await self._final_progress()
             self.reports.schedule()          # DM every contestant their stats
+            self.sync_status()
         elif isinstance(event, EventCompleted):
             await self.announcer.announce_completion(event)
             await self._final_progress()
             self.reports.schedule()
+            self.sync_status()
         elif isinstance(event, EventCancelled):
             await self.announcer.announce_cancelled(event)
             await self._final_progress()
             self.reports.schedule()
+            self.sync_status()
 
     async def _final_progress(self, *, terminal: bool = True) -> None:
         self._terminal_rendered = terminal
@@ -478,6 +494,7 @@ class VoiceMonitor:
         self.announcer.forget_progress_message()
         self._terminal_rendered = False
         await self.announcer.update_progress(self.engine.snapshot(), force=True)
+        self.sync_status()
 
         # Let the guild know the bot recovered from a restart.
         if gap > 10.0:

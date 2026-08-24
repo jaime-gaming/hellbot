@@ -496,6 +496,7 @@ DANGER_CODE_BODY = (
 )
 DANGER_ACTION_STOP = "Stopping the event"
 DANGER_ACTION_RESET = "Resetting all event data"
+DANGER_ACTION_RESUME = "Resuming the failed event"
 CMD_APPROVAL_REQUESTED = (
     "⏳ **Approval required.** A one-time code was sent to the operator's DMs. "
     "Run `/hell approve` and enter the code to proceed."

@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .config import Config
-from .grace import EmptyVcGracePeriod
+from .grace import ALIVE_CHECK_RECOVERY_GRACE_SECONDS, EmptyVcGracePeriod
 from .leaderboard import top_participants
 from .milestones import (
     FINAL_MILESTONE_HOURS,
@@ -181,8 +181,12 @@ class HellEngine:
         # Timeline #2 (per-user 0 -> Xh). Timeline #1 (global 0 -> 160h) is
         # built on demand from the start timestamp; see `self.timeline`.
         self.tracker = UserTimeTracker(store, max_credit=config.max_tick_credit)
-        self.grace = EmptyVcGracePeriod(seconds=config.empty_vc_grace_seconds)
-        self.grace.restore(self.state.grace_started_ts)
+        self.grace = EmptyVcGracePeriod(
+            seconds=config.empty_vc_grace_seconds,
+            default_seconds=config.empty_vc_grace_seconds,
+        )
+        self.grace.restore(self.state.grace_started_ts, seconds=self.state.grace_duration)
+        self._alive_check_emptied_ts: Optional[float] = None
 
     # ------------------------------------------------------------- accessors
 
@@ -337,10 +341,10 @@ class HellEngine:
         and an open empty-VC grace window is shifted forward by the pause so
         its countdown resumes where it left off instead of expiring mid-pause.
         """
-        if not self.is_paused:
-            raise StartError("The event is not paused.")
         if not self.is_running:
             raise StartError("Cannot resume — the event is not running.")
+        if not self.is_paused:
+            raise StartError("The event is not paused.")
         now = now_ts() if now is None else now
         duration = max(0.0, now - (self.state.paused_ts or now))
         self.state.paused_seconds += duration
@@ -356,6 +360,41 @@ class HellEngine:
         log.warning(
             "Event %s resumed after %.1fs paused (total paused %.1fs)",
             self.state.event_uid, duration, self.state.paused_seconds,
+        )
+        return self.state
+
+    def notify_alive_check_emptied(self, now: Optional[float] = None) -> None:
+        """Record that an Are You Alive? check caused the VC to become empty."""
+        ts = now if now is not None else now_ts()
+        self._alive_check_emptied_ts = ts
+        if self.state.event_uid:
+            self.store.set_alive_check_emptied(self.state.event_uid, ts)
+
+    def resume_failed(self, *, now: Optional[float] = None) -> EventState:
+        """Continue a run that previously reached FAILED status.
+
+        The time during which the run was failed is banked into paused_seconds
+        so elapsed time continues exactly where it failed.
+        """
+        if self.state.status is not EventStatus.FAILED:
+            raise StartError("Cannot resume — the event has not failed.")
+        now = now_ts() if now is None else now
+        if self.state.end_ts is not None:
+            self.state.paused_seconds = max(self.state.paused_seconds, now - self.state.end_ts)
+        self.state.status = EventStatus.RUNNING
+        self.state.end_ts = None
+        self.state.end_reason = None
+        self.state.final_saved = False
+        self.grace.restore(None)
+        self.state.grace_started_ts = None
+        self.state.grace_duration = None
+        self.state.paused_ts = None
+        self.state.pause_reason = None
+        self.state.last_tick_ts = self._effective_now(now)
+        self.store.save_state(self.state)
+        log.warning(
+            "Event %s RESUMED from FAILED state (total paused %.1fs)",
+            self.state.event_uid, self.state.paused_seconds,
         )
         return self.state
 
@@ -523,9 +562,12 @@ class HellEngine:
         if obs.count > 0:
             # Someone valid is in the VC: close any open window.
             started = self.grace.close()
+            self._alive_check_emptied_ts = None
+            if self.state.event_uid:
+                self.store.clear_alive_check_emptied(self.state.event_uid)
             if started is None:
                 return None
-            self._persist_grace(None)
+            self._persist_grace(None, None)
             empty_for = max(0.0, obs.now - started)
             log.warning(
                 "VC repopulated after %.1fs empty — the run continues (%d person(s) back)",
@@ -541,12 +583,25 @@ class HellEngine:
 
         # VC is empty of valid humans.
         if not self.grace.is_open:
-            started = self.grace.open(obs.now)
-            self._persist_grace(started)
+            is_alive_check = False
+            if self._alive_check_emptied_ts is not None and abs(obs.now - self._alive_check_emptied_ts) <= 60.0:
+                is_alive_check = True
+            elif self.state.event_uid:
+                emptied_ts = self.store.get_alive_check_emptied(self.state.event_uid)
+                if emptied_ts is not None and abs(obs.now - emptied_ts) <= 60.0:
+                    is_alive_check = True
+            self._alive_check_emptied_ts = None
+            if self.state.event_uid:
+                self.store.clear_alive_check_emptied(self.state.event_uid)
+
+            grace_duration = ALIVE_CHECK_RECOVERY_GRACE_SECONDS if is_alive_check else self.config.empty_vc_grace_seconds
+            started = self.grace.open(obs.now, seconds=grace_duration)
+            self._persist_grace(started, grace_duration)
             deadline = self.grace.deadline() or obs.now
             log.warning(
-                "VC is EMPTY — grace period of %.0fs started, failing at %.3f unless someone joins",
+                "VC is EMPTY — grace period of %.0fs started%s, failing at %.3f unless someone joins",
                 self.grace.seconds,
+                " (alive-check recovery)" if is_alive_check else "",
                 deadline,
             )
             if not self.grace.has_expired(obs.now):
@@ -593,9 +648,10 @@ class HellEngine:
             )
         return None
 
-    def _persist_grace(self, started: Optional[float]) -> None:
+    def _persist_grace(self, started: Optional[float], duration: Optional[float] = None) -> None:
         self.state.grace_started_ts = started
-        self.store.set_grace_started(started)
+        self.state.grace_duration = duration if started is not None else None
+        self.store.set_grace_started(started, self.state.grace_duration)
 
     # -------------------------------------------------------------- internals
 
@@ -638,6 +694,7 @@ class HellEngine:
         # and an open pause is closed (its banked seconds stay in the clock).
         self.grace.restore(None)
         self.state.grace_started_ts = None
+        self.state.grace_duration = None
         self.state.paused_ts = None
         self.state.pause_reason = None
         self.store.save_state(self.state)

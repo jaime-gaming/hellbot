@@ -60,8 +60,9 @@ global clock while at least one valid human remains.
    depends on process uptime, so a restart cannot shift or reset the timer.
 2. **The clock never passes 160h.** `EventTimeline.clamp()` is applied before
    any elapsed value is used or stored.
-3. **Terminal is terminal.** Once FAILED / COMPLETED / CANCELLED, ticks are
-   inert, the leaderboard is frozen, and only `/hell reset` clears it.
+3. **Terminal is terminal unless explicitly resumed.** Once FAILED / COMPLETED / CANCELLED,
+   ticks are inert, the leaderboard is frozen, and only `/hell reset` clears it (or
+   `/hell resume` with operator MFA to continue a failed run).
 4. **A milestone fires exactly once.** `INSERT OR IGNORE` decides the winner;
    `announced` is only set after Discord accepts the message, so a crash
    between the two re-posts rather than loses it.
@@ -72,7 +73,9 @@ global clock while at least one valid human remains.
 6. **Bots and `@clanker` never exist** as far as the core is concerned — the
    monitor filters them out before an `Observation` is built.
 7. **An empty VC opens a grace window, not an immediate failure**, and failure
-   is timestamped at the moment the VC emptied, never later.
+   is timestamped at the moment the VC emptied, never later.  If an Are You Alive?
+   check causes the VC to become empty, a 2-minute recovery grace period is used
+   instead of the normal 15-second window.
 8. **Nothing in the message path can break the event.** Bad text, a missing
    placeholder, a failed send, a closed DM: all logged, none fatal.
 9. **Background work never blocks the 1-second loop** — roll-call I/O and DM

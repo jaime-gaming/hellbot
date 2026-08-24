@@ -33,10 +33,10 @@ from .logging_setup import setup_logging
 from .logsink import DiscordLogStream
 from .monitor import VoiceMonitor
 from .storage import Store
+from .tasks import spawn as _spawn
 from .texts import source as texts_source
 from .timeutil import format_hm, format_hms, now_ts
 from .web import broadcast, start_server, stop_server
-from .tasks import spawn as _spawn
 
 log = logging.getLogger("hell")
 
@@ -75,7 +75,7 @@ class HellBot(commands.Bot):
         self.health: Optional[HealthReport] = None
         self._resumed = False
         self._status_task: Optional[asyncio.Task] = None
-        self._web_runner = None
+        self._web_runner: Optional[aiohttp.web.AppRunner] = None
         self._web_push_task: Optional[asyncio.Task] = None
 
     async def setup_hook(self) -> None:
@@ -117,6 +117,7 @@ class HellBot(commands.Bot):
         except Exception:  # pragma: no cover - streaming must never block boot
             log.exception("Could not start the live log stream")
         self.monitor.start()
+        self.monitor.sync_status()
         if not self._resumed:
             self._resumed = True
             try:
@@ -290,6 +291,8 @@ class HellBot(commands.Bot):
             "fraction": round(snap.fraction, 4),
             "participants": snap.participants,
             "paused": snap.paused,
+            "pause_reason": self.engine.state.pause_reason,
+            "end_reason": self.engine.state.end_reason,
             "grace_open": snap.grace_open,
             "grace_seconds_left": round(snap.grace_seconds_left, 1),
             "grace_total": round(snap.grace_total, 1),

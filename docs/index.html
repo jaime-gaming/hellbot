@@ -31,6 +31,7 @@
     .badge.warn { background:var(--orange); color:#000; }
     .badge.err { background:var(--red); color:#fff; }
     .badge.idle { background:var(--border); color:var(--muted); }
+    .badge.paused { background:var(--purple); color:#fff; }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.7} }
 
     /* connection banner */
@@ -39,6 +40,16 @@
     .conn-banner.polling { display:block; background:rgba(52,152,219,0.12); color:var(--blue); border:1px solid rgba(52,152,219,0.25); }
     .conn-banner.disconnected { display:block; background:rgba(231,76,60,0.12); color:var(--red); border:1px solid rgba(231,76,60,0.25); }
 
+    /* status banners */
+    .status-banner { text-align:center; padding:0.75rem 1rem; font-size:0.92rem; font-weight:600; border-radius:0.5rem; margin-bottom:1rem; display:none; line-height:1.4; }
+    .status-banner.visible { display:block; }
+    .status-banner.banner-idle { background:rgba(255,255,255,0.05); color:var(--muted); border:1px solid var(--border); }
+    .status-banner.banner-failed { background:rgba(231,76,60,0.18); color:var(--red); border:1px solid rgba(231,76,60,0.4); }
+    .status-banner.banner-stopped { background:rgba(243,156,18,0.18); color:var(--orange); border:1px solid rgba(243,156,18,0.4); }
+    .status-banner.banner-completed { background:rgba(46,204,113,0.18); color:var(--green); border:1px solid rgba(46,204,113,0.4); }
+    .status-banner.banner-paused { background:rgba(155,89,182,0.18); color:var(--purple); border:1px solid rgba(155,89,182,0.4); }
+    .status-banner.banner-grace { background:rgba(231,76,60,0.22); color:var(--red); border:1px solid rgba(231,76,60,0.5); animation:pulse 1.5s infinite; }
+
     /* progress */
     .progress-wrap { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:1.25rem; margin-bottom:1.5rem; }
     .progress-header { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:0.6rem; }
@@ -46,6 +57,9 @@
     .progress-header .pct { font-size:1.4rem; font-weight:700; color:var(--ember); }
     .progress-bar-outer { width:100%; height:28px; background:#1e1e1e; border-radius:14px; overflow:hidden; position:relative; }
     .progress-bar-inner { height:100%; background:linear-gradient(90deg,var(--ember),var(--orange)); border-radius:14px; transition:width 1s ease; }
+    .progress-bar-inner.failed { background:linear-gradient(90deg,#962d22,var(--red)); }
+    .progress-bar-inner.completed { background:linear-gradient(90deg,var(--green),var(--gold)); }
+    .progress-bar-inner.paused { background:linear-gradient(90deg,#6c3483,var(--purple)); }
     .progress-bar-label { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); font-size:0.75rem; font-weight:600; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,0.6); white-space:nowrap; }
     .progress-times { display:flex; justify-content:space-between; margin-top:0.5rem; font-size:0.85rem; color:var(--muted); }
 
@@ -74,11 +88,6 @@
     .alive-bar-outer { width:100%; height:8px; background:#1e1e1e; border-radius:4px; overflow:hidden; margin-top:0.5rem; }
     .alive-bar-inner { height:100%; background:var(--orange); border-radius:4px; transition:width 1s linear; }
 
-    /* banners */
-    .grace-banner, .paused-banner { text-align:center; padding:0.6rem; font-size:0.9rem; font-weight:600; border-radius:0.5rem; margin-bottom:1rem; display:none; }
-    .grace-banner.visible { display:block; background:rgba(231,76,60,0.15); color:var(--red); border:1px solid rgba(231,76,60,0.3); animation:pulse 1.5s infinite; }
-    .paused-banner.visible { display:block; background:rgba(155,89,182,0.15); color:var(--purple); border:1px solid rgba(155,89,182,0.3); }
-
     footer { text-align:center; color:var(--muted); font-size:0.75rem; padding-top:1.5rem; border-top:1px solid var(--border); margin-top:1rem; }
     footer a { color:var(--blue); text-decoration:none; }
     footer a:hover { text-decoration:underline; }
@@ -87,8 +96,12 @@
 <body>
   <div class="container">
     <div id="connBanner" class="conn-banner">⏳ Connecting&hellip;</div>
-    <div id="graceBanner" class="grace-banner">⚠️ VC EMPTY — Grace period counting down!</div>
-    <div id="pausedBanner" class="paused-banner">⏸️ EVENT PAUSED</div>
+    <div id="graceBanner" class="status-banner banner-grace">⚠️ VC EMPTY — Grace period counting down!</div>
+    <div id="pausedBanner" class="status-banner banner-paused">⏸️ EVENT PAUSED</div>
+    <div id="idleBanner" class="status-banner banner-idle">💤 EVENT NOT STARTED — Waiting for <code>/hell start</code> in Discord to begin the 160-hour endurance run.</div>
+    <div id="failedBanner" class="status-banner banner-failed">💀 EVENT FAILED — The run has ended.</div>
+    <div id="stoppedBanner" class="status-banner banner-stopped">✋ EVENT STOPPED — The event was cancelled by an operator.</div>
+    <div id="completedBanner" class="status-banner banner-completed">🏆 EVENT COMPLETED — 160 consecutive hours conquered! Grand Champion achieved!</div>
 
     <header>
       <h1>🔥 Welcome to Hell</h1>
@@ -98,7 +111,7 @@
 
     <div class="progress-wrap">
       <div class="progress-header">
-        <span class="label">Event Progress</span>
+        <span class="label" id="progressTitle">Event Progress</span>
         <span class="pct" id="progressPct">0%</span>
       </div>
       <div class="progress-bar-outer">
@@ -112,14 +125,14 @@
     </div>
 
     <div class="grid">
-      <div class="card"><h3>Participants</h3><div class="value blue" id="vcCount">—</div><div class="sub">in the VC right now</div></div>
+      <div class="card"><h3>Participants</h3><div class="value blue" id="vcCount">—</div><div class="sub" id="vcSub">in the VC right now</div></div>
       <div class="card"><h3>Current Milestone</h3><div class="value ember" id="currentMs">—</div><div class="sub" id="currentMsSub"></div></div>
       <div class="card"><h3>Next Milestone</h3><div class="value orange" id="nextMs">—</div><div class="sub" id="nextMsSub"></div></div>
-      <div class="card"><h3>Contestants</h3><div class="value purple" id="totalLb">—</div><div class="sub">on the leaderboard</div></div>
+      <div class="card"><h3>Contestants</h3><div class="value purple" id="totalLb">—</div><div class="sub" id="totalLbSub">on the leaderboard</div></div>
     </div>
 
     <div class="section">
-      <h2>🏆 Live Leaderboard</h2>
+      <h2 id="lbHeading">🏆 Live Leaderboard</h2>
       <table class="lb-table">
         <thead><tr><th class="rank">#</th><th>Contestant</th><th class="time">Time</th></tr></thead>
         <tbody id="lbBody"><tr><td colspan="3" style="color:var(--muted);text-align:center;padding:2rem">Waiting for data&hellip;</td></tr></tbody>
@@ -135,7 +148,7 @@
     </div>
 
     <footer>
-      <p>Welcome to Hell &middot; <a href="/dev">Developer Dashboard</a> &middot; <a href="https://github.com/jaime-gaming/hellbot">GitHub</a></p>
+      <p>Welcome to Hell &middot; <a href="dev.html">Developer Dashboard</a> &middot; <a href="https://github.com/jaime-gaming/hellbot">GitHub</a></p>
       <p style="margin-top:0.3rem">Last update: <span id="lastUpdate">—</span> &middot; <span id="modeLabel">—</span></p>
     </footer>
   </div>
@@ -148,16 +161,16 @@
     var wsConnected = false;
 
     function fmt(s) {
-      s = Math.max(0, Math.floor(s));
+      s = Math.max(0, Math.floor(s || 0));
       var h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=s%60;
       return h+'h '+(m<10?'0':'')+m+'m '+(sec<10?'0':'')+sec+'s';
     }
     function fmtShort(s) {
-      s = Math.max(0, Math.floor(s));
+      s = Math.max(0, Math.floor(s || 0));
       var h=Math.floor(s/3600), m=Math.floor((s%3600)/60);
       return h+'h '+(m<10?'0':'')+m+'m';
     }
-    function esc(t) { var d=document.createElement('div'); d.appendChild(document.createTextNode(t)); return d.innerHTML; }
+    function esc(t) { var d=document.createElement('div'); d.appendChild(document.createTextNode(t || '')); return d.innerHTML; }
 
     // ---- WebSocket mode (live server) ----
     function connectWS() {
@@ -220,28 +233,41 @@
 
     // ---- Render from status.json (GitHub Pages fallback) ----
     function renderFromStatusJson(d) {
-      var elapsed = (d.event_elapsed_hours || 0) * 3600;
-      var total = 160 * 3600;
-      var fraction = total > 0 ? elapsed / total : 0;
+      var elapsed = (d.elapsed_seconds != null) ? d.elapsed_seconds : ((d.event_elapsed_hours || 0) * 3600);
+      var total = d.total_seconds || (160 * 3600);
+      var remaining = d.remaining_seconds != null ? d.remaining_seconds : Math.max(0, total - elapsed);
+      var fraction = d.fraction != null ? d.fraction : (total > 0 ? elapsed / total : 0);
+      var ts = d.ts || (d.last_updated ? new Date(d.last_updated).getTime() / 1000 : null);
       var obj = {
-        type: 'snapshot', ts: new Date(d.last_updated).getTime() / 1000,
-        status: d.event_status || 'IDLE',
-        elapsed: Math.round(elapsed), total: total,
-        remaining: Math.max(0, total - elapsed),
+        type: 'snapshot',
+        ts: ts,
+        status: d.event_status || d.status || 'IDLE',
+        paused: Boolean(d.paused),
+        pause_reason: d.pause_reason || null,
+        end_reason: d.end_reason || null,
+        elapsed: Math.round(elapsed),
+        total: total,
+        remaining: Math.round(remaining),
         fraction: Math.round(fraction * 10000) / 10000,
-        participants: 0, paused: false,
-        grace_open: false, grace_seconds_left: 0, grace_total: 15,
-        current_milestone: null, upcoming_milestone: null,
-        leaderboard: [], leaderboard_total: 0,
-        alive_check: d.alive_check_pending ? { answered:0, total:0, seconds_left:0 } : null,
-        health_errors: d.errors_last_24h || [],
-        health_warnings: d.warnings_last_24h || [],
-        health_info: [], log_tail: [],
+        participants: d.participants != null ? d.participants : 0,
+        grace_open: Boolean(d.grace_open),
+        grace_seconds_left: d.grace_seconds_left || 0,
+        grace_total: d.grace_total || 15,
+        current_milestone: d.current_milestone || null,
+        upcoming_milestone: d.upcoming_milestone || null,
+        leaderboard: d.leaderboard || [],
+        leaderboard_total: d.leaderboard_total != null ? d.leaderboard_total : (d.leaderboard ? d.leaderboard.length : 0),
+        alive_check: d.alive_check || (d.alive_check_pending ? { answered: 0, total: 0, seconds_left: 0 } : null),
+        health_errors: d.errors_last_24h || d.health_errors || [],
+        health_warnings: d.warnings_last_24h || d.health_warnings || [],
+        health_info: d.health_info || [],
+        log_tail: d.log_tail || [],
         rate_limits_5min: d.rate_limits_5min || 0,
         monitor_stale_seconds: d.monitor_stale_seconds,
-        blind_seconds: 0, active_tasks: 0,
+        blind_seconds: d.blind_seconds || 0,
+        active_tasks: d.active_tasks || 0,
         operator_dm_ok: d.operator_dm_ok !== false,
-        version: '?',
+        version: d.version || '?',
       };
       render(obj);
     }
@@ -249,36 +275,158 @@
     // ---- Unified render ----
     function render(d) {
       var badge = document.getElementById('statusBadge');
-      if (d.status==='RUNNING') { badge.textContent='🔥 RUNNING'; badge.className='badge ok'; }
-      else if (d.status==='COMPLETED') { badge.textContent='🏆 COMPLETED'; badge.className='badge ok'; }
-      else if (d.status==='FAILED') { badge.textContent='💀 FAILED'; badge.className='badge err'; }
-      else if (d.status==='CANCELLED') { badge.textContent='✋ CANCELLED'; badge.className='badge warn'; }
-      else { badge.textContent='💤 IDLE'; badge.className='badge idle'; }
+      var status = (d.status || 'IDLE').toUpperCase();
+      var isRunning = status === 'RUNNING';
+      var isPaused = Boolean(d.paused) && isRunning;
+      var isFailed = status === 'FAILED';
+      var isStopped = status === 'CANCELLED' || status === 'STOPPED';
+      var isCompleted = status === 'COMPLETED';
+      var isIdle = status === 'IDLE';
 
-      document.getElementById('graceBanner').className = 'grace-banner' + (d.grace_open ? ' visible' : '');
-      if (d.grace_open) document.getElementById('graceBanner').textContent = '⚠️ VC EMPTY — ' + d.grace_seconds_left + 's to repopulate or the run FAILS!';
-      document.getElementById('pausedBanner').className = 'paused-banner' + (d.paused ? ' visible' : '');
+      // 1. Status Badge
+      if (isPaused) {
+        badge.textContent = '⏸️ PAUSED';
+        badge.className = 'badge paused';
+      } else if (isRunning) {
+        badge.textContent = '🔥 RUNNING';
+        badge.className = 'badge ok';
+      } else if (isCompleted) {
+        badge.textContent = '🏆 COMPLETED';
+        badge.className = 'badge ok';
+      } else if (isFailed) {
+        badge.textContent = '💀 FAILED';
+        badge.className = 'badge err';
+      } else if (isStopped) {
+        badge.textContent = '✋ STOPPED';
+        badge.className = 'badge warn';
+      } else {
+        badge.textContent = '💤 NOT STARTED';
+        badge.className = 'badge idle';
+      }
 
+      // 2. Status Banners
+      var graceEl = document.getElementById('graceBanner');
+      var pausedEl = document.getElementById('pausedBanner');
+      var idleEl = document.getElementById('idleBanner');
+      var failedEl = document.getElementById('failedBanner');
+      var stoppedEl = document.getElementById('stoppedBanner');
+      var compEl = document.getElementById('completedBanner');
+
+      graceEl.className = 'status-banner banner-grace' + (d.grace_open ? ' visible' : '');
+      if (d.grace_open) {
+        graceEl.textContent = '⚠️ VC EMPTY — ' + Math.round(d.grace_seconds_left) + 's to repopulate or the run FAILS!';
+      }
+
+      pausedEl.className = 'status-banner banner-paused' + (isPaused ? ' visible' : '');
+      if (isPaused) {
+        pausedEl.textContent = '⏸️ EVENT PAUSED — Timers and roll calls are frozen.' + (d.pause_reason ? ' (' + d.pause_reason + ')' : '');
+      }
+
+      idleEl.className = 'status-banner banner-idle' + (isIdle ? ' visible' : '');
+      failedEl.className = 'status-banner banner-failed' + (isFailed ? ' visible' : '');
+      if (isFailed) {
+        failedEl.innerHTML = '💀 <strong>EVENT FAILED</strong> — The run ended at <strong>' + fmt(d.elapsed) + '</strong> / 160h.' +
+          (d.end_reason ? ' <br><span style="font-size:0.85rem;color:#ffaaaa">Reason: ' + esc(d.end_reason) + '</span>' : '');
+      }
+
+      stoppedEl.className = 'status-banner banner-stopped' + (isStopped ? ' visible' : '');
+      if (isStopped) {
+        stoppedEl.innerHTML = '✋ <strong>EVENT STOPPED</strong> — The run was stopped by an operator at <strong>' + fmt(d.elapsed) + '</strong> / 160h.' +
+          (d.end_reason ? ' <br><span style="font-size:0.85rem;color:#ffeaa7">Reason: ' + esc(d.end_reason) + '</span>' : '');
+      }
+
+      compEl.className = 'status-banner banner-completed' + (isCompleted ? ' visible' : '');
+
+      // 3. Progress Section
       var pct = (d.fraction * 100).toFixed(1);
+      if (isCompleted) pct = '100.0';
       document.getElementById('progressPct').textContent = pct + '%';
-      document.getElementById('progressBar').style.width = pct + '%';
-      document.getElementById('progressLabel').textContent = fmtShort(d.elapsed) + ' / ' + fmtShort(d.total);
-      document.getElementById('elapsedLabel').textContent = 'Elapsed: ' + fmt(d.elapsed);
-      document.getElementById('remainingLabel').textContent = 'Remaining: ' + fmt(d.remaining);
+      var barInner = document.getElementById('progressBar');
+      barInner.style.width = pct + '%';
+      barInner.className = 'progress-bar-inner' + (isFailed ? ' failed' : (isCompleted ? ' completed' : (isPaused ? ' paused' : '')));
 
-      document.getElementById('vcCount').textContent = d.participants || '—';
+      var progressTitle = document.getElementById('progressTitle');
+      var progressLabel = document.getElementById('progressLabel');
+      var elapsedLabel = document.getElementById('elapsedLabel');
+      var remainingLabel = document.getElementById('remainingLabel');
+
+      if (isIdle) {
+        progressTitle.textContent = 'Event Progress';
+        progressLabel.textContent = '0h 00m / 160h (Not Started)';
+        elapsedLabel.textContent = 'Elapsed: 0h 00m (Not started)';
+        remainingLabel.textContent = 'Remaining: 160h 00m';
+      } else if (isFailed) {
+        progressTitle.textContent = 'Final Progress';
+        progressLabel.textContent = fmtShort(d.elapsed) + ' / 160h (Failed)';
+        elapsedLabel.textContent = 'Final Time: ' + fmt(d.elapsed);
+        remainingLabel.textContent = 'Remaining: 0h 00m (Run Failed)';
+      } else if (isStopped) {
+        progressTitle.textContent = 'Final Progress';
+        progressLabel.textContent = fmtShort(d.elapsed) + ' / 160h (Stopped)';
+        elapsedLabel.textContent = 'Final Time: ' + fmt(d.elapsed);
+        remainingLabel.textContent = 'Remaining: 0h 00m (Run Stopped)';
+      } else if (isCompleted) {
+        progressTitle.textContent = 'Event Completed';
+        progressLabel.textContent = '160h 00m / 160h (Conquered!)';
+        elapsedLabel.textContent = 'Final Time: 160h 00m';
+        remainingLabel.textContent = 'Remaining: 0h 00m (All Clear!)';
+      } else if (isPaused) {
+        progressTitle.textContent = 'Event Progress (Frozen)';
+        progressLabel.textContent = fmtShort(d.elapsed) + ' / ' + fmtShort(d.total) + ' (Paused)';
+        elapsedLabel.textContent = 'Elapsed: ' + fmt(d.elapsed) + ' (Paused)';
+        remainingLabel.textContent = 'Remaining: ' + fmt(d.remaining);
+      } else {
+        progressTitle.textContent = 'Event Progress';
+        progressLabel.textContent = fmtShort(d.elapsed) + ' / ' + fmtShort(d.total);
+        elapsedLabel.textContent = 'Elapsed: ' + fmt(d.elapsed);
+        remainingLabel.textContent = 'Remaining: ' + fmt(d.remaining);
+      }
+
+      // 4. Grid Cards
+      var vcCountEl = document.getElementById('vcCount');
+      var vcSubEl = document.getElementById('vcSub');
+      if (isRunning) {
+        vcCountEl.textContent = d.participants != null ? d.participants : 0;
+        vcSubEl.textContent = 'in the VC right now';
+      } else if (isIdle) {
+        vcCountEl.textContent = '—';
+        vcSubEl.textContent = 'event not started';
+      } else {
+        vcCountEl.textContent = '0';
+        vcSubEl.textContent = 'event ended';
+      }
+
       if (d.current_milestone) {
         document.getElementById('currentMs').textContent = d.current_milestone.hours + 'h';
         document.getElementById('currentMsSub').textContent = d.current_milestone.short_reward || '';
-      } else { document.getElementById('currentMs').textContent='—'; document.getElementById('currentMsSub').textContent=''; }
+      } else if (isCompleted) {
+        document.getElementById('currentMs').textContent = '160h';
+        document.getElementById('currentMsSub').textContent = 'Grand Champion';
+      } else {
+        document.getElementById('currentMs').textContent = '—';
+        document.getElementById('currentMsSub').textContent = isIdle ? 'None yet' : '';
+      }
+
       if (d.upcoming_milestone) {
         document.getElementById('nextMs').textContent = d.upcoming_milestone.hours + 'h';
-        document.getElementById('nextMsSub').textContent = d.upcoming_milestone.time_to != null ? 'in ' + fmt(d.upcoming_milestone.time_to) : '';
-      } else if (d.status==='RUNNING') {
-        document.getElementById('nextMs').textContent='✅'; document.getElementById('nextMsSub').textContent='All cleared!';
-      } else { document.getElementById('nextMs').textContent='—'; document.getElementById('nextMsSub').textContent=''; }
-      document.getElementById('totalLb').textContent = d.leaderboard_total || '—';
+        document.getElementById('nextMsSub').textContent = d.upcoming_milestone.time_to != null ? 'in ' + fmt(d.upcoming_milestone.time_to) : (d.upcoming_milestone.short_reward || '');
+      } else if (isCompleted) {
+        document.getElementById('nextMs').textContent = '🏆';
+        document.getElementById('nextMsSub').textContent = 'All conquered!';
+      } else if (isRunning) {
+        document.getElementById('nextMs').textContent = '✅';
+        document.getElementById('nextMsSub').textContent = 'All cleared!';
+      } else {
+        document.getElementById('nextMs').textContent = '—';
+        document.getElementById('nextMsSub').textContent = '';
+      }
 
+      document.getElementById('totalLb').textContent = (d.leaderboard_total != null ? d.leaderboard_total : (d.leaderboard ? d.leaderboard.length : 0)) || '—';
+      document.getElementById('totalLbSub').textContent = (isFailed || isStopped || isCompleted) ? 'final participants' : 'on the leaderboard';
+
+      // 5. Leaderboard
+      var lbHeading = document.getElementById('lbHeading');
+      lbHeading.textContent = (isFailed || isStopped || isCompleted) ? '🏆 Final Leaderboard' : '🏆 Live Leaderboard';
       var tbody = document.getElementById('lbBody');
       if (d.leaderboard && d.leaderboard.length) {
         var html = '';
@@ -290,22 +438,37 @@
         }
         tbody.innerHTML = html;
       } else {
-        tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:1rem">No contestants yet</td></tr>';
+        var emptyMsg = isIdle ? 'No contestants yet — event has not started' : 'No contestants registered';
+        tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:1.5rem">' + emptyMsg + '</td></tr>';
       }
 
+      // 6. Alive Check
       var ac = d.alive_check;
       var acCard = document.getElementById('aliveCard');
-      if (ac) {
+      if (ac && isRunning && !isPaused) {
         acCard.className = 'alive-card active';
         document.getElementById('aliveText').textContent = '🚨 ' + ac.answered + '/' + ac.total + ' answered — ' + ac.seconds_left + 's remaining';
         document.getElementById('aliveBarWrap').style.display = 'block';
         document.getElementById('aliveBar').style.width = (ac.total > 0 ? (ac.answered/ac.total*100) : 0) + '%';
       } else {
         acCard.className = 'alive-card';
-        document.getElementById('aliveText').textContent = d.status==='RUNNING' ? '✅ No active roll call' : '—';
         document.getElementById('aliveBarWrap').style.display = 'none';
+        if (isIdle) {
+          document.getElementById('aliveText').textContent = '💤 Event not started';
+        } else if (isPaused) {
+          document.getElementById('aliveText').textContent = '⏸️ Roll calls paused';
+        } else if (isFailed) {
+          document.getElementById('aliveText').textContent = '💀 Event ended (failed)';
+        } else if (isStopped) {
+          document.getElementById('aliveText').textContent = '✋ Event ended (stopped)';
+        } else if (isCompleted) {
+          document.getElementById('aliveText').textContent = '🏆 Event completed';
+        } else {
+          document.getElementById('aliveText').textContent = '✅ No active roll call';
+        }
       }
 
+      // 7. Footer
       document.getElementById('lastUpdate').textContent = d.ts ? new Date(d.ts*1000).toLocaleTimeString() : '—';
     }
 

@@ -30,7 +30,7 @@ import random
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Optional, Protocol
+from typing import Any, Optional, Protocol
 
 from .config import Config
 from .models import ParticipantRef
@@ -109,6 +109,7 @@ class CheckResult:
     left_early: list[ParticipantRef]
     cancelled: bool = False
     reason: str = ""
+    emptied_vc: bool = False
 
 
 class AliveCheckIO(Protocol):
@@ -156,11 +157,13 @@ class AliveCheckManager:
         io: AliveCheckIO,
         *,
         rng: Optional[random.Random] = None,
+        engine: Optional[Any] = None,
     ):
         self.config = config
         self.store = store
         self.io = io
         self.rng = rng or random.Random()
+        self.engine = engine
         self.pending: Optional[PendingCheck] = None
         self._event_uid: Optional[str] = None
 
@@ -401,6 +404,16 @@ class AliveCheckManager:
                 len(to_kick),
             )
         kicked = [ParticipantRef(uid, check.required[uid]) for uid in kicked_ids]
+        emptied_vc = bool(
+            not cancelled
+            and kicked_ids
+            and present
+            and (present <= set(kicked_ids))
+        )
+        if emptied_vc and self._event_uid:
+            self.store.set_alive_check_emptied(self._event_uid, now)
+            if self.engine is not None:
+                self.engine.notify_alive_check_emptied(now)
 
         result = CheckResult(
             check_id=check.check_id,
@@ -409,6 +422,7 @@ class AliveCheckManager:
             left_early=left_early,
             cancelled=cancelled,
             reason=reason,
+            emptied_vc=emptied_vc,
         )
 
         log.info(

@@ -34,7 +34,6 @@ from typing import Optional
 from .alivecheck import AliveCheckManager
 from .timeutil import now_ts
 
-
 log = logging.getLogger("hell.security")
 
 # ---- thresholds -----------------------------------------------------------

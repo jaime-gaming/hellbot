@@ -23,6 +23,7 @@
     .badge { display:inline-block; margin-top:0.5rem; padding:0.2rem 0.8rem; border-radius:1rem; font-size:0.75rem; font-weight:600; }
     .badge.ok{background:var(--green);color:#000} .badge.warn{background:var(--orange);color:#000}
     .badge.err{background:var(--red);color:#fff} .badge.idle{background:var(--border);color:var(--muted)}
+    .badge.paused{background:var(--purple);color:#fff}
 
     .conn-banner { text-align:center; padding:0.3rem; font-size:0.75rem; font-weight:600; border-radius:0.4rem; margin-bottom:0.75rem; display:none; }
     .conn-banner.live { display:block; background:rgba(46,204,113,0.12); color:var(--green); border:1px solid rgba(46,204,113,0.25); }
@@ -34,7 +35,7 @@
     .card h3 { font-size:0.65rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.3rem; }
     .card .value { font-size:1.3rem; font-weight:700; }
     .card .sub { font-size:0.7rem; color:var(--muted); margin-top:0.15rem; }
-    .green{color:var(--green)} .red{color:var(--red)} .orange{color:var(--orange)} .blue{color:var(--blue)} .ember{color:var(--ember)}
+    .green{color:var(--green)} .red{color:var(--red)} .orange{color:var(--orange)} .blue{color:var(--blue)} .ember{color:var(--ember)} .purple{color:var(--purple)}
 
     .section { margin-bottom:1.25rem; }
     .section h2 { font-size:0.85rem; margin-bottom:0.5rem; color:var(--ember); border-bottom:1px solid var(--border); padding-bottom:0.4rem; display:flex; justify-content:space-between; align-items:center; }
@@ -102,7 +103,7 @@
     </div>
 
     <footer>
-      <p>Welcome to Hell &middot; <a href="/">Live Dashboard</a> &middot; <a href="https://github.com/jaime-gaming/hellbot">GitHub</a></p>
+      <p>Welcome to Hell &middot; <a href="index.html">Live Dashboard</a> &middot; <a href="https://github.com/jaime-gaming/hellbot">GitHub</a></p>
       <p style="margin-top:0.2rem">Last update: <span id="lastUpdate">—</span> &middot; <span id="modeLabel">—</span></p>
     </footer>
   </div>
@@ -116,8 +117,8 @@
     var logBox=document.getElementById('logBox');
     logBox.addEventListener('scroll',function(){logAutoScroll=logBox.scrollHeight-logBox.scrollTop-logBox.clientHeight<30;});
 
-    function fmtHm(s){s=Math.max(0,Math.floor(s));var h=Math.floor(s/3600),m=Math.floor((s%3600)/60);return h+'h '+(m<10?'0':'')+m+'m';}
-    function esc(t){var d=document.createElement('div');d.appendChild(document.createTextNode(t));return d.innerHTML;}
+    function fmtHm(s){s=Math.max(0,Math.floor(s||0));var h=Math.floor(s/3600),m=Math.floor((s%3600)/60);return h+'h '+(m<10?'0':'')+m+'m';}
+    function esc(t){var d=document.createElement('div');d.appendChild(document.createTextNode(t||''));return d.innerHTML;}
 
     // ---- WebSocket ----
     function connectWS(){
@@ -142,30 +143,68 @@
     }
 
     function renderFromStatusJson(d){
-      var elapsed=(d.event_elapsed_hours||0)*3600;
+      var elapsed=(d.elapsed_seconds!=null)?d.elapsed_seconds:((d.event_elapsed_hours||0)*3600);
+      var ts=d.ts||(d.last_updated?new Date(d.last_updated).getTime()/1000:null);
       render({
-        type:'snapshot',ts:new Date(d.last_updated).getTime()/1000,
-        status:d.event_status||'IDLE',elapsed:Math.round(elapsed),participants:0,
-        active_tasks:0,rate_limits_5min:d.rate_limits_5min||0,
-        monitor_stale_seconds:d.monitor_stale_seconds,blind_seconds:0,
+        type:'snapshot',ts:ts,
+        status:d.event_status||d.status||'IDLE',
+        paused:Boolean(d.paused),
+        pause_reason:d.pause_reason||null,
+        end_reason:d.end_reason||null,
+        elapsed:Math.round(elapsed),
+        participants:d.participants!=null?d.participants:0,
+        active_tasks:d.active_tasks||0,
+        rate_limits_5min:d.rate_limits_5min||0,
+        monitor_stale_seconds:d.monitor_stale_seconds,
+        blind_seconds:d.blind_seconds||0,
         operator_dm_ok:d.operator_dm_ok!==false,
-        health_errors:d.errors_last_24h||[],health_warnings:d.warnings_last_24h||[],health_info:[],
-        log_tail:[],version:'?',
+        health_errors:d.errors_last_24h||d.health_errors||[],
+        health_warnings:d.warnings_last_24h||d.health_warnings||[],
+        health_info:d.health_info||[],
+        log_tail:d.log_tail||[],version:d.version||'?',
       });
     }
 
     // ---- Render ----
     function render(d){
       var badge=document.getElementById('statusBadge');
-      if(d.status==='RUNNING'){badge.textContent='🔥 RUNNING';badge.className='badge ok';}
-      else if(d.status==='COMPLETED'){badge.textContent='🏆 COMPLETED';badge.className='badge ok';}
-      else if(d.status==='FAILED'){badge.textContent='💀 FAILED';badge.className='badge err';}
-      else if(d.status==='CANCELLED'){badge.textContent='✋ CANCELLED';badge.className='badge warn';}
-      else{badge.textContent='💤 IDLE';badge.className='badge idle';}
+      var status=(d.status||'IDLE').toUpperCase();
+      var isRunning = status === 'RUNNING';
+      var isPaused = Boolean(d.paused) && isRunning;
+      var isFailed = status === 'FAILED';
+      var isStopped = status === 'CANCELLED' || status === 'STOPPED';
+      var isCompleted = status === 'COMPLETED';
 
-      document.getElementById('evStatus').textContent=d.status;
+      if(isPaused){badge.textContent='⏸️ PAUSED';badge.className='badge paused';}
+      else if(isRunning){badge.textContent='🔥 RUNNING';badge.className='badge ok';}
+      else if(isCompleted){badge.textContent='🏆 COMPLETED';badge.className='badge ok';}
+      else if(isFailed){badge.textContent='💀 FAILED';badge.className='badge err';}
+      else if(isStopped){badge.textContent='✋ STOPPED';badge.className='badge warn';}
+      else{badge.textContent='💤 NOT STARTED';badge.className='badge idle';}
+
+      var evStatusEl = document.getElementById('evStatus');
+      if (isPaused) {
+        evStatusEl.textContent = 'PAUSED';
+        evStatusEl.className = 'value purple';
+      } else if (isRunning) {
+        evStatusEl.textContent = 'RUNNING';
+        evStatusEl.className = 'value green';
+      } else if (isCompleted) {
+        evStatusEl.textContent = 'COMPLETED';
+        evStatusEl.className = 'value green';
+      } else if (isFailed) {
+        evStatusEl.textContent = 'FAILED';
+        evStatusEl.className = 'value red';
+      } else if (isStopped) {
+        evStatusEl.textContent = 'STOPPED';
+        evStatusEl.className = 'value orange';
+      } else {
+        evStatusEl.textContent = 'IDLE';
+        evStatusEl.className = 'value blue';
+      }
+
       document.getElementById('evElapsed').textContent=fmtHm(d.elapsed);
-      document.getElementById('evVc').textContent=d.participants||'—';
+      document.getElementById('evVc').textContent=isRunning ? (d.participants||0) : (status==='IDLE' ? '—' : 0);
       document.getElementById('evTasks').textContent=d.active_tasks;
       var rl=d.rate_limits_5min||0,rlEl=document.getElementById('evRl');
       rlEl.textContent=rl;rlEl.className='value '+(rl>5?'red':rl>0?'orange':'green');

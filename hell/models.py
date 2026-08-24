@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
+DEFAULT_TOTAL_SECONDS = 160 * 3600.0
+CONTINUATION_TOTAL_SECONDS = 320 * 3600.0
+
 
 class EventStatus(str, Enum):
     """Lifecycle of a `Welcome to Hell` run."""
@@ -98,4 +101,7 @@ class EventState:
     last_valid_observed_ts: Optional[float] = None  # last tick with at least one valid human
     paused_ts: Optional[float] = None          # when the event was paused; None = running
     paused_seconds: float = 0.0                # total time paused — never counted anywhere
-    pause_reason: Optional[str] = None         # why it was paused (audit trail)
+    pause_reason: Optional[str] = None          # why it was paused (audit trail)
+    total_seconds: float = DEFAULT_TOTAL_SECONDS   # event clock length (160h, or 320h after continuation)
+    milestones_enabled: bool = True             # phase 2 continuation has no milestones
+    continuation: bool = False                  # this run was resumed into Hell 2 (320h)

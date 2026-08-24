@@ -17,6 +17,7 @@ from discord.ext import commands
 from hell import RESTART_EXIT_CODE
 from hell.announcer import Announcer
 from hell.cog import HellCommands
+from hell.milestones import TOTAL_SECONDS
 from hell.models import EventStatus
 from hell.monitor import VoiceMonitor
 from hell.timeutil import now_ts
@@ -780,6 +781,72 @@ def test_help_lists_every_command_split_by_permission(wired, host):
     assert "Anyone can use" in text
     assert "only" in text                      # the host-restricted section
     assert "alive checks" in text.lower()
+
+
+# ------------------------------------------------------------- /hell broadcast
+
+
+def test_broadcast_posts_a_colored_embed(wired, host):
+    cog, bot, text, _voice = wired
+    interaction = FakeInteraction(bot, host)
+
+    call(cog, "broadcast", interaction, message="Heads up from the hosts", level=Choice("warning"), target=Choice("announcements"))
+
+    assert "Broadcast sent" in interaction.text()
+    assert "WARNING" in interaction.text()
+    assert text.sent and len(text.sent) == 1
+    from hell.announcer import embed_to_text
+
+    rendered = embed_to_text(text.sent[0].embeds[0])
+    assert "Heads up from the hosts" in rendered
+    assert "WARNING" in rendered
+
+
+def test_broadcast_requires_host_role(wired):
+    cog, bot, _text, _voice = wired
+    interaction = FakeInteraction(bot, FakeAuthor(uid=99, roles=[]))
+    call(cog, "broadcast", interaction, message="spam")
+    assert "cannot use this command" in interaction.text().lower()
+
+
+# ----------------------------------------------------------- Hell 2 resume
+
+
+def test_resume_completed_run_after_yes_vote_starts_hell_2(wired, host, engine):
+    cog, bot, _text, _voice = wired
+    start(engine, T0, 1, 2)
+    engine.tick(obs(T0 + TOTAL_SECONDS, 1, 2))
+    assert engine.status is EventStatus.COMPLETED
+
+    uid = engine.event_uid
+    engine.store.record_continuation_vote(uid, 1, "yes", T0)
+    engine.store.record_continuation_vote(uid, 2, "yes", T0)
+    engine.store.record_continuation_vote(uid, 3, "no", T0)
+    engine.store.set_continuation_poll(uid, status="closed", result="yes")
+
+    interaction = FakeInteraction(bot, host)
+    call(cog, "resume", interaction)
+
+    assert engine.status is EventStatus.RUNNING
+    assert engine.is_continuation
+    assert engine.state.total_seconds == 320 * 3600
+    assert not engine.state.milestones_enabled
+    assert "HELL 2" in interaction.text()
+
+
+def test_resume_completed_run_is_refused_without_yes_majority(wired, host, engine):
+    cog, bot, _text, _voice = wired
+    start(engine, T0, 1, 2)
+    engine.tick(obs(T0 + TOTAL_SECONDS, 1, 2))
+    engine.store.record_continuation_vote(engine.event_uid, 1, "no", T0)
+    engine.store.record_continuation_vote(engine.event_uid, 2, "no", T0)
+    engine.store.set_continuation_poll(engine.event_uid, status="closed", result="no")
+
+    interaction = FakeInteraction(bot, host)
+    call(cog, "resume", interaction)
+
+    assert engine.status is EventStatus.COMPLETED
+    assert "cannot resume" in interaction.text().lower()
 
 
 # ---------------------------------------------------------------- /hell user

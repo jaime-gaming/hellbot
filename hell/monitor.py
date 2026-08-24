@@ -28,6 +28,7 @@ from .alivecheck import AliveCheckManager
 from .aliveio import DiscordAliveCheckIO
 from .announcer import Announcer
 from .config import Config
+from .continuation import ContinuationManager
 from .dm import FinalReportDM
 from .embeds import theme_color
 from .engine import (
@@ -69,6 +70,8 @@ class VoiceMonitor:
         self.engine.hell_events.alive_checks = self.alive_checks
         self.engine.finale.announcer = announcer
         self.reports = FinalReportDM(bot, config, engine, announcer)
+        self.continuation = ContinuationManager(bot, config, engine, announcer)
+        self.reports.continuation = self.continuation
         self.security = SuspicionTracker(self.alive_checks)
         self._ready_at: Optional[float] = None
         self._kick_attempts: dict[int, float] = {}
@@ -265,9 +268,11 @@ class VoiceMonitor:
         if self.engine.is_running and not self.engine.is_paused:
             self._ensure_alive_checks_bound(now)
             self._pump_alive_check(now, humans)
-            # Hell Events & Finale tick
+            # Hell Events & Finale tick.  Hell 2 continuation has one finish
+            # (the secret 320h reward), so the 159-160h finale never repeats.
             await self.engine.hell_events.tick(now, humans)
-            await self.engine.finale.tick(now, self.engine.elapsed(now), humans)
+            if not self.engine.is_continuation:
+                await self.engine.finale.tick(now, self.engine.elapsed(now), humans)
 
             # In the final 60 seconds (countdown mode), update progress display every second
             if self.engine.finale.is_countdown(self.engine.elapsed(now)):
@@ -456,6 +461,10 @@ class VoiceMonitor:
             if self.reports.pending():
                 log.info("Resuming end-of-event stat cards after restart")
                 self.reports.schedule()
+            elif self.config.send_final_dms:
+                # The 160h run is over and the cards are out — make sure the
+                # "keep on Hell?" question is still live after a restart.
+                await self.continuation.ensure_for(state.event_uid)
             return
         if state.status is not EventStatus.RUNNING:
             return
@@ -518,7 +527,7 @@ class VoiceMonitor:
                     f"The bot was restarted and is back online. "
                     f"The event was unobserved for **{gap:.0f}s** — "
                     f"the timer never stopped and nobody was penalised. "
-                    f"Elapsed: **{format_hm(self.engine.elapsed())}** / 160h."
+                    f"Elapsed: **{format_hm(self.engine.elapsed())}** / {format_hm(self.engine.state.total_seconds)}."
                 ),
                 color=theme_color("RUNNING"),
             )

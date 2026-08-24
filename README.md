@@ -31,6 +31,15 @@ empties and nobody returns within the grace period, the run is dead — permanen
 * **15-second grace period** when the VC empties, with a no-ping warning
 * **Random alive checks** every 1–6 h: reply `Yes` in 5 minutes or get disconnected
 * A **personal stat card by DM** for every contestant when the run ends
+* Hosts can post **colored embeds** with `/hell broadcast` (`info`, `warning`, `error`, …) to the
+  announcement channel or the VC text chat
+
+**How the run can continue (Hell 2)**
+
+* At **160h completed**, after the stat cards are sent, the bot posts a *“keep on Hell?”* vote with
+  **Yes/No** buttons. It stays open for **10 minutes**.
+* If **most votes are Yes**, a host can run `/hell resume` and the same event continues to **320h**.
+* After 160h there are **no milestones** — just one final and **secret** reward at 320h.
 
 **The bot**
 
@@ -206,16 +215,15 @@ in the log, and in the launcher's Dashboard.
 | `/hell user` | everyone | How long someone has spent in Hell: time, rank, share of the event, milestones claimed. |
 | `/hell export` | `@gamenight host` | The leaderboard as a CSV attachment, for handing out rewards outside Discord. |
 | `/hell milestones` | everyone | All five milestones, their rewards, when each was reached and how many users were eligible. |
-| `/hell difficulty` | everyone | Show the 5 difficulty tiers and current challenge level. |
-| `/hell setdifficulty` | `@gamenight host` | Override or set the difficulty tier (`0` to `4`, or `auto`). |
-| `/hell announcedifficulty` | `@gamenight host` | Broadcast the current difficulty update or 5-tier overview to the announcement channel. |
+| `/hell difficulty` | everyone / `@gamenight host` | Show the 5 difficulty tiers and current level; `action: set` (host only, `0`-`4` or `auto`) overrides it; `action: announce` (host only) posts it to the announcement channel. |
+| `/hell broadcast` | `@gamenight host` | Post the host's message as a colored embed — `level: info/warning/error/…`, `target: announcements` or `vc`, no plain text outside the embed. |
 | `/hell hellevents` | everyone / `@gamenight host` | View active Hell Event, rules, or trigger an event (`action: trigger`, `@gamenight host` only). |
 | `/hell gamble` | everyone | Gamble your leaderboard timer (Difficulty 3+): win bonus time or risk losing personal time + 1 minute server mute. Supports optional `[hours]` bet. |
 | `/hell stop` | `@gamenight host` | **Two-step, operator-approved.** The bot DMs a one-time code to the operator's DMs, then the host runs `/hell approve` with it → event marked **CANCELLED** (explicitly *not* FAILED), leaderboard frozen. |
 | `/hell reset` | `@gamenight host` | **Two-step, operator-approved.** The bot DMs a one-time code to the operator's DMs, then the host runs `/hell approve` with it → all event data wiped for a fresh run. |
 | `/hell approve` | `@gamenight host` | Enter the 6-character code DM'd to the operator to confirm the pending `/hell stop`, `/hell reset` or resuming a failed run. Codes expire after 5 minutes and work exactly once; a new request invalidates the previous code. |
 | `/hell pause` | `@gamenight host` | **Emergency freeze.** Stops the 160h clock *and* every contestant's clock instantly — no milestones can fire, no alive check can kick, and the empty-VC grace countdown is frozen too. Nothing can fail while paused. Persisted, so a restart stays paused. |
-| `/hell resume` | `@gamenight host` | Unfreezes after a pause, or continues a failed run (requires operator MFA via `/hell approve`). Every clock continues exactly where it stopped; the paused/failed time is never counted against the 160h. |
+| `/hell resume` | `@gamenight host` | Unfreezes after a pause, continues a failed run (requires operator MFA via `/hell approve`), or after a **Yes** majority in the 160h *keep on Hell?* vote, starts **Hell 2** — the same run continues to **320h**, with no milestones after 160h and only a final, secret reward. |
 | `/hell restart` | operator DM only | **Restart the bot process.** Exits with code 42 so Docker/systemd/the launcher picks it up again. The event state is preserved in SQLite and recovers automatically. Only usable via DM to the bot by the operator (LOG_DM_USER_ID). |
 | `/hell security` | `@gamenight host` | **Anti-cheat report.** Shows alive-check dodging, VC flapping, rate-limit spikes and monitor health. Anything suspicious also triggers an automatic alert to the operator's DMs. |
 | `/hell errors` | everyone | Look up an error code (e.g. `/hell errors HEL-100`) for its full explanation, including what it means and what to do about it. |

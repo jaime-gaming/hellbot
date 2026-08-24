@@ -81,6 +81,8 @@ class HellBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         await self.add_cog(HellCommands(self, self.config, self.engine, self.monitor))
+        # Keep the "keep on Hell?" vote buttons working even after a restart.
+        self.add_view(self.monitor.continuation.view())
         guild = discord.Object(id=self.config.guild_id)
         self.tree.copy_global_to(guild=guild)
         try:
@@ -135,10 +137,11 @@ class HellBot(commands.Bot):
     async def _update_presence(self) -> None:
         """Initial status and start the rotating status loop."""
         try:
+            snap = self.engine.snapshot()
             if self.engine.is_running:
-                text = f"Hell: {format_hm(self.engine.elapsed())} / 160h"
+                text = f"Hell: {format_hm(snap.elapsed)} / {format_hm(snap.total)}"
             elif self.engine.status.value == "COMPLETED":
-                text = "Hell conquered — 160h"
+                text = "Hell 2 conquered — 320h" if snap.continuation else "Hell conquered — 160h"
             elif self.engine.status.value == "FAILED":
                 text = "Hell failed — /hell status"
             else:
@@ -167,7 +170,7 @@ class HellBot(commands.Bot):
         """Pick one status message from the pool and apply it."""
         if not self.engine.is_running:
             if self.engine.status.value == "COMPLETED":
-                text = "🏆 Hell conquered — 160h"
+                text = "🏆 Hell 2 conquered — 320h" if self.engine.is_continuation else "🏆 Hell conquered — 160h"
             elif self.engine.status.value == "FAILED":
                 text = "💀 Hell failed — /hell status"
             else:
@@ -188,7 +191,7 @@ class HellBot(commands.Bot):
             options.append(f"🥇 {top.display_name} — {format_hms(top.seconds)}")
 
         # 2) Elapsed time
-        options.append(f"⏱️ {format_hm(snap.elapsed)} / 160h ({snap.fraction * 100:.1f}%)")
+        options.append(f"⏱️ {format_hm(snap.elapsed)} / {format_hm(snap.total)} ({snap.fraction * 100:.1f}%)")
 
         # 3) Time remaining
         options.append(f"⏳ {format_hm(snap.remaining)} remaining")

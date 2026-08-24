@@ -25,7 +25,7 @@ from .models import EventState, EventStatus, LeaderboardEntry, MilestoneRecord, 
 
 log = logging.getLogger("hell.storage")
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -56,7 +56,10 @@ CREATE TABLE IF NOT EXISTS event (
     last_valid_observed_ts REAL,           -- last tick with at least one valid human [crash-recovery]
     paused_ts            REAL,             -- event paused: global + per-user timers frozen
     paused_seconds       REAL NOT NULL DEFAULT 0,  -- total paused time, never counted
-    pause_reason         TEXT              -- why it was paused (audit trail)
+    pause_reason         TEXT,             -- why it was paused (audit trail)
+    total_seconds        REAL NOT NULL DEFAULT 576000.0,  -- 160h normally, 320h after continuation
+    milestones_enabled   INTEGER NOT NULL DEFAULT 1,     -- phase 2 continuation has no milestones
+    continuation         INTEGER NOT NULL DEFAULT 0      -- Hell 2 (320h) continuation run
 );
 
 CREATE TABLE IF NOT EXISTS user_time (
@@ -142,6 +145,25 @@ CREATE TABLE IF NOT EXISTS hell_events (
     metadata       TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_hell_events_uid ON hell_events(event_uid);
+
+CREATE TABLE IF NOT EXISTS continuation_poll (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    event_uid   TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'none',   -- none | open | closed | resumed
+    channel_id  INTEGER,
+    message_id  INTEGER,
+    started_ts  REAL,
+    deadline_ts REAL,
+    result      TEXT
+);
+
+CREATE TABLE IF NOT EXISTS continuation_votes (
+    event_uid TEXT NOT NULL,
+    user_id   INTEGER NOT NULL,
+    answer    TEXT NOT NULL,               -- yes | no
+    voted_ts  REAL NOT NULL,
+    PRIMARY KEY (event_uid, user_id)
+);
 """
 
 
@@ -182,6 +204,9 @@ class Store:
             ("paused_ts", "REAL"),
             ("paused_seconds", "REAL NOT NULL DEFAULT 0"),
             ("pause_reason", "TEXT"),
+            ("total_seconds", "REAL NOT NULL DEFAULT 576000.0"),
+            ("milestones_enabled", "INTEGER NOT NULL DEFAULT 1"),
+            ("continuation", "INTEGER NOT NULL DEFAULT 0"),
         ):
             if name not in columns:
                 log.info("Migrating database: adding event.%s", name)
@@ -266,6 +291,9 @@ class Store:
             paused_ts=r["paused_ts"],
             paused_seconds=float(r["paused_seconds"] or 0),
             pause_reason=r["pause_reason"],
+            total_seconds=float(r["total_seconds"] or 576000.0),
+            milestones_enabled=bool(r["milestones_enabled"]),
+            continuation=bool(r["continuation"]),
         )
 
     def save_state(self, state: EventState) -> None:
@@ -278,7 +306,8 @@ class Store:
                     progress_channel_id = ?, progress_message_id = ?, started_by = ?,
                     end_reason = ?, final_saved = ?, grace_started_ts = ?,
                     grace_duration = ?, last_valid_observed_ts = ?, paused_ts = ?,
-                    paused_seconds = ?, pause_reason = ?
+                    paused_seconds = ?, pause_reason = ?, total_seconds = ?,
+                    milestones_enabled = ?, continuation = ?
                 WHERE id = 1
                 """,
                 (
@@ -301,6 +330,9 @@ class Store:
                     state.paused_ts,
                     state.paused_seconds,
                     state.pause_reason,
+                    state.total_seconds,
+                    int(state.milestones_enabled),
+                    int(state.continuation),
                 ),
             )
 
@@ -670,6 +702,88 @@ class Store:
         stages.add(stage)
         self.set_meta(f"finale_stages:{event_uid}", json.dumps(sorted(stages)))
 
+    # -------------------------------------------------------- continuation vote
+
+    def get_continuation_poll(self) -> Optional[dict]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM continuation_poll WHERE id = 1"
+            ).fetchone()
+        return dict(row) if row else None
+
+    def set_continuation_poll(
+        self,
+        event_uid: str,
+        *,
+        channel_id: Optional[int] = None,
+        message_id: Optional[int] = None,
+        started_ts: Optional[float] = None,
+        deadline_ts: Optional[float] = None,
+        status: str = "open",
+        result: Optional[str] = None,
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO continuation_poll(id, event_uid, status, channel_id, message_id,
+                                              started_ts, deadline_ts, result)
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    event_uid = excluded.event_uid,
+                    status = excluded.status,
+                    channel_id = excluded.channel_id,
+                    message_id = excluded.message_id,
+                    started_ts = excluded.started_ts,
+                    deadline_ts = excluded.deadline_ts,
+                    result = excluded.result
+                """,
+                (
+                    event_uid,
+                    status,
+                    channel_id,
+                    message_id,
+                    started_ts,
+                    deadline_ts,
+                    result,
+                ),
+            )
+
+    def clear_continuation_poll(self) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM continuation_poll WHERE id = 1")
+
+    def record_continuation_vote(self, event_uid: str, user_id: int, answer: str, ts: float) -> None:
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO continuation_votes(event_uid, user_id, answer, voted_ts)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(event_uid, user_id) DO UPDATE SET
+                    answer = excluded.answer,
+                    voted_ts = excluded.voted_ts
+                """,
+                (event_uid, user_id, answer, ts),
+            )
+
+    def continuation_votes(self, event_uid: str) -> dict[int, str]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT user_id, answer FROM continuation_votes WHERE event_uid = ?",
+                (event_uid,),
+            ).fetchall()
+        return {r["user_id"]: r["answer"] for r in rows}
+
+    def continuation_vote_counts(self, event_uid: str) -> dict[str, int]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT answer, COUNT(*) AS n FROM continuation_votes WHERE event_uid = ? GROUP BY answer",
+                (event_uid,),
+            ).fetchall()
+        counts = {"yes": 0, "no": 0}
+        for row in rows:
+            counts[row["answer"]] = row["n"]
+        return counts
+
     # ------------------------------------------------------------ hell events
 
     def save_hell_event(
@@ -825,9 +939,10 @@ class Store:
                 for table in (
                     "user_time", "milestones", "milestone_members", "presence",
                     "final_leaderboard", "alive_check", "alive_check_history", "dm_log",
-                    "hell_events",
+                    "hell_events", "continuation_votes",
                 ):
                     self._conn.execute(f"DELETE FROM {table}")
+                self._conn.execute("DELETE FROM continuation_poll WHERE id = 1")
                 self._conn.execute(
                     "DELETE FROM meta WHERE key LIKE 'next_alive_check:%' OR key LIKE 'unverified:%' "
                     "OR key LIKE 'alive_check_emptied:%' OR key LIKE 'next_hell_event:%' "
@@ -838,7 +953,8 @@ class Store:
                     "last_tick_ts = NULL, progress_channel_id = NULL, progress_message_id = NULL, "
                     "started_by = NULL, end_reason = NULL, final_saved = 0, "
                     "grace_started_ts = NULL, grace_duration = NULL, last_valid_observed_ts = NULL, "
-                    "paused_ts = NULL, paused_seconds = 0, pause_reason = NULL WHERE id = 1",
+                    "paused_ts = NULL, paused_seconds = 0, pause_reason = NULL, "
+                    "total_seconds = 576000.0, milestones_enabled = 1, continuation = 0 WHERE id = 1",
                     (EventStatus.IDLE.value,),
                 )
                 self._conn.execute("COMMIT")

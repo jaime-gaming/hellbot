@@ -723,6 +723,97 @@ CMD_MESSAGES_FAILED = (
 
 
 # =============================================================================
+# 12b. /hell broadcast  (host colored embed)
+# =============================================================================
+#  {level} {emoji}
+
+BROADCAST_TARGET_ANNOUNCE = "the announcement channel"
+BROADCAST_TARGET_VC = "the VC text chat"
+BROADCAST_TITLE_INFO = "{emoji} INFO"
+BROADCAST_TITLE_SUCCESS = "{emoji} SUCCESS"
+BROADCAST_TITLE_WARNING = "{emoji} WARNING"
+BROADCAST_TITLE_ERROR = "{emoji} ERROR"
+BROADCAST_TITLE_DEBUG = "{emoji} DEBUG"
+BROADCAST_TITLE_MILESTONE = "{emoji} MILESTONE"
+BROADCAST_TITLE_IDLE = "{emoji} IDLE"
+BROADCAST_TITLE_GRACE = "{emoji} GRACE"
+BROADCAST_TITLE_COMPLETED = "{emoji} COMPLETED"
+
+CMD_BROADCAST_DONE = (
+    "📢 Broadcast sent to **{target}** as a **{level}** embed."
+)
+CMD_BROADCAST_FAILED = (
+    "❌ Could not post the broadcast to **{target}** — check the bot's channel permissions."
+)
+CMD_SETDIFFICULTY_LEVEL_REQUIRED = "❌ Please choose a difficulty level (`0`, `1`, `2`, `3`, `4`, or `auto`)."
+CMD_BROADCAST_NEED_MESSAGE = "❌ Please include a message to broadcast."
+
+CMD_CONTINUATION_NOT_ALLOWED = (
+    "❌ **Hell 2 cannot resume yet.** The 160h *keep on Hell?* vote must have closed with a **Yes** majority after 10 minutes."
+)
+CMD_CONTINUATION_DONE = (
+    "🔥 **HELL 2 HAS STARTED.** The same run now continues to **320 hours** — no milestones after 160h, only a final and secret reward."
+)
+
+
+# =============================================================================
+# 12c. 160h continuation vote & Hell 2
+# =============================================================================
+#  {answer} {seconds} {yes} {no}
+
+CONTINUATION_TITLE = "📬 Something has been sent to your DM"
+CONTINUATION_DESCRIPTION = (
+    "**Will you like to keep on Hell or not?**\n\n"
+    "Your personal stat card was sent to your DMs. "
+    "If most votes are **Yes**, the hosts can use `/hell resume` to keep the same run going to **320h**.\n\n"
+    "The vote closes in **{seconds} minutes**."
+)
+CONTINUATION_VOTE_RECORDED = "✅ Vote recorded: **{answer}**."
+CONTINUATION_VOTE_CLOSED = "❌ This vote has already closed."
+
+CONTINUATION_RESULT_TITLE = "🗳️ The 160h vote has closed"
+CONTINUATION_RESULT_DESCRIPTION = "**Yes**: {yes} vote(s)  ·  **No**: {no} vote(s)"
+CONTINUATION_RESULT_YES_FIELD = "🔥 The run can continue"
+CONTINUATION_RESULT_YES_TEXT = (
+    "Most people voted **Yes**. A host can now run `/hell resume` to keep the same run going to **320h**. "
+    "After 160h there are no milestones — only one final and secret reward."
+)
+CONTINUATION_RESULT_NO_FIELD = "🛑 Hell has ended"
+CONTINUATION_RESULT_NO_TEXT = "The majority said **No** — Hell stays conquered."
+
+CONTINUATION_RESUME_TITLE = "🔥 HELL 2 — THE KEEP ON HELL CHALLENGE"
+CONTINUATION_RESUME_DESCRIPTION = (
+    "Hell is not over. The same run now continues to **320 hours**. "
+    "There are no more milestones after 160h — only one final and secret reward."
+)
+CONTINUATION_RESUME_RULE_FIELD = "📜 The rule"
+CONTINUATION_RESUME_RULE = (
+    "• Keep at least one real human in {vc} until **320h**.\n"
+    "• No milestones will be announced after 160h.\n"
+    "• At **320h**, a final and secret reward awaits the survivors."
+)
+CONTINUATION_RESUME_FOOTER = "320h · no milestones · secret reward"
+
+CONTINUATION_COMPLETION_TITLE = "🏆🔥 HELL 2 — 320H SURVIVED"
+CONTINUATION_COMPLETION_DESCRIPTION = (
+    "The full **320H** Hell 2 challenge has been survived. "
+    "The final, secret reward is now yours."
+)
+CONTINUATION_SECRET_REWARD = "🔒 *A final and secret reward*"
+CONTINUATION_COMPLETION_REWARD_FIELD = "🎁 Final secret reward"
+CONTINUATION_COMPLETION_REWARD_TEXT = (
+    "{final_reward}\n"
+    "*Only those who survived to 320h.*"
+)
+CONTINUATION_COMPLETION_FOOTER = "320h · no milestones · final secret reward"
+
+PROGRESS_TITLE_CONTINUATION = "🔥 HELL 2 — KEEP ON HELL"
+PROGRESS_CURRENT_CONTINUATION = "🔒 No milestones — only the final 320h reward"
+PROGRESS_NEXT_CONTINUATION = "🔒 Final secret reward at 320h"
+PROGRESS_COMPLETED_CONTINUATION_TEXT = "320H Hell 2 survived. The final secret reward is theirs."
+
+
+# =============================================================================
 # 13. COLOURS  (hex, as used by the embeds)
 # =============================================================================
 
@@ -734,6 +825,12 @@ COLOR_CANCELLED = 0x607D8B
 COLOR_IDLE = 0x2F3136
 COLOR_GRACE = 0xFFA500
 COLOR_CARD = 0xE25822
+COLOR_INFO = 0x3498DB
+COLOR_SUCCESS = 0x2ECC71
+COLOR_WARNING = 0xF1C40F
+COLOR_ERROR = 0xE74C3C
+COLOR_DEBUG = 0x9B59B6
+COLOR_CONTINUATION = 0xFF4500
 
 # Emoji shown next to the event status on the progress message.
 STATUS_EMOJI = {

@@ -572,7 +572,7 @@
     </div>
 
     <footer>
-      <p>Welcome to Hell &middot; <a href="dev.html">Developer Diagnostics</a> &middot; <a href="https://github.com/jaime-gaming/hellbot" target="_blank" rel="noreferrer">GitHub Repository</a></p>
+      <p>Welcome to Hell &middot; <a href="https://github.com/jaime-gaming/hellbot" target="_blank" rel="noreferrer">GitHub Repository</a></p>
       <p style="margin-top:0.4rem">Last update: <span id="lastUpdate">&mdash;</span> &middot; Mode: <span id="modeLabel">&mdash;</span> &middot; Bot: <span id="versionFoot">&mdash;</span> &middot; <a href="#" id="manualRefresh">Refresh now</a></p>
     </footer>
   </div>
@@ -714,8 +714,6 @@
         continuation: Boolean(d.continuation),
         difficulty_level: d.difficulty_level,
         difficulty_name: d.difficulty_name || null,
-        dead_checks_enabled: Boolean(d.dead_checks_enabled),
-        gamble_enabled: Boolean(d.gamble_enabled),
       };
       render(obj);
     }

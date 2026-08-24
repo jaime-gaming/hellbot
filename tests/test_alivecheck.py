@@ -379,6 +379,25 @@ def test_kicked_user_keeps_leaderboard_time_and_can_return(engine, store, config
     assert resumed[2] > after_kick[2]                        # tracking resumed
 
 
+def test_all_no_replies_resolve_early_and_record_emptied_vc(engine, store, config):
+    io = FakeIO()
+    io.present = {1, 2}
+    manager = AliveCheckManager(config, store, io, rng=random.Random(5), engine=engine)
+    start(engine, T0, 1, 2)
+    manager.bind(engine.event_uid, now=T0)
+    store.set_next_alive_check(engine.event_uid, T0)
+    run(manager.tick(T0 + 1, users(1, 2)))
+
+    run(manager.process_reply(1, "No", channel_id=999))
+    # The second No kicks the last user and resolves the check immediately.
+    result = run(manager.process_reply(2, "No", channel_id=999))
+    assert result == "no"
+    assert manager.pending is None
+    assert io.kicked == [[1], [2]]
+    # The engine is told the alive check itself emptied the VC.
+    assert engine._alive_check_emptied_ts is not None
+
+
 def test_event_survives_a_kick_while_someone_remains(engine, store, config):
     io = FakeIO()
     io.present = {1, 2}

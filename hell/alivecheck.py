@@ -488,7 +488,15 @@ class AliveCheckManager:
             return None
         if check.check_type != "alive" or check.missing:
             return None
-        return await self.resolve(now_ts(), [])
+        # Use the monitor's last-known VC members so an early resolution can
+        # tell the engine when a No kick (or ack + immediate resolve) empties it.
+        participants = ()
+        if self.engine is not None:
+            try:
+                participants = self.engine.last_participants
+            except (AttributeError, TypeError):  # pragma: no cover - defensive
+                participants = ()
+        return await self.resolve(now_ts(), participants)
 
     async def backfill_replies(self) -> int:
         """After a restart, read the channel for answers posted while offline."""
@@ -601,11 +609,12 @@ class AliveCheckManager:
                     )
                 all_kicked = set(kicked_ids) | set(check.declined_kicked)
                 kicked = [ParticipantRef(uid, check.required[uid]) for uid in sorted(all_kicked)]
+                # ``all_kicked`` includes players already kicked by an immediate
+                # "No" reply, so an early resolve still detects an emptied VC.
                 emptied_vc = bool(
                     not cancelled
-                    and kicked_ids
-                    and present
-                    and (present <= set(kicked_ids))
+                    and all_kicked
+                    and ((not present) or (present <= all_kicked))
                 )
                 if emptied_vc and self._event_uid:
                     self.store.set_alive_check_emptied(self._event_uid, now)

@@ -17,6 +17,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Optional
 
+from .milestones import MILESTONES
 from .timeutil import format_hms
 
 
@@ -63,8 +64,10 @@ class StatusFile:
         fraction: float = 0.0,
         start_ts: Optional[float] = None,
         end_ts: Optional[float] = None,
+        estimated_end_ts: Optional[float] = None,
         current_milestone: Optional[dict[str, Any]] = None,
         upcoming_milestone: Optional[dict[str, Any]] = None,
+        milestones: Optional[list[dict[str, Any]]] = None,
         leaderboard: Optional[list[dict[str, Any]]] = None,
         leaderboard_total: int = 0,
         grace_open: bool = False,
@@ -76,6 +79,8 @@ class StatusFile:
         health_info: Optional[list[str]] = None,
         blind_seconds: float = 0.0,
         active_tasks: int = 0,
+        voice_channel_id: Optional[int] = None,
+        guild_id: Optional[int] = None,
         version: str = "1.0.0",
     ) -> dict[str, Any]:
         """Build the status.json payload from the current state."""
@@ -117,11 +122,13 @@ class StatusFile:
             "participants": participants,
             "start_ts": start_ts,
             "end_ts": end_ts,
+            "estimated_end_ts": estimated_end_ts,
             "grace_open": grace_open,
             "grace_seconds_left": round(grace_seconds_left, 1),
             "grace_total": round(grace_total, 1),
             "current_milestone": current_milestone,
             "upcoming_milestone": upcoming_milestone,
+            "milestones": milestones or [],
             "leaderboard": leaderboard or [],
             "leaderboard_total": leaderboard_total,
             "alive_check_pending": alive_check_pending,
@@ -135,6 +142,8 @@ class StatusFile:
             "monitor_stale_seconds": round(monitor_stale_seconds, 1) if monitor_stale_seconds is not None else None,
             "blind_seconds": round(blind_seconds, 1),
             "active_tasks": active_tasks,
+            "voice_channel_id": voice_channel_id,
+            "guild_id": guild_id,
             "operator_dm_ok": operator_dm_ok,
             "version": version,
         }
@@ -177,7 +186,7 @@ class StatusFile:
             # Leaderboard
             board = engine.leaderboard()
             lb: list[dict[str, Any]] = []
-            for e in board[:20]:
+            for e in board[:25]:
                 lb.append({
                     "rank": e.rank,
                     "name": e.display_name,
@@ -202,6 +211,33 @@ class StatusFile:
                     "short_reward": snap.upcoming.short_reward or snap.upcoming.reward,
                     "time_to": round(snap.time_to_next, 1) if snap.time_to_next is not None else None,
                 }
+
+            # Full milestones roadmap list
+            milestone_records_map = {r.hours: r for r in engine.milestone_records()}
+            milestones_list: list[dict[str, Any]] = []
+            for m in MILESTONES:
+                rec = milestone_records_map.get(m.hours)
+                reached = rec is not None or (snap.elapsed >= m.seconds)
+                time_to = max(0.0, m.seconds - snap.elapsed) if not reached else 0.0
+                milestones_list.append({
+                    "hours": m.hours,
+                    "title": m.title,
+                    "reward": m.reward,
+                    "short_reward": m.short_reward or m.reward,
+                    "blurb": m.blurb,
+                    "reached": reached,
+                    "reached_ts": rec.reached_ts if rec else None,
+                    "members_count": len(rec.members) if rec else 0,
+                    "time_to": round(time_to, 1) if (engine.status.is_active and not reached) else None,
+                })
+
+            # Estimated completion timestamp
+            estimated_end_ts: Optional[float] = None
+            if snap.start_ts is not None:
+                if engine.status.is_active:
+                    estimated_end_ts = snap.start_ts + snap.total + engine.state.paused_seconds
+                elif snap.end_ts is not None:
+                    estimated_end_ts = snap.end_ts
 
             # Alive check
             alive_info = None
@@ -237,6 +273,8 @@ class StatusFile:
             from . import __version__
 
             blind_sec = monitor.blind_seconds if (monitor and hasattr(monitor, "blind_seconds")) else 0.0
+            vc_id = engine.state.voice_channel_id or (monitor.config.voice_channel_id if monitor else None)
+            guild_id = engine.state.guild_id or (monitor.config.guild_id if monitor else None)
 
             payload = self.snapshot(
                 bot_connected=True,
@@ -248,6 +286,7 @@ class StatusFile:
                 fraction=snap.fraction,
                 start_ts=snap.start_ts,
                 end_ts=snap.end_ts,
+                estimated_end_ts=estimated_end_ts,
                 paused=snap.paused,
                 pause_reason=engine.state.pause_reason,
                 end_reason=engine.state.end_reason,
@@ -257,6 +296,7 @@ class StatusFile:
                 grace_total=snap.grace_total,
                 current_milestone=current_ms,
                 upcoming_milestone=upcoming_ms,
+                milestones=milestones_list,
                 leaderboard=lb,
                 leaderboard_total=len(board),
                 alive_check_pending=alive_pending,
@@ -265,6 +305,8 @@ class StatusFile:
                 monitor_stale_seconds=security_snapshot.get("stale_seconds"),
                 blind_seconds=blind_sec,
                 active_tasks=task_count,
+                voice_channel_id=vc_id,
+                guild_id=guild_id,
                 operator_dm_ok=stream is None or stream.enabled,
                 health_errors=health_errors,
                 health_warnings=health_warnings,

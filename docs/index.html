@@ -3,94 +3,378 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Welcome to Hell — Live</title>
+  <title>Welcome to Hell — Live Dashboard</title>
+  <meta name="description" content="Live dashboard for the 160-hour Welcome to Hell Discord endurance challenge.">
   <style>
     :root {
-      --bg: #0a0a0a; --card: #141414; --border: #2a2a2a;
-      --text: #eee; --muted: #888;
-      --green: #2ecc71; --red: #e74c3c; --orange: #f39c12;
-      --ember: #e25822; --blue: #3498db; --purple: #9b59b6;
-      --gold: #f1c40f; --silver: #bdc3c7; --bronze: #cd7f32;
+      --bg: #090a0f;
+      --bg-surface: #12141c;
+      --card: #161924;
+      --card-hover: #1c202e;
+      --border: #262a3b;
+      --border-focus: #ff5722;
+      --text: #f0f2f8;
+      --muted: #8c93a8;
+      --green: #2ecc71;
+      --green-glow: rgba(46, 204, 113, 0.25);
+      --red: #e74c3c;
+      --red-glow: rgba(231, 76, 60, 0.25);
+      --orange: #f39c12;
+      --orange-glow: rgba(243, 156, 18, 0.25);
+      --ember: #ff5722;
+      --ember-dark: #b83204;
+      --ember-glow: rgba(255, 87, 34, 0.35);
+      --blue: #3498db;
+      --purple: #9b59b6;
+      --purple-glow: rgba(155, 89, 182, 0.25);
+      --gold: #f1c40f;
+      --silver: #bdc3c7;
+      --bronze: #cd7f32;
     }
     * { margin:0; padding:0; box-sizing:border-box; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: var(--bg); color: var(--text);
-      padding: 1.5rem; min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at 50% 0%, #1d141e 0%, var(--bg) 65%);
+      color: var(--text);
+      padding: 1.5rem 1rem;
+      min-height: 100vh;
+      line-height: 1.5;
     }
-    .container { max-width: 960px; margin: 0 auto; }
-    header { text-align:center; margin-bottom:2rem; padding-bottom:1.5rem; border-bottom:1px solid var(--border); }
-    header h1 {
-      font-size:2rem;
-      background: linear-gradient(135deg, var(--ember), var(--orange));
-      -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+    .container { max-width: 1040px; margin: 0 auto; }
+    
+    /* Header */
+    header {
+      text-align: center;
+      margin-bottom: 2rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border);
+      position: relative;
     }
-    header .subtitle { color:var(--muted); margin-top:0.4rem; font-size:0.9rem; }
-    .badge { display:inline-block; margin-top:0.6rem; padding:0.3rem 1rem; border-radius:1rem; font-size:0.85rem; font-weight:600; }
-    .badge.ok { background:var(--green); color:#000; }
-    .badge.warn { background:var(--orange); color:#000; }
-    .badge.err { background:var(--red); color:#fff; }
-    .badge.idle { background:var(--border); color:var(--muted); }
-    .badge.paused { background:var(--purple); color:#fff; }
-    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.7} }
+    .hero-title {
+      font-size: 2.5rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #ff8a65 0%, var(--ember) 45%, var(--gold) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      display: inline-block;
+    }
+    .hero-sub {
+      color: var(--muted);
+      margin-top: 0.4rem;
+      font-size: 1rem;
+      font-weight: 400;
+    }
+    
+    /* Badges */
+    .status-badge-wrap { margin-top: 0.8rem; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.4rem 1.2rem;
+      border-radius: 9999px;
+      font-size: 0.9rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+      transition: all 0.3s ease;
+    }
+    .badge.ok { background: var(--green); color: #000; box-shadow: 0 0 15px var(--green-glow); }
+    .badge.warn { background: var(--orange); color: #000; box-shadow: 0 0 15px var(--orange-glow); }
+    .badge.err { background: var(--red); color: #fff; box-shadow: 0 0 15px var(--red-glow); }
+    .badge.idle { background: #262a3b; color: var(--muted); }
+    .badge.paused { background: var(--purple); color: #fff; box-shadow: 0 0 15px var(--purple-glow); }
 
-    /* connection banner */
-    .conn-banner { text-align:center; padding:0.4rem; font-size:0.8rem; font-weight:600; border-radius:0.5rem; margin-bottom:1rem; display:none; }
-    .conn-banner.live { display:block; background:rgba(46,204,113,0.12); color:var(--green); border:1px solid rgba(46,204,113,0.25); }
-    .conn-banner.polling { display:block; background:rgba(52,152,219,0.12); color:var(--blue); border:1px solid rgba(52,152,219,0.25); }
-    .conn-banner.disconnected { display:block; background:rgba(231,76,60,0.12); color:var(--red); border:1px solid rgba(231,76,60,0.25); }
+    /* Live indicator dot */
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 1.5s infinite; }
+    .dot.paused { background: var(--purple); }
+    .dot.off { background: var(--muted); }
 
-    /* status banners */
-    .status-banner { text-align:center; padding:0.75rem 1rem; font-size:0.92rem; font-weight:600; border-radius:0.5rem; margin-bottom:1rem; display:none; line-height:1.4; }
-    .status-banner.visible { display:block; }
-    .status-banner.banner-idle { background:rgba(255,255,255,0.05); color:var(--muted); border:1px solid var(--border); }
-    .status-banner.banner-failed { background:rgba(231,76,60,0.18); color:var(--red); border:1px solid rgba(231,76,60,0.4); }
-    .status-banner.banner-stopped { background:rgba(243,156,18,0.18); color:var(--orange); border:1px solid rgba(243,156,18,0.4); }
-    .status-banner.banner-completed { background:rgba(46,204,113,0.18); color:var(--green); border:1px solid rgba(46,204,113,0.4); }
-    .status-banner.banner-paused { background:rgba(155,89,182,0.18); color:var(--purple); border:1px solid rgba(155,89,182,0.4); }
-    .status-banner.banner-grace { background:rgba(231,76,60,0.22); color:var(--red); border:1px solid rgba(231,76,60,0.5); animation:pulse 1.5s infinite; }
+    /* Connection banner */
+    .conn-banner {
+      text-align: center;
+      padding: 0.45rem 1rem;
+      font-size: 0.82rem;
+      font-weight: 600;
+      border-radius: 0.5rem;
+      margin-bottom: 1.25rem;
+      display: none;
+    }
+    .conn-banner.live { display: block; background: rgba(46, 204, 113, 0.1); color: var(--green); border: 1px solid rgba(46, 204, 113, 0.3); }
+    .conn-banner.polling { display: block; background: rgba(52, 152, 219, 0.1); color: var(--blue); border: 1px solid rgba(52, 152, 219, 0.3); }
+    .conn-banner.disconnected { display: block; background: rgba(231, 76, 60, 0.1); color: var(--red); border: 1px solid rgba(231, 76, 60, 0.3); }
 
-    /* progress */
-    .progress-wrap { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:1.25rem; margin-bottom:1.5rem; }
-    .progress-header { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:0.6rem; }
-    .progress-header .label { font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); }
-    .progress-header .pct { font-size:1.4rem; font-weight:700; color:var(--ember); }
-    .progress-bar-outer { width:100%; height:28px; background:#1e1e1e; border-radius:14px; overflow:hidden; position:relative; }
-    .progress-bar-inner { height:100%; background:linear-gradient(90deg,var(--ember),var(--orange)); border-radius:14px; transition:width 1s ease; }
-    .progress-bar-inner.failed { background:linear-gradient(90deg,#962d22,var(--red)); }
-    .progress-bar-inner.completed { background:linear-gradient(90deg,var(--green),var(--gold)); }
-    .progress-bar-inner.paused { background:linear-gradient(90deg,#6c3483,var(--purple)); }
-    .progress-bar-label { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); font-size:0.75rem; font-weight:600; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,0.6); white-space:nowrap; }
-    .progress-times { display:flex; justify-content:space-between; margin-top:0.5rem; font-size:0.85rem; color:var(--muted); }
+    /* Event status banners */
+    .status-banner {
+      text-align: center;
+      padding: 0.85rem 1.25rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border-radius: 0.6rem;
+      margin-bottom: 1.5rem;
+      display: none;
+      line-height: 1.5;
+    }
+    .status-banner.visible { display: block; }
+    .banner-idle { background: rgba(255, 255, 255, 0.04); color: var(--muted); border: 1px solid var(--border); }
+    .banner-failed { background: rgba(231, 76, 60, 0.15); color: #ff7675; border: 1px solid rgba(231, 76, 60, 0.4); box-shadow: 0 0 20px rgba(231,76,60,0.15); }
+    .banner-stopped { background: rgba(243, 156, 18, 0.15); color: #ffeaa7; border: 1px solid rgba(243, 156, 18, 0.4); }
+    .banner-completed { background: rgba(46, 204, 113, 0.15); color: #55efc4; border: 1px solid rgba(46, 204, 113, 0.4); box-shadow: 0 0 20px rgba(46,204,113,0.15); }
+    .banner-paused { background: rgba(155, 89, 182, 0.15); color: #dcdde1; border: 1px solid rgba(155, 89, 182, 0.4); }
+    .banner-grace { background: rgba(231, 76, 60, 0.22); color: #ff7675; border: 1px solid rgba(231, 76, 60, 0.5); animation: pulse 1.5s infinite; }
 
-    /* grid */
-    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:1rem; margin-bottom:1.5rem; }
-    .card { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:1rem 1.25rem; }
-    .card h3 { font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.4rem; }
-    .card .value { font-size:1.6rem; font-weight:700; }
-    .card .sub { font-size:0.8rem; color:var(--muted); margin-top:0.2rem; }
-    .green{color:var(--green)} .red{color:var(--red)} .orange{color:var(--orange)} .blue{color:var(--blue)} .ember{color:var(--ember)} .purple{color:var(--purple)}
+    @keyframes pulse { 0%,100%{opacity:1; transform:scale(1);} 50%{opacity:0.8; transform:scale(0.98);} }
 
-    /* leaderboard */
-    .section { margin-bottom:1.5rem; }
-    .section h2 { font-size:1rem; margin-bottom:0.75rem; color:var(--ember); border-bottom:1px solid var(--border); padding-bottom:0.5rem; }
-    .lb-table { width:100%; border-collapse:collapse; font-size:0.9rem; }
-    .lb-table th { text-align:left; padding:0.5rem 0.75rem; border-bottom:1px solid var(--border); color:var(--muted); font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; }
-    .lb-table td { padding:0.5rem 0.75rem; border-bottom:1px solid #1a1a1a; }
-    .lb-table tr:hover { background:rgba(255,255,255,0.03); }
-    .lb-table .rank { width:3rem; text-align:center; font-weight:700; }
-    .lb-table .time { text-align:right; font-variant-numeric:tabular-nums; color:var(--muted); }
-    .medal-1{color:var(--gold)} .medal-2{color:var(--silver)} .medal-3{color:var(--bronze)}
+    /* Progress bar card */
+    .progress-wrap {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.85rem;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+    }
+    .progress-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 0.75rem;
+    }
+    .progress-header .label { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; color: var(--muted); }
+    .progress-header .pct { font-size: 1.75rem; font-weight: 800; color: var(--ember); }
+    
+    .progress-bar-outer {
+      width: 100%;
+      height: 32px;
+      background: #0d0f17;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      position: relative;
+    }
+    .progress-bar-inner {
+      height: 100%;
+      background: linear-gradient(90deg, var(--ember), var(--gold));
+      border-radius: 16px;
+      transition: width 0.8s ease-in-out;
+      box-shadow: 0 0 12px var(--ember-glow);
+    }
+    .progress-bar-inner.failed { background: linear-gradient(90deg, #962d22, var(--red)); box-shadow: 0 0 12px var(--red-glow); }
+    .progress-bar-inner.completed { background: linear-gradient(90deg, var(--green), var(--gold)); box-shadow: 0 0 12px var(--green-glow); }
+    .progress-bar-inner.paused { background: linear-gradient(90deg, #6c3483, var(--purple)); box-shadow: 0 0 12px var(--purple-glow); }
+    
+    .progress-bar-label {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #fff;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+      white-space: nowrap;
+      letter-spacing: 0.03em;
+    }
+    
+    .progress-times {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 0.75rem;
+      font-size: 0.9rem;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .timeline-meta {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 0.5rem;
+      font-size: 0.8rem;
+      color: #727a8f;
+      border-top: 1px solid rgba(255,255,255,0.05);
+      padding-top: 0.5rem;
+    }
 
-    /* alive check */
-    .alive-card { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:1rem 1.25rem; margin-bottom:1.5rem; }
-    .alive-card.active { border-color:var(--orange); }
-    .alive-bar-outer { width:100%; height:8px; background:#1e1e1e; border-radius:4px; overflow:hidden; margin-top:0.5rem; }
+    /* Grid Stats */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.85rem;
+      padding: 1.25rem;
+      transition: transform 0.2s, border-color 0.2s;
+    }
+    .card:hover { transform: translateY(-2px); border-color: #3b4259; }
+    .card h3 {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-bottom: 0.4rem;
+      font-weight: 700;
+    }
+    .card .value {
+      font-size: 1.8rem;
+      font-weight: 800;
+      line-height: 1.2;
+    }
+    .card .sub {
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin-top: 0.25rem;
+    }
+    .green{color:var(--green)} .red{color:var(--red)} .orange{color:var(--orange)} .blue{color:var(--blue)} .ember{color:var(--ember)} .purple{color:var(--purple)} .gold{color:var(--gold)}
+
+    /* Roadmap Section */
+    .section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.85rem;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.75rem;
+    }
+    .section-header h2 {
+      font-size: 1.1rem;
+      color: var(--ember);
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+    
+    /* Milestones Roadmap */
+    .milestone-track {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .ms-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.85rem 1rem;
+      background: #0e1017;
+      border: 1px solid var(--border);
+      border-radius: 0.6rem;
+      transition: all 0.2s;
+    }
+    .ms-item.reached {
+      border-color: rgba(46, 204, 113, 0.4);
+      background: rgba(46, 204, 113, 0.05);
+    }
+    .ms-item.current {
+      border-color: var(--ember);
+      background: rgba(255, 87, 34, 0.08);
+      box-shadow: 0 0 10px rgba(255,87,34,0.15);
+    }
+    .ms-left { display: flex; align-items: center; gap: 0.85rem; }
+    .ms-badge {
+      font-weight: 800;
+      font-size: 0.85rem;
+      padding: 0.25rem 0.6rem;
+      border-radius: 0.4rem;
+      background: #1f2433;
+      color: var(--text);
+      min-width: 46px;
+      text-align: center;
+    }
+    .ms-item.reached .ms-badge { background: var(--green); color: #000; }
+    .ms-item.current .ms-badge { background: var(--ember); color: #fff; }
+    .ms-title { font-weight: 700; font-size: 0.92rem; }
+    .ms-reward { font-size: 0.8rem; color: var(--muted); }
+    .ms-status-label { font-size: 0.82rem; font-weight: 600; text-align: right; }
+
+    /* Leaderboard */
+    .search-box {
+      margin-bottom: 0.85rem;
+      display: flex;
+      gap: 0.5rem;
+    }
+    .search-input {
+      width: 100%;
+      background: #0d0f17;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.5rem 0.85rem;
+      border-radius: 0.5rem;
+      font-size: 0.88rem;
+    }
+    .search-input:focus { outline: none; border-color: var(--ember); }
+    .lb-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+    .lb-table th {
+      text-align: left;
+      padding: 0.6rem 0.85rem;
+      border-bottom: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: 700;
+    }
+    .lb-table td { padding: 0.65rem 0.85rem; border-bottom: 1px solid #181c28; }
+    .lb-table tr:hover { background: rgba(255,255,255,0.025); }
+    .lb-table .rank { width: 3.5rem; text-align: center; font-weight: 800; }
+    .lb-table .time { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text); }
+    .medal-1{color:var(--gold); font-size:1.1rem;} .medal-2{color:var(--silver); font-size:1.1rem;} .medal-3{color:var(--bronze); font-size:1.1rem;}
+
+    /* Alive check card */
+    .alive-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.85rem;
+      padding: 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+    .alive-card.active { border-color: var(--orange); box-shadow: 0 0 15px var(--orange-glow); }
+    .alive-bar-outer { width:100%; height:8px; background:#0d0f17; border-radius:4px; overflow:hidden; margin-top:0.6rem; }
     .alive-bar-inner { height:100%; background:var(--orange); border-radius:4px; transition:width 1s linear; }
 
-    footer { text-align:center; color:var(--muted); font-size:0.75rem; padding-top:1.5rem; border-top:1px solid var(--border); margin-top:1rem; }
-    footer a { color:var(--blue); text-decoration:none; }
-    footer a:hover { text-decoration:underline; }
+    /* Rules & Commands */
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .cmd-pill {
+      background: #0e1017;
+      border: 1px solid var(--border);
+      border-radius: 0.4rem;
+      padding: 0.35rem 0.6rem;
+      font-family: monospace;
+      font-size: 0.82rem;
+      color: #74b9ff;
+      display: inline-block;
+      margin: 0.2rem 0;
+      cursor: pointer;
+    }
+    .cmd-pill:hover { border-color: var(--ember); color: #fff; }
+
+    /* Footer */
+    footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.8rem;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border);
+      margin-top: 2rem;
+    }
+    footer a { color: var(--blue); text-decoration: none; font-weight: 600; }
+    footer a:hover { text-decoration: underline; color: #74b9ff; }
   </style>
 </head>
 <body>
@@ -98,58 +382,132 @@
     <div id="connBanner" class="conn-banner">⏳ Connecting&hellip;</div>
     <div id="graceBanner" class="status-banner banner-grace">⚠️ VC EMPTY — Grace period counting down!</div>
     <div id="pausedBanner" class="status-banner banner-paused">⏸️ EVENT PAUSED</div>
-    <div id="idleBanner" class="status-banner banner-idle">💤 EVENT NOT STARTED — Waiting for <code>/hell start</code> in Discord to begin the 160-hour endurance run.</div>
-    <div id="failedBanner" class="status-banner banner-failed">💀 EVENT FAILED — The run has ended.</div>
-    <div id="stoppedBanner" class="status-banner banner-stopped">✋ EVENT STOPPED — The event was cancelled by an operator.</div>
-    <div id="completedBanner" class="status-banner banner-completed">🏆 EVENT COMPLETED — 160 consecutive hours conquered! Grand Champion achieved!</div>
+    <div id="idleBanner" class="status-banner banner-idle">💤 <strong>EVENT NOT STARTED</strong> — Waiting for <code>/hell start</code> in Discord to begin the 160-hour endurance run.</div>
+    <div id="failedBanner" class="status-banner banner-failed">💀 <strong>EVENT FAILED</strong> — The endurance run has ended.</div>
+    <div id="stoppedBanner" class="status-banner banner-stopped">✋ <strong>EVENT STOPPED</strong> — The event was cancelled by an operator.</div>
+    <div id="completedBanner" class="status-banner banner-completed">🏆 <strong>EVENT COMPLETED</strong> — 160 consecutive hours conquered! Grand Champion achieved!</div>
 
     <header>
-      <h1>🔥 Welcome to Hell</h1>
-      <p class="subtitle">160-hour Discord endurance event — live dashboard</p>
-      <div id="statusBadge" class="badge idle">Connecting&hellip;</div>
+      <div class="hero-title">🔥 Welcome to Hell</div>
+      <p class="hero-sub">160-Hour Discord Endurance Event &middot; Live Status Dashboard</p>
+      <div class="status-badge-wrap">
+        <div id="statusBadge" class="badge idle"><span class="dot off"></span> Connecting&hellip;</div>
+      </div>
     </header>
 
+    <!-- Main Progress Card -->
     <div class="progress-wrap">
       <div class="progress-header">
         <span class="label" id="progressTitle">Event Progress</span>
-        <span class="pct" id="progressPct">0%</span>
+        <span class="pct" id="progressPct">0.0%</span>
       </div>
       <div class="progress-bar-outer">
         <div class="progress-bar-inner" id="progressBar" style="width:0%"></div>
         <div class="progress-bar-label" id="progressLabel">0h 00m / 160h</div>
       </div>
       <div class="progress-times">
-        <span id="elapsedLabel">Elapsed: 0h 00m</span>
-        <span id="remainingLabel">Remaining: 160h 00m</span>
+        <span id="elapsedLabel">Elapsed: 0h 00m 00s</span>
+        <span id="remainingLabel">Remaining: 160h 00m 00s</span>
+      </div>
+      <div class="timeline-meta" id="timelineMeta" style="display:none">
+        <span id="startMeta">Started: &mdash;</span>
+        <span id="endMeta">Estimated Finish: &mdash;</span>
       </div>
     </div>
 
+    <!-- Live Grid Stats -->
     <div class="grid">
-      <div class="card"><h3>Participants</h3><div class="value blue" id="vcCount">—</div><div class="sub" id="vcSub">in the VC right now</div></div>
-      <div class="card"><h3>Current Milestone</h3><div class="value ember" id="currentMs">—</div><div class="sub" id="currentMsSub"></div></div>
-      <div class="card"><h3>Next Milestone</h3><div class="value orange" id="nextMs">—</div><div class="sub" id="nextMsSub"></div></div>
-      <div class="card"><h3>Contestants</h3><div class="value purple" id="totalLb">—</div><div class="sub" id="totalLbSub">on the leaderboard</div></div>
+      <div class="card">
+        <h3>Participants</h3>
+        <div class="value blue" id="vcCount">&mdash;</div>
+        <div class="sub" id="vcSub">in the VC right now</div>
+      </div>
+      <div class="card">
+        <h3>Current Milestone</h3>
+        <div class="value ember" id="currentMs">&mdash;</div>
+        <div class="sub" id="currentMsSub">None yet</div>
+      </div>
+      <div class="card">
+        <h3>Next Milestone</h3>
+        <div class="value orange" id="nextMs">&mdash;</div>
+        <div class="sub" id="nextMsSub">Loading&hellip;</div>
+      </div>
+      <div class="card">
+        <h3>Contestants</h3>
+        <div class="value purple" id="totalLb">&mdash;</div>
+        <div class="sub" id="totalLbSub">on the leaderboard</div>
+      </div>
     </div>
 
+    <!-- Milestones Roadmap -->
     <div class="section">
-      <h2 id="lbHeading">🏆 Live Leaderboard</h2>
+      <div class="section-header">
+        <h2>🏁 Milestones Roadmap</h2>
+        <span style="font-size:0.8rem;color:var(--muted)">Global Event Clock (160h)</span>
+      </div>
+      <div class="milestone-track" id="milestonesTrack">
+        <!-- Generated via JS -->
+      </div>
+    </div>
+
+    <!-- Live Leaderboard -->
+    <div class="section">
+      <div class="section-header">
+        <h2 id="lbHeading">🏆 Live Leaderboard</h2>
+        <span id="lbTotalCount" style="font-size:0.8rem;color:var(--muted)">0 contestants</span>
+      </div>
+      <div class="search-box">
+        <input type="text" id="lbSearch" class="search-input" placeholder="🔍 Search contestant name..." />
+      </div>
       <table class="lb-table">
-        <thead><tr><th class="rank">#</th><th>Contestant</th><th class="time">Time</th></tr></thead>
-        <tbody id="lbBody"><tr><td colspan="3" style="color:var(--muted);text-align:center;padding:2rem">Waiting for data&hellip;</td></tr></tbody>
+        <thead>
+          <tr>
+            <th class="rank">#</th>
+            <th>Contestant</th>
+            <th class="time">Time Survived</th>
+          </tr>
+        </thead>
+        <tbody id="lbBody">
+          <tr><td colspan="3" style="color:var(--muted);text-align:center;padding:2rem">Waiting for leaderboard data&hellip;</td></tr>
+        </tbody>
       </table>
     </div>
 
+    <!-- Alive Check Card -->
     <div class="alive-card" id="aliveCard">
-      <h3 style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin-bottom:0.3rem">🚨 Alive Check</h3>
-      <div id="aliveText" style="font-size:0.9rem">No active roll call</div>
+      <h3 style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-bottom:0.3rem;font-weight:700">🚨 Alive Check Status</h3>
+      <div id="aliveText" style="font-size:0.95rem;font-weight:600">No active roll call</div>
       <div class="alive-bar-outer" id="aliveBarWrap" style="display:none">
         <div class="alive-bar-inner" id="aliveBar" style="width:0%"></div>
       </div>
     </div>
 
+    <!-- Rules & Commands -->
+    <div class="info-grid">
+      <div class="card">
+        <h3>📜 Core Rules</h3>
+        <ul style="font-size:0.85rem;color:var(--muted);padding-left:1.2rem;margin-top:0.4rem;line-height:1.6">
+          <li><strong>Continuous presence:</strong> VC must have &ge;1 real human at all times.</li>
+          <li><strong>Random roll calls:</strong> Respond with <code>Yes</code> within 5 minutes.</li>
+          <li><strong>Empty VC Grace:</strong> 15s countdown to rejoin (120s if alive check caused empty VC).</li>
+          <li><strong>Bots &amp; Clankers:</strong> Kicked on sight and earn no time.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>💬 Discord Commands</h3>
+        <p style="font-size:0.82rem;color:var(--muted);margin-bottom:0.5rem">Slash commands available in Discord:</p>
+        <div>
+          <span class="cmd-pill" onclick="navigator.clipboard.writeText('/hell status')">/hell status</span>
+          <span class="cmd-pill" onclick="navigator.clipboard.writeText('/hell leaderboard')">/hell leaderboard</span>
+          <span class="cmd-pill" onclick="navigator.clipboard.writeText('/hell mystats')">/hell mystats</span>
+          <span class="cmd-pill" onclick="navigator.clipboard.writeText('/hell milestones')">/hell milestones</span>
+        </div>
+      </div>
+    </div>
+
     <footer>
-      <p>Welcome to Hell &middot; <a href="dev.html">Developer Dashboard</a> &middot; <a href="https://github.com/jaime-gaming/hellbot">GitHub</a></p>
-      <p style="margin-top:0.3rem">Last update: <span id="lastUpdate">—</span> &middot; <span id="modeLabel">—</span></p>
+      <p>Welcome to Hell &middot; <a href="dev.html">Developer Diagnostics</a> &middot; <a href="https://github.com/jaime-gaming/hellbot" target="_blank" rel="noreferrer">GitHub Repository</a></p>
+      <p style="margin-top:0.4rem">Last update: <span id="lastUpdate">&mdash;</span> &middot; Mode: <span id="modeLabel">&mdash;</span></p>
     </footer>
   </div>
 
@@ -159,18 +517,27 @@
     var banner = document.getElementById('connBanner');
     var modeLabel = document.getElementById('modeLabel');
     var wsConnected = false;
+    var currentSnapshot = null;
+
+    var defaultMilestones = [
+      { hours: 32, title: "32 Hours Survived", reward: "@hell (limited)", blurb: "The first gate is behind you." },
+      { hours: 64, title: "64 Hours — The Fire Spreads", reward: "Limited-time Verity in Find the Verities", blurb: "Two full days and change in the VC." },
+      { hours: 96, title: "96 Hours — Halfway is Behind You", reward: "@hell-ist (limited)", blurb: "Four straight days in Hell." },
+      { hours: 128, title: "128 Hours — The Final Stretch", reward: "Music permissions for everyone", blurb: "Only 32 hours stand between you and immortality." },
+      { hours: 160, title: "160 Hours — Victory", reward: "@hell master (limited)", blurb: "All 160 consecutive hours conquered!" }
+    ];
 
     function fmt(s) {
       s = Math.max(0, Math.floor(s || 0));
-      var h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=s%60;
-      return h+'h '+(m<10?'0':'')+m+'m '+(sec<10?'0':'')+sec+'s';
+      var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+      return h + 'h ' + (m < 10 ? '0' : '') + m + 'm ' + (sec < 10 ? '0' : '') + sec + 's';
     }
     function fmtShort(s) {
       s = Math.max(0, Math.floor(s || 0));
-      var h=Math.floor(s/3600), m=Math.floor((s%3600)/60);
-      return h+'h '+(m<10?'0':'')+m+'m';
+      var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+      return h + 'h ' + (m < 10 ? '0' : '') + m + 'm';
     }
-    function esc(t) { var d=document.createElement('div'); d.appendChild(document.createTextNode(t || '')); return d.innerHTML; }
+    function esc(t) { var d = document.createElement('div'); d.appendChild(document.createTextNode(t || '')); return d.innerHTML; }
 
     // ---- WebSocket mode (live server) ----
     function connectWS() {
@@ -183,7 +550,7 @@
         wsConnected = true;
         stopPolling();
         banner.className = 'conn-banner live';
-        banner.textContent = '🟢 Live — real-time updates via WebSocket';
+        banner.textContent = '🟢 Live — Real-time event streaming via WebSocket';
         banner.style.display = 'block';
         modeLabel.textContent = 'live (WebSocket)';
       };
@@ -194,7 +561,10 @@
       ws.onerror = function() { ws.close(); };
       ws.onmessage = function(evt) {
         var d; try { d = JSON.parse(evt.data); } catch(e) { return; }
-        if (d.type === 'snapshot') render(d);
+        if (d.type === 'snapshot') {
+          currentSnapshot = d;
+          render(d);
+        }
       };
     }
 
@@ -207,7 +577,7 @@
     function fallbackToPoll() {
       if (wsConnected) return;
       banner.className = 'conn-banner polling';
-      banner.textContent = '🔵 Polling — refreshing every 15s (GitHub Pages mode)';
+      banner.textContent = '🔵 Polling — refreshing status every 15s (GitHub Pages mode)';
       banner.style.display = 'block';
       modeLabel.textContent = 'polling (15s)';
       startPolling();
@@ -223,10 +593,13 @@
     function pollNow() {
       fetch('status.json', { cache: 'no-store' })
         .then(function(r) { if (!r.ok) throw 0; return r.json(); })
-        .then(function(data) { renderFromStatusJson(data); })
+        .then(function(data) {
+          currentSnapshot = data;
+          renderFromStatusJson(data);
+        })
         .catch(function() {
           banner.className = 'conn-banner disconnected';
-          banner.textContent = '🔴 Cannot reach status data';
+          banner.textContent = '🔴 Unable to reach status data';
           banner.style.display = 'block';
         });
     }
@@ -250,11 +623,15 @@
         remaining: Math.round(remaining),
         fraction: Math.round(fraction * 10000) / 10000,
         participants: d.participants != null ? d.participants : 0,
+        start_ts: d.start_ts || null,
+        end_ts: d.end_ts || null,
+        estimated_end_ts: d.estimated_end_ts || null,
         grace_open: Boolean(d.grace_open),
         grace_seconds_left: d.grace_seconds_left || 0,
         grace_total: d.grace_total || 15,
         current_milestone: d.current_milestone || null,
         upcoming_milestone: d.upcoming_milestone || null,
+        milestones: d.milestones || null,
         leaderboard: d.leaderboard || [],
         leaderboard_total: d.leaderboard_total != null ? d.leaderboard_total : (d.leaderboard ? d.leaderboard.length : 0),
         alive_check: d.alive_check || (d.alive_check_pending ? { answered: 0, total: 0, seconds_left: 0 } : null),
@@ -285,22 +662,22 @@
 
       // 1. Status Badge
       if (isPaused) {
-        badge.textContent = '⏸️ PAUSED';
+        badge.innerHTML = '<span class="dot paused"></span> ⏸️ PAUSED';
         badge.className = 'badge paused';
       } else if (isRunning) {
-        badge.textContent = '🔥 RUNNING';
+        badge.innerHTML = '<span class="dot live"></span> 🔥 RUNNING';
         badge.className = 'badge ok';
       } else if (isCompleted) {
-        badge.textContent = '🏆 COMPLETED';
+        badge.innerHTML = '<span class="dot ok"></span> 🏆 COMPLETED';
         badge.className = 'badge ok';
       } else if (isFailed) {
-        badge.textContent = '💀 FAILED';
+        badge.innerHTML = '<span class="dot err"></span> 💀 FAILED';
         badge.className = 'badge err';
       } else if (isStopped) {
-        badge.textContent = '✋ STOPPED';
+        badge.innerHTML = '<span class="dot warn"></span> ✋ STOPPED';
         badge.className = 'badge warn';
       } else {
-        badge.textContent = '💤 NOT STARTED';
+        badge.innerHTML = '<span class="dot off"></span> 💤 NOT STARTED';
         badge.className = 'badge idle';
       }
 
@@ -314,7 +691,7 @@
 
       graceEl.className = 'status-banner banner-grace' + (d.grace_open ? ' visible' : '');
       if (d.grace_open) {
-        graceEl.textContent = '⚠️ VC EMPTY — ' + Math.round(d.grace_seconds_left) + 's to repopulate or the run FAILS!';
+        graceEl.textContent = '⚠️ VC EMPTY — ' + Math.round(d.grace_seconds_left) + 's to repopulate or the run FAILS permanently!';
       }
 
       pausedEl.className = 'status-banner banner-paused' + (isPaused ? ' visible' : '');
@@ -326,13 +703,13 @@
       failedEl.className = 'status-banner banner-failed' + (isFailed ? ' visible' : '');
       if (isFailed) {
         failedEl.innerHTML = '💀 <strong>EVENT FAILED</strong> — The run ended at <strong>' + fmt(d.elapsed) + '</strong> / 160h.' +
-          (d.end_reason ? ' <br><span style="font-size:0.85rem;color:#ffaaaa">Reason: ' + esc(d.end_reason) + '</span>' : '');
+          (d.end_reason ? '<br><span style="font-size:0.88rem;color:#ffaaaa">Reason: ' + esc(d.end_reason) + '</span>' : '');
       }
 
       stoppedEl.className = 'status-banner banner-stopped' + (isStopped ? ' visible' : '');
       if (isStopped) {
         stoppedEl.innerHTML = '✋ <strong>EVENT STOPPED</strong> — The run was stopped by an operator at <strong>' + fmt(d.elapsed) + '</strong> / 160h.' +
-          (d.end_reason ? ' <br><span style="font-size:0.85rem;color:#ffeaa7">Reason: ' + esc(d.end_reason) + '</span>' : '');
+          (d.end_reason ? '<br><span style="font-size:0.88rem;color:#ffeaa7">Reason: ' + esc(d.end_reason) + '</span>' : '');
       }
 
       compEl.className = 'status-banner banner-completed' + (isCompleted ? ' visible' : '');
@@ -353,8 +730,8 @@
       if (isIdle) {
         progressTitle.textContent = 'Event Progress';
         progressLabel.textContent = '0h 00m / 160h (Not Started)';
-        elapsedLabel.textContent = 'Elapsed: 0h 00m (Not started)';
-        remainingLabel.textContent = 'Remaining: 160h 00m';
+        elapsedLabel.textContent = 'Elapsed: 0h 00m 00s';
+        remainingLabel.textContent = 'Remaining: 160h 00m 00s';
       } else if (isFailed) {
         progressTitle.textContent = 'Final Progress';
         progressLabel.textContent = fmtShort(d.elapsed) + ' / 160h (Failed)';
@@ -368,8 +745,8 @@
       } else if (isCompleted) {
         progressTitle.textContent = 'Event Completed';
         progressLabel.textContent = '160h 00m / 160h (Conquered!)';
-        elapsedLabel.textContent = 'Final Time: 160h 00m';
-        remainingLabel.textContent = 'Remaining: 0h 00m (All Clear!)';
+        elapsedLabel.textContent = 'Final Time: 160h 00m 00s';
+        remainingLabel.textContent = 'Remaining: 0h 00m 00s (All Clear!)';
       } else if (isPaused) {
         progressTitle.textContent = 'Event Progress (Frozen)';
         progressLabel.textContent = fmtShort(d.elapsed) + ' / ' + fmtShort(d.total) + ' (Paused)';
@@ -380,6 +757,21 @@
         progressLabel.textContent = fmtShort(d.elapsed) + ' / ' + fmtShort(d.total);
         elapsedLabel.textContent = 'Elapsed: ' + fmt(d.elapsed);
         remainingLabel.textContent = 'Remaining: ' + fmt(d.remaining);
+      }
+
+      // Meta timestamps
+      var timelineMeta = document.getElementById('timelineMeta');
+      if (d.start_ts) {
+        timelineMeta.style.display = 'flex';
+        document.getElementById('startMeta').textContent = 'Started: ' + new Date(d.start_ts * 1000).toLocaleString();
+        if (d.estimated_end_ts) {
+          var label = (isFailed || isStopped || isCompleted) ? 'Ended: ' : 'Estimated Finish: ';
+          document.getElementById('endMeta').textContent = label + new Date(d.estimated_end_ts * 1000).toLocaleString();
+        } else {
+          document.getElementById('endMeta').textContent = '';
+        }
+      } else {
+        timelineMeta.style.display = 'none';
       }
 
       // 4. Grid Cards
@@ -398,7 +790,7 @@
 
       if (d.current_milestone) {
         document.getElementById('currentMs').textContent = d.current_milestone.hours + 'h';
-        document.getElementById('currentMsSub').textContent = d.current_milestone.short_reward || '';
+        document.getElementById('currentMsSub').textContent = d.current_milestone.short_reward || d.current_milestone.title || '';
       } else if (isCompleted) {
         document.getElementById('currentMs').textContent = '160h';
         document.getElementById('currentMsSub').textContent = 'Grand Champion';
@@ -421,28 +813,20 @@
         document.getElementById('nextMsSub').textContent = '';
       }
 
-      document.getElementById('totalLb').textContent = (d.leaderboard_total != null ? d.leaderboard_total : (d.leaderboard ? d.leaderboard.length : 0)) || '—';
+      var totalLbCount = (d.leaderboard_total != null ? d.leaderboard_total : (d.leaderboard ? d.leaderboard.length : 0));
+      document.getElementById('totalLb').textContent = totalLbCount || '0';
       document.getElementById('totalLbSub').textContent = (isFailed || isStopped || isCompleted) ? 'final participants' : 'on the leaderboard';
+      document.getElementById('lbTotalCount').textContent = totalLbCount + ' contestant(s)';
 
-      // 5. Leaderboard
+      // 5. Milestone Roadmap Track
+      renderMilestoneRoadmap(d.milestones || defaultMilestones, d.elapsed, status);
+
+      // 6. Leaderboard
       var lbHeading = document.getElementById('lbHeading');
-      lbHeading.textContent = (isFailed || isStopped || isCompleted) ? '🏆 Final Leaderboard' : '🏆 Live Leaderboard';
-      var tbody = document.getElementById('lbBody');
-      if (d.leaderboard && d.leaderboard.length) {
-        var html = '';
-        for (var i=0; i<d.leaderboard.length; i++) {
-          var e = d.leaderboard[i];
-          var medal='', cls='';
-          if (e.rank===1){medal='🥇';cls='medal-1';} else if(e.rank===2){medal='🥈';cls='medal-2';} else if(e.rank===3){medal='🥉';cls='medal-3';}
-          html += '<tr><td class="rank '+cls+'">'+(medal||e.rank)+'</td><td>'+esc(e.name)+'</td><td class="time">'+e.time+'</td></tr>';
-        }
-        tbody.innerHTML = html;
-      } else {
-        var emptyMsg = isIdle ? 'No contestants yet — event has not started' : 'No contestants registered';
-        tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:1.5rem">' + emptyMsg + '</td></tr>';
-      }
+      lbHeading.textContent = (isFailed || isStopped || isCompleted) ? '🏆 Final Leaderboard (Frozen)' : '🏆 Live Leaderboard';
+      renderLeaderboard(d.leaderboard || [], isIdle);
 
-      // 6. Alive Check
+      // 7. Alive Check
       var ac = d.alive_check;
       var acCard = document.getElementById('aliveCard');
       if (ac && isRunning && !isPaused) {
@@ -464,13 +848,82 @@
         } else if (isCompleted) {
           document.getElementById('aliveText').textContent = '🏆 Event completed';
         } else {
-          document.getElementById('aliveText').textContent = '✅ No active roll call';
+          document.getElementById('aliveText').textContent = '✅ No active roll call (random every 1–6h)';
         }
       }
 
-      // 7. Footer
-      document.getElementById('lastUpdate').textContent = d.ts ? new Date(d.ts*1000).toLocaleTimeString() : '—';
+      // 8. Footer
+      document.getElementById('lastUpdate').textContent = d.ts ? new Date(d.ts * 1000).toLocaleTimeString() : '—';
     }
+
+    function renderMilestoneRoadmap(milestones, elapsedSeconds, status) {
+      var track = document.getElementById('milestonesTrack');
+      var html = '';
+      for (var i = 0; i < milestones.length; i++) {
+        var m = milestones[i];
+        var thresholdSec = m.hours * 3600;
+        var reached = m.reached != null ? m.reached : (elapsedSeconds >= thresholdSec);
+        var isCurrent = !reached && (i === 0 || (milestones[i-1].reached || elapsedSeconds >= milestones[i-1].hours * 3600)) && status === 'RUNNING';
+        
+        var cls = 'ms-item' + (reached ? ' reached' : (isCurrent ? ' current' : ''));
+        var statusLabel = '';
+        if (reached) {
+          statusLabel = '<span class="green">✅ Cleared</span>' + (m.members_count ? ' <span style="color:var(--muted);font-size:0.75rem">(' + m.members_count + ' claimed)</span>' : '');
+        } else if (isCurrent) {
+          var leftSec = Math.max(0, thresholdSec - elapsedSeconds);
+          statusLabel = '<span class="ember">🔥 in ' + fmtShort(leftSec) + '</span>';
+        } else {
+          statusLabel = '<span style="color:var(--muted)">🔒 Locked</span>';
+        }
+
+        html += '<div class="' + cls + '">' +
+          '<div class="ms-left">' +
+            '<span class="ms-badge">' + m.hours + 'h</span>' +
+            '<div>' +
+              '<div class="ms-title">' + esc(m.title) + '</div>' +
+              '<div class="ms-reward">🎁 ' + esc(m.reward || m.short_reward) + '</div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="ms-status-label">' + statusLabel + '</div>' +
+        '</div>';
+      }
+      track.innerHTML = html;
+    }
+
+    function renderLeaderboard(board, isIdle) {
+      var tbody = document.getElementById('lbBody');
+      var searchVal = (document.getElementById('lbSearch').value || '').trim().toLowerCase();
+      var filtered = board.filter(function(e) {
+        if (!searchVal) return true;
+        return (e.name || '').toLowerCase().indexOf(searchVal) >= 0;
+      });
+
+      if (filtered.length) {
+        var html = '';
+        for (var i = 0; i < filtered.length; i++) {
+          var e = filtered[i];
+          var medal = '', cls = '';
+          if (e.rank === 1) { medal = '🥇'; cls = 'medal-1'; }
+          else if (e.rank === 2) { medal = '🥈'; cls = 'medal-2'; }
+          else if (e.rank === 3) { medal = '🥉'; cls = 'medal-3'; }
+          html += '<tr>' +
+            '<td class="rank ' + cls + '">' + (medal || ('#' + e.rank)) + '</td>' +
+            '<td><strong>' + esc(e.name) + '</strong></td>' +
+            '<td class="time">' + esc(e.time) + '</td>' +
+          '</tr>';
+        }
+        tbody.innerHTML = html;
+      } else {
+        var emptyMsg = isIdle ? 'No contestants yet — event has not started' : (searchVal ? 'No contestants match "' + esc(searchVal) + '"' : 'No contestants registered');
+        tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:1.5rem">' + emptyMsg + '</td></tr>';
+      }
+    }
+
+    document.getElementById('lbSearch').addEventListener('input', function() {
+      if (currentSnapshot) {
+        renderLeaderboard(currentSnapshot.leaderboard || [], currentSnapshot.status === 'IDLE');
+      }
+    });
 
     // ---- Start: try WebSocket, fall back to polling ----
     connectWS();

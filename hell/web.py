@@ -62,6 +62,14 @@ async def _handle_ws(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+async def _handle_status_json(request: web.Request) -> web.StreamResponse:
+    """Serve the static status.json."""
+    path = _DOCS / "status.json"
+    if path.exists():
+        return web.FileResponse(path)
+    return web.json_response({"status": "IDLE"})
+
+
 async def _handle_health(request: web.Request) -> web.Response:
     """Simple JSON health probe (no auth, no secrets)."""
     return web.json_response({"ok": True, "clients": len(_clients)})
@@ -74,6 +82,7 @@ def create_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/", _handle_index)
     app.router.add_get("/dev", _handle_dev)
+    app.router.add_get("/status.json", _handle_status_json)
     app.router.add_get("/ws", _handle_ws)
     app.router.add_get("/health", _handle_health)
     return app

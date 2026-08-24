@@ -262,6 +262,32 @@ class HellBot(commands.Bot):
         current_ms = snap.current
         upcoming_ms = snap.upcoming
 
+        from .milestones import MILESTONES
+        milestone_records_map = {r.hours: r for r in self.engine.milestone_records()}
+        milestones_list: list[dict] = []
+        for m in MILESTONES:
+            rec = milestone_records_map.get(m.hours)
+            reached = rec is not None or (snap.elapsed >= m.seconds)
+            time_to = max(0.0, m.seconds - snap.elapsed) if not reached else 0.0
+            milestones_list.append({
+                "hours": m.hours,
+                "title": m.title,
+                "reward": m.reward,
+                "short_reward": m.short_reward or m.reward,
+                "blurb": m.blurb,
+                "reached": reached,
+                "reached_ts": rec.reached_ts if rec else None,
+                "members_count": len(rec.members) if rec else 0,
+                "time_to": round(time_to, 1) if (self.engine.status.is_active and not reached) else None,
+            })
+
+        estimated_end_ts: Optional[float] = None
+        if snap.start_ts is not None:
+            if self.engine.status.is_active:
+                estimated_end_ts = snap.start_ts + snap.total + self.engine.state.paused_seconds
+            elif snap.end_ts is not None:
+                estimated_end_ts = snap.end_ts
+
         # Health / errors / warnings.
         health_errors: list[str] = []
         health_warnings: list[str] = []
@@ -290,6 +316,9 @@ class HellBot(commands.Bot):
             "remaining": round(snap.remaining, 1),
             "fraction": round(snap.fraction, 4),
             "participants": snap.participants,
+            "start_ts": snap.start_ts,
+            "end_ts": snap.end_ts,
+            "estimated_end_ts": estimated_end_ts,
             "paused": snap.paused,
             "pause_reason": self.engine.state.pause_reason,
             "end_reason": self.engine.state.end_reason,
@@ -308,6 +337,7 @@ class HellBot(commands.Bot):
                 "short_reward": upcoming_ms.short_reward or upcoming_ms.reward,
                 "time_to": round(snap.time_to_next, 1) if snap.time_to_next is not None else None,
             } if upcoming_ms else None,
+            "milestones": milestones_list,
             # --- leaderboard ---
             "leaderboard": lb,
             "leaderboard_total": len(board),
@@ -322,6 +352,8 @@ class HellBot(commands.Bot):
             "monitor_stale_seconds": sec.get("stale_seconds"),
             "blind_seconds": round(self.monitor.blind_seconds, 1),
             "active_tasks": _active_tasks_count(),
+            "voice_channel_id": self.engine.state.voice_channel_id or self.config.voice_channel_id,
+            "guild_id": self.engine.state.guild_id or self.config.guild_id,
             "operator_dm_ok": stream.enabled if stream else True,
             "version": __version__,
         }

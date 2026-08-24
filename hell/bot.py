@@ -34,6 +34,7 @@ from .logsink import DiscordLogStream
 from .monitor import VoiceMonitor
 from .storage import Store
 from .tasks import spawn as _spawn
+from .texts import TEXT
 from .texts import source as texts_source
 from .timeutil import format_hm, format_hms, now_ts
 from .web import broadcast, start_server, stop_server
@@ -61,7 +62,7 @@ class HellBot(commands.Bot):
         # a roll call.  It is a privileged intent: enable "Message Content
         # Intent" in the Developer Portal or login fails (PrivilegedIntents).
         intents.message_content = True
-        super().__init__(command_prefix=commands.when_mentioned, intents=intents, help_command=None)
+        super().__init__(command_prefix=commands.when_mentioned_or("!"), intents=intents, help_command=None)
 
         self.config = config
         self.store = Store(config.database_path)
@@ -378,14 +379,32 @@ class HellBot(commands.Bot):
             await self.monitor.kick_clankers([member])
 
     async def on_message(self, message: discord.Message) -> None:
-        """Alive-check answers arrive as ordinary chat messages."""
-        if message.guild is None or message.author.bot:
+        """Handle alive-check answers in guild channels and ! prefix commands in DMs/guild channels."""
+        if message.author.bot:
             return
-        try:
-            await self.monitor.handle_message(message)
-        except Exception:  # pragma: no cover - never break on a chat message
-            log.exception("Failed to handle a message for the alive check")
+        if message.guild is not None:
+            try:
+                await self.monitor.handle_message(message)
+            except Exception:  # pragma: no cover - never break on a chat message
+                log.exception("Failed to handle a message for the alive check")
         await self.process_commands(message)
+
+    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
+        if isinstance(error, commands.CommandNotFound):
+            if ctx.guild is None:
+                await ctx.send("Unknown command. Type `!help` or `!status` for a list of available commands.")
+            return
+        if isinstance(error, commands.MissingRequiredArgument):
+            await ctx.send(f"Missing required argument `{error.param.name}`. Type `!help` for usage.")
+            return
+        if isinstance(error, (commands.CheckFailure, commands.NotOwner)):
+            await ctx.send(TEXT.CMD_NOT_A_HOST)
+            return
+        log.exception("Command error in %s: %s", getattr(ctx.command, "name", "?"), error)
+        try:
+            await ctx.send(TEXT.CMD_ERROR)
+        except Exception:
+            pass
 
     async def on_error(self, event_method: str, *args, **kwargs) -> None:  # pragma: no cover
         log.exception("Unhandled exception in %s", event_method)

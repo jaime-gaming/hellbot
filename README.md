@@ -218,6 +218,10 @@ in the log, and in the launcher's Dashboard.
 All output is embeds. Mentions inside an embed never ping, so a milestone can list 250 eligible
 users without 250 notifications — while the `@everyone` ping stays in the message content.
 
+### Direct Message (DM) & Prefix Commands
+
+All commands can also be triggered in **Direct Messages (DMs)** to the bot using either the standard slash commands (`/hell ...`) or the `!` prefix (e.g. `!status`, `!leaderboard`, `!mystats`, `!help`, `!restart`, `!doctor`, `!hell status`, etc.). DM commands use the same authorization checks as server interactions.
+
 ---
 
 ## Changing what the bot says — `Announcements.py`

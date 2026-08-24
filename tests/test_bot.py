@@ -248,6 +248,8 @@ def test_on_ready_reports_state_runs_preflight_and_starts_the_monitor(bot, monke
     monkeypatch.setattr(bot.monitor, "resume_after_restart", fake_resume)
     monkeypatch.setattr(bot.monitor, "start", lambda: calls.append("monitor"))
     monkeypatch.setattr(bot.log_stream, "start", _noop)
+    monkeypatch.setattr(bot, "_start_status_rotation", lambda: None)
+    monkeypatch.setattr("hell.bot.start_server", _noop)
 
     with caplog.at_level(logging.INFO, logger="hell"):
         run(bot.on_ready())
@@ -272,6 +274,8 @@ def test_on_ready_recovers_only_once(bot, monkeypatch):
     monkeypatch.setattr(bot.log_stream, "start", _noop)
     monkeypatch.setattr(bot.monitor, "resume_after_restart",
                         lambda: _record(resumes))
+    monkeypatch.setattr(bot, "_start_status_rotation", lambda: None)
+    monkeypatch.setattr("hell.bot.start_server", _noop)
 
     run(bot.on_ready())
     run(bot.on_ready())          # a reconnect fires on_ready again
@@ -290,6 +294,8 @@ def test_on_ready_survives_a_broken_preflight(bot, monkeypatch, caplog):
     monkeypatch.setattr(bot.monitor, "start", lambda: None)
     monkeypatch.setattr(bot.monitor, "resume_after_restart", _noop)
     monkeypatch.setattr(bot.log_stream, "start", _noop)
+    monkeypatch.setattr(bot, "_start_status_rotation", lambda: None)
+    monkeypatch.setattr("hell.bot.start_server", _noop)
 
     with caplog.at_level(logging.ERROR, logger="hell"):
         run(bot.on_ready())      # the bot must still come up

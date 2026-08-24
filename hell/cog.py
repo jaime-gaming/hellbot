@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import logging
+import random
 from typing import Optional
 
 import discord
@@ -20,7 +22,7 @@ from .health import preflight
 from .milestones import MILESTONES, TOTAL_SECONDS
 from .models import EventStatus
 from .monitor import VoiceMonitor
-from .tasks import active as active_tasks
+from .tasks import active as active_tasks, spawn
 from .texts import TEXT, message_count, say
 from .texts import reload as reload_texts
 from .texts import source as texts_source
@@ -42,6 +44,9 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         self.monitor = monitor
         self.announcer = monitor.announcer
         self.code_gate = CodeGate()
+        self._leaderboard_task: Optional[asyncio.Task] = None
+        self._leaderboard_message: Optional[discord.Message] = None
+        self._status_task: Optional[asyncio.Task] = None
         super().__init__()
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -161,17 +166,55 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
 
     # ----------------------------------------------------------- leaderboard
 
-    @app_commands.command(name="leaderboard", description="Show the Welcome to Hell leaderboard.")
+    @app_commands.command(name="leaderboard", description="Show the Welcome to Hell leaderboard (auto-updates every minute).")
     @app_commands.guild_only()
     async def leaderboard(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(thinking=True)
         entries = self.engine.leaderboard()
         frozen = self.engine.status.is_terminal
-        title = "🏆 WELCOME TO HELL — FINAL LEADERBOARD" if frozen else "🏆 WELCOME TO HELL — LEADERBOARD"
-        embeds = self.announcer.build_leaderboard_embeds(entries, title=title)
+        title = "🏆 WELCOME TO HELL — FINAL LEADERBOARD" if frozen else "🏆 WELCOME TO HELL — LIVE LEADERBOARD"
+        embeds = self.announcer.build_leaderboard_live_embeds(entries, title=title)
         if frozen and embeds:
             embeds[-1].set_footer(text="These rankings are frozen; the event is over.")
-        await interaction.followup.send(embeds=embeds)
+        msg = await interaction.followup.send(embeds=embeds)
+
+        # Start auto-update if the event is running.
+        if self.engine.is_running and not frozen:
+            if self._leaderboard_task is not None and not self._leaderboard_task.done():
+                self._leaderboard_task.cancel()
+            self._leaderboard_message = msg
+            self._leaderboard_task = spawn(
+                self._leaderboard_update_loop(msg, title),
+                name="leaderboard-update",
+            )
+
+    async def _leaderboard_update_loop(self, message: discord.Message, title: str) -> None:
+        """Edit the leaderboard message every 60 seconds while the event runs."""
+        try:
+            while self.engine.is_running:
+                await asyncio.sleep(60)
+                try:
+                    entries = self.engine.leaderboard()
+                    embeds = self.announcer.build_leaderboard_live_embeds(entries, title=title)
+                    await message.edit(embeds=embeds)
+                except discord.NotFound:
+                    break  # message deleted
+                except discord.HTTPException:
+                    pass  # retry next cycle
+
+            # Event ended — write the final frozen state once.
+            if not self.engine.is_running:
+                try:
+                    entries = self.engine.leaderboard()
+                    final_title = "🏆 WELCOME TO HELL — FINAL LEADERBOARD"
+                    embeds = self.announcer.build_leaderboard_live_embeds(entries, title=final_title)
+                    if embeds:
+                        embeds[-1].set_footer(text="These rankings are frozen; the event is over.")
+                    await message.edit(embeds=embeds)
+                except (discord.NotFound, discord.HTTPException):
+                    pass
+        except asyncio.CancelledError:
+            pass
 
     # ------------------------------------------------------------ milestones
 

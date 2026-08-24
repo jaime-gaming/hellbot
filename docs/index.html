@@ -3,297 +3,316 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Welcome to Hell — Bot Status</title>
+  <title>Welcome to Hell — Live</title>
   <style>
     :root {
-      --bg: #0d0d0d;
-      --card: #1a1a1a;
-      --border: #333;
-      --text: #eee;
-      --muted: #999;
-      --green: #2ecc71;
-      --red: #e74c3c;
-      --orange: #f39c12;
-      --ember: #e25822;
-      --blue: #3498db;
+      --bg: #0a0a0a; --card: #141414; --border: #2a2a2a;
+      --text: #eee; --muted: #888;
+      --green: #2ecc71; --red: #e74c3c; --orange: #f39c12;
+      --ember: #e25822; --blue: #3498db; --purple: #9b59b6;
+      --gold: #f1c40f; --silver: #bdc3c7; --bronze: #cd7f32;
     }
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    * { margin:0; padding:0; box-sizing:border-box; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      padding: 2rem;
-      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg); color: var(--text);
+      padding: 1.5rem; min-height: 100vh;
     }
-    .container { max-width: 900px; margin: 0 auto; }
-    header {
-      text-align: center;
-      margin-bottom: 2.5rem;
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 1.5rem;
-    }
+    .container { max-width: 960px; margin: 0 auto; }
+    header { text-align:center; margin-bottom:2rem; padding-bottom:1.5rem; border-bottom:1px solid var(--border); }
     header h1 {
-      font-size: 2.2rem;
+      font-size:2rem;
       background: linear-gradient(135deg, var(--ember), var(--orange));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+      -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
     }
-    header p {
-      color: var(--muted);
-      margin-top: 0.5rem;
-      font-size: 0.95rem;
-    }
-    header .badge {
-      display: inline-block;
-      margin-top: 0.75rem;
-      padding: 0.25rem 0.75rem;
-      border-radius: 1rem;
-      font-size: 0.85rem;
-      font-weight: 600;
-    }
-    .badge.ok { background: var(--green); color: #000; }
-    .badge.warn { background: var(--orange); color: #000; }
-    .badge.err { background: var(--red); color: #fff; }
-    .badge.idle { background: var(--border); color: var(--muted); }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 1rem;
-      margin-bottom: 2rem;
-    }
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 0.75rem;
-      padding: 1.25rem;
-    }
-    .card h3 {
-      font-size: 0.8rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--muted);
-      margin-bottom: 0.5rem;
-    }
-    .card .value {
-      font-size: 1.8rem;
-      font-weight: 700;
-    }
-    .card .value.green { color: var(--green); }
-    .card .value.red { color: var(--red); }
-    .card .value.orange { color: var(--orange); }
-    .card .value.blue { color: var(--blue); }
-    .card .sub { font-size: 0.85rem; color: var(--muted); margin-top: 0.25rem; }
-    .section { margin-bottom: 2rem; }
-    .section h2 {
-      font-size: 1.1rem;
-      margin-bottom: 0.75rem;
-      color: var(--ember);
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 0.5rem;
-    }
-    .event-list { list-style: none; }
-    .event-list li {
-      padding: 0.5rem 0.75rem;
-      border-left: 3px solid transparent;
-      margin-bottom: 0.25rem;
-      border-radius: 0.25rem;
-      font-size: 0.9rem;
-    }
-    .event-list li.error {
-      border-left-color: var(--red);
-      background: rgba(231, 76, 60, 0.08);
-    }
-    .event-list li.warn {
-      border-left-color: var(--orange);
-      background: rgba(243, 156, 18, 0.08);
-    }
-    .empty { color: var(--muted); font-style: italic; }
-    .github-section {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 0.75rem;
-      padding: 1.25rem;
-      margin-bottom: 2rem;
-    }
-    .github-section h3 {
-      font-size: 0.8rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--muted);
-      margin-bottom: 0.5rem;
-    }
-    .info-block {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 0.75rem;
-      padding: 1.25rem;
-      margin-bottom: 2rem;
-    }
-    .info-block h3 {
-      font-size: 0.8rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--muted);
-      margin-bottom: 0.5rem;
-    }
-    .info-block p {
-      font-size: 0.9rem;
-      line-height: 1.5;
-      color: var(--muted);
-    }
-    .info-block a { color: var(--blue); }
-    footer {
-      text-align: center;
-      color: var(--muted);
-      font-size: 0.8rem;
-      padding-top: 2rem;
-      border-top: 1px solid var(--border);
-    }
-    footer a { color: var(--blue); }
+    header .subtitle { color:var(--muted); margin-top:0.4rem; font-size:0.9rem; }
+    .badge { display:inline-block; margin-top:0.6rem; padding:0.3rem 1rem; border-radius:1rem; font-size:0.85rem; font-weight:600; }
+    .badge.ok { background:var(--green); color:#000; }
+    .badge.warn { background:var(--orange); color:#000; }
+    .badge.err { background:var(--red); color:#fff; }
+    .badge.idle { background:var(--border); color:var(--muted); }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.7} }
+
+    /* connection banner */
+    .conn-banner { text-align:center; padding:0.4rem; font-size:0.8rem; font-weight:600; border-radius:0.5rem; margin-bottom:1rem; display:none; }
+    .conn-banner.live { display:block; background:rgba(46,204,113,0.12); color:var(--green); border:1px solid rgba(46,204,113,0.25); }
+    .conn-banner.polling { display:block; background:rgba(52,152,219,0.12); color:var(--blue); border:1px solid rgba(52,152,219,0.25); }
+    .conn-banner.disconnected { display:block; background:rgba(231,76,60,0.12); color:var(--red); border:1px solid rgba(231,76,60,0.25); }
+
+    /* progress */
+    .progress-wrap { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:1.25rem; margin-bottom:1.5rem; }
+    .progress-header { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:0.6rem; }
+    .progress-header .label { font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); }
+    .progress-header .pct { font-size:1.4rem; font-weight:700; color:var(--ember); }
+    .progress-bar-outer { width:100%; height:28px; background:#1e1e1e; border-radius:14px; overflow:hidden; position:relative; }
+    .progress-bar-inner { height:100%; background:linear-gradient(90deg,var(--ember),var(--orange)); border-radius:14px; transition:width 1s ease; }
+    .progress-bar-label { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); font-size:0.75rem; font-weight:600; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,0.6); white-space:nowrap; }
+    .progress-times { display:flex; justify-content:space-between; margin-top:0.5rem; font-size:0.85rem; color:var(--muted); }
+
+    /* grid */
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:1rem; margin-bottom:1.5rem; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:1rem 1.25rem; }
+    .card h3 { font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.4rem; }
+    .card .value { font-size:1.6rem; font-weight:700; }
+    .card .sub { font-size:0.8rem; color:var(--muted); margin-top:0.2rem; }
+    .green{color:var(--green)} .red{color:var(--red)} .orange{color:var(--orange)} .blue{color:var(--blue)} .ember{color:var(--ember)} .purple{color:var(--purple)}
+
+    /* leaderboard */
+    .section { margin-bottom:1.5rem; }
+    .section h2 { font-size:1rem; margin-bottom:0.75rem; color:var(--ember); border-bottom:1px solid var(--border); padding-bottom:0.5rem; }
+    .lb-table { width:100%; border-collapse:collapse; font-size:0.9rem; }
+    .lb-table th { text-align:left; padding:0.5rem 0.75rem; border-bottom:1px solid var(--border); color:var(--muted); font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; }
+    .lb-table td { padding:0.5rem 0.75rem; border-bottom:1px solid #1a1a1a; }
+    .lb-table tr:hover { background:rgba(255,255,255,0.03); }
+    .lb-table .rank { width:3rem; text-align:center; font-weight:700; }
+    .lb-table .time { text-align:right; font-variant-numeric:tabular-nums; color:var(--muted); }
+    .medal-1{color:var(--gold)} .medal-2{color:var(--silver)} .medal-3{color:var(--bronze)}
+
+    /* alive check */
+    .alive-card { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:1rem 1.25rem; margin-bottom:1.5rem; }
+    .alive-card.active { border-color:var(--orange); }
+    .alive-bar-outer { width:100%; height:8px; background:#1e1e1e; border-radius:4px; overflow:hidden; margin-top:0.5rem; }
+    .alive-bar-inner { height:100%; background:var(--orange); border-radius:4px; transition:width 1s linear; }
+
+    /* banners */
+    .grace-banner, .paused-banner { text-align:center; padding:0.6rem; font-size:0.9rem; font-weight:600; border-radius:0.5rem; margin-bottom:1rem; display:none; }
+    .grace-banner.visible { display:block; background:rgba(231,76,60,0.15); color:var(--red); border:1px solid rgba(231,76,60,0.3); animation:pulse 1.5s infinite; }
+    .paused-banner.visible { display:block; background:rgba(155,89,182,0.15); color:var(--purple); border:1px solid rgba(155,89,182,0.3); }
+
+    footer { text-align:center; color:var(--muted); font-size:0.75rem; padding-top:1.5rem; border-top:1px solid var(--border); margin-top:1rem; }
+    footer a { color:var(--blue); text-decoration:none; }
+    footer a:hover { text-decoration:underline; }
   </style>
 </head>
 <body>
   <div class="container">
+    <div id="connBanner" class="conn-banner">⏳ Connecting&hellip;</div>
+    <div id="graceBanner" class="grace-banner">⚠️ VC EMPTY — Grace period counting down!</div>
+    <div id="pausedBanner" class="paused-banner">⏸️ EVENT PAUSED</div>
+
     <header>
-      <h1>🔥 Welcome to Hell — Bot Status</h1>
-      <p>Real-time monitor of the 160-hour Discord endurance event</p>
+      <h1>🔥 Welcome to Hell</h1>
+      <p class="subtitle">160-hour Discord endurance event — live dashboard</p>
       <div id="statusBadge" class="badge idle">Connecting&hellip;</div>
     </header>
 
-    <div class="grid" id="summaryGrid">
-      <!-- Populated by JavaScript -->
+    <div class="progress-wrap">
+      <div class="progress-header">
+        <span class="label">Event Progress</span>
+        <span class="pct" id="progressPct">0%</span>
+      </div>
+      <div class="progress-bar-outer">
+        <div class="progress-bar-inner" id="progressBar" style="width:0%"></div>
+        <div class="progress-bar-label" id="progressLabel">0h 00m / 160h</div>
+      </div>
+      <div class="progress-times">
+        <span id="elapsedLabel">Elapsed: 0h 00m</span>
+        <span id="remainingLabel">Remaining: 160h 00m</span>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card"><h3>Participants</h3><div class="value blue" id="vcCount">—</div><div class="sub">in the VC right now</div></div>
+      <div class="card"><h3>Current Milestone</h3><div class="value ember" id="currentMs">—</div><div class="sub" id="currentMsSub"></div></div>
+      <div class="card"><h3>Next Milestone</h3><div class="value orange" id="nextMs">—</div><div class="sub" id="nextMsSub"></div></div>
+      <div class="card"><h3>Contestants</h3><div class="value purple" id="totalLb">—</div><div class="sub">on the leaderboard</div></div>
     </div>
 
     <div class="section">
-      <h2>❌ Errors (last 24 h)</h2>
-      <ul class="event-list" id="errorList">
-        <li class="empty"><em>No errors recorded.</em></li>
-      </ul>
+      <h2>🏆 Live Leaderboard</h2>
+      <table class="lb-table">
+        <thead><tr><th class="rank">#</th><th>Contestant</th><th class="time">Time</th></tr></thead>
+        <tbody id="lbBody"><tr><td colspan="3" style="color:var(--muted);text-align:center;padding:2rem">Waiting for data&hellip;</td></tr></tbody>
+      </table>
     </div>
 
-    <div class="section">
-      <h2>⚠️ Warnings (last 24 h)</h2>
-      <ul class="event-list" id="warningList">
-        <li class="empty"><em>No warnings recorded.</em></li>
-      </ul>
-    </div>
-
-    <div class="github-section">
-      <h3>🔗 GitHub</h3>
-      <div id="githubStats">Loading&hellip;</div>
-    </div>
-
-    <div class="info-block">
-      <h3>📋 How this works</h3>
-      <p>
-        The bot writes its error and warning summary to <code>docs/status.json</code>
-        on every heartbeat (default every 15 minutes). The JSON is pushed to the
-        <code>main</code> branch and served by GitHub Pages.
-      </p>
-      <p>
-        If the status hasn&rsquo;t updated in more than 2 heartbeats (&gt;30 minutes),
-        the bot may be offline or the push failed.
-      </p>
-      <p>
-        🔒 This page shows <strong>errors and warnings only</strong>. No full logs,
-        no participant data, no tokens.
-      </p>
+    <div class="alive-card" id="aliveCard">
+      <h3 style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin-bottom:0.3rem">🚨 Alive Check</h3>
+      <div id="aliveText" style="font-size:0.9rem">No active roll call</div>
+      <div class="alive-bar-outer" id="aliveBarWrap" style="display:none">
+        <div class="alive-bar-inner" id="aliveBar" style="width:0%"></div>
+      </div>
     </div>
 
     <footer>
-      <p>Welcome to Hell &middot; <a href="https://github.com/jaime-gaming/hellbot">github.com/jaime-gaming/hellbot</a></p>
+      <p>Welcome to Hell &middot; <a href="/dev">Developer Dashboard</a> &middot; <a href="https://github.com/jaime-gaming/hellbot">GitHub</a></p>
+      <p style="margin-top:0.3rem">Last update: <span id="lastUpdate">—</span> &middot; <span id="modeLabel">—</span></p>
     </footer>
   </div>
 
   <script>
-  (async function () {
-    var res = await fetch('status.json');
-    var text = await res.text();
-    var data;
-    try {
-      data = JSON.parse(text);
-    } catch(e) {
-      document.getElementById('statusBadge').textContent = 'Status file corrupt';
-      document.getElementById('statusBadge').className = 'badge err';
-      return;
+  (function() {
+    var ws = null, reconnectTimer = null, pollTimer = null;
+    var banner = document.getElementById('connBanner');
+    var modeLabel = document.getElementById('modeLabel');
+    var wsConnected = false;
+
+    function fmt(s) {
+      s = Math.max(0, Math.floor(s));
+      var h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=s%60;
+      return h+'h '+(m<10?'0':'')+m+'m '+(sec<10?'0':'')+sec+'s';
+    }
+    function fmtShort(s) {
+      s = Math.max(0, Math.floor(s));
+      var h=Math.floor(s/3600), m=Math.floor((s%3600)/60);
+      return h+'h '+(m<10?'0':'')+m+'m';
+    }
+    function esc(t) { var d=document.createElement('div'); d.appendChild(document.createTextNode(t)); return d.innerHTML; }
+
+    // ---- WebSocket mode (live server) ----
+    function connectWS() {
+      try {
+        var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(proto + '//' + location.host + '/ws');
+      } catch(e) { fallbackToPoll(); return; }
+
+      ws.onopen = function() {
+        wsConnected = true;
+        stopPolling();
+        banner.className = 'conn-banner live';
+        banner.textContent = '🟢 Live — real-time updates via WebSocket';
+        banner.style.display = 'block';
+        modeLabel.textContent = 'live (WebSocket)';
+      };
+      ws.onclose = function() {
+        if (wsConnected) { wsConnected = false; fallbackToPoll(); }
+        else { retryWS(); }
+      };
+      ws.onerror = function() { ws.close(); };
+      ws.onmessage = function(evt) {
+        var d; try { d = JSON.parse(evt.data); } catch(e) { return; }
+        if (d.type === 'snapshot') render(d);
+      };
     }
 
-    var badge = document.getElementById('statusBadge');
-    var elapsed = data.event_elapsed_hours ? ' ' + data.event_elapsed_hours.toFixed(1) + 'h' : '';
-    if (!data.bot_connected) {
-      badge.textContent = 'Offline' + elapsed;
-      badge.className = 'badge err';
-    } else if (data.event_status === 'RUNNING') {
-      badge.textContent = 'Running' + elapsed;
-      badge.className = 'badge ok';
-    } else if (data.event_status === 'COMPLETED') {
-      badge.textContent = 'Completed';
-      badge.className = 'badge ok';
-    } else if (data.event_status === 'FAILED') {
-      badge.textContent = 'Failed';
-      badge.className = 'badge err';
-    } else if (data.event_status === 'CANCELLED') {
-      badge.textContent = 'Cancelled';
-      badge.className = 'badge warn';
-    } else {
-      badge.textContent = 'Idle';
-      badge.className = 'badge idle';
+    function retryWS() {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(connectWS, 5000);
     }
 
-    var errCount = data.errors_last_24h ? data.errors_last_24h.length : 0;
-    var warnCount = data.warnings_last_24h ? data.warnings_last_24h.length : 0;
-    var lastUpdate = data.last_updated ? new Date(data.last_updated).toLocaleString() : 'N/A';
-    var rl = data.rate_limits_5min || 0;
-    var stale = data.monitor_stale_seconds;
-
-    document.getElementById('summaryGrid').innerHTML =
-      '<div class="card"><h3>Errors (24h)</h3><div class="value ' + (errCount > 0 ? 'red' : 'green') + '">' + errCount + '</div></div>' +
-      '<div class="card"><h3>Warnings (24h)</h3><div class="value ' + (warnCount > 0 ? 'orange' : 'green') + '">' + warnCount + '</div></div>' +
-      '<div class="card"><h3>Event Status</h3><div class="value blue">' + (data.event_status || 'N/A') + '</div><div class="sub">' + (elapsed || 'No event') + '</div></div>' +
-      '<div class="card"><h3>Last Updated</h3><div class="value" style="font-size:1rem">' + lastUpdate + '</div></div>' +
-      '<div class="card"><h3>Rate Limits (5min)</h3><div class="value ' + (rl > 5 ? 'red' : rl > 0 ? 'orange' : 'green') + '">' + rl + '</div><div class="sub">Discord 429 responses</div></div>' +
-      '<div class="card"><h3>Monitor</h3><div class="value ' + (stale && stale > 120 ? 'red' : 'green') + '">' + (stale ? Math.round(stale) + 's ago' : 'Active') + '</div><div class="sub">Last VC observation</div></div>' +
-      '<div class="card"><h3>Alive Check</h3><div class="value ' + (data.alive_check_pending ? 'orange' : 'green') + '">' + (data.alive_check_pending ? 'Pending' : 'Idle') + '</div></div>' +
-      '<div class="card"><h3>Operator DM</h3><div class="value ' + (data.operator_dm_ok ? 'green' : 'red') + '">' + (data.operator_dm_ok ? 'Open' : 'Closed') + '</div></div>';
-
-    var el = document.getElementById('errorList');
-    if (data.errors_last_24h && data.errors_last_24h.length) {
-      el.innerHTML = '';
-      for (var i = 0; i < data.errors_last_24h.length; i++) {
-        var li = document.createElement('li');
-        li.className = 'error';
-        li.textContent = data.errors_last_24h[i];
-        el.appendChild(li);
-      }
+    // ---- Polling mode (GitHub Pages / static) ----
+    function fallbackToPoll() {
+      if (wsConnected) return;
+      banner.className = 'conn-banner polling';
+      banner.textContent = '🔵 Polling — refreshing every 15s (GitHub Pages mode)';
+      banner.style.display = 'block';
+      modeLabel.textContent = 'polling (15s)';
+      startPolling();
     }
 
-    var wl = document.getElementById('warningList');
-    if (data.warnings_last_24h && data.warnings_last_24h.length) {
-      wl.innerHTML = '';
-      for (var i = 0; i < data.warnings_last_24h.length; i++) {
-        var li = document.createElement('li');
-        li.className = 'warn';
-        li.textContent = data.warnings_last_24h[i];
-        wl.appendChild(li);
-      }
+    function startPolling() {
+      stopPolling();
+      pollNow();
+      pollTimer = setInterval(pollNow, 15000);
+    }
+    function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+
+    function pollNow() {
+      fetch('status.json', { cache: 'no-store' })
+        .then(function(r) { if (!r.ok) throw 0; return r.json(); })
+        .then(function(data) { renderFromStatusJson(data); })
+        .catch(function() {
+          banner.className = 'conn-banner disconnected';
+          banner.textContent = '🔴 Cannot reach status data';
+          banner.style.display = 'block';
+        });
     }
 
-    fetch('https://api.github.com/repos/jaime-gaming/hellbot/commits?per_page=3&sha=main')
-      .then(function(r) { return r.json(); })
-      .then(function(commits) {
+    // ---- Render from status.json (GitHub Pages fallback) ----
+    function renderFromStatusJson(d) {
+      var elapsed = (d.event_elapsed_hours || 0) * 3600;
+      var total = 160 * 3600;
+      var fraction = total > 0 ? elapsed / total : 0;
+      var obj = {
+        type: 'snapshot', ts: new Date(d.last_updated).getTime() / 1000,
+        status: d.event_status || 'IDLE',
+        elapsed: Math.round(elapsed), total: total,
+        remaining: Math.max(0, total - elapsed),
+        fraction: Math.round(fraction * 10000) / 10000,
+        participants: 0, paused: false,
+        grace_open: false, grace_seconds_left: 0, grace_total: 15,
+        current_milestone: null, upcoming_milestone: null,
+        leaderboard: [], leaderboard_total: 0,
+        alive_check: d.alive_check_pending ? { answered:0, total:0, seconds_left:0 } : null,
+        health_errors: d.errors_last_24h || [],
+        health_warnings: d.warnings_last_24h || [],
+        health_info: [], log_tail: [],
+        rate_limits_5min: d.rate_limits_5min || 0,
+        monitor_stale_seconds: d.monitor_stale_seconds,
+        blind_seconds: 0, active_tasks: 0,
+        operator_dm_ok: d.operator_dm_ok !== false,
+        version: '?',
+      };
+      render(obj);
+    }
+
+    // ---- Unified render ----
+    function render(d) {
+      var badge = document.getElementById('statusBadge');
+      if (d.status==='RUNNING') { badge.textContent='🔥 RUNNING'; badge.className='badge ok'; }
+      else if (d.status==='COMPLETED') { badge.textContent='🏆 COMPLETED'; badge.className='badge ok'; }
+      else if (d.status==='FAILED') { badge.textContent='💀 FAILED'; badge.className='badge err'; }
+      else if (d.status==='CANCELLED') { badge.textContent='✋ CANCELLED'; badge.className='badge warn'; }
+      else { badge.textContent='💤 IDLE'; badge.className='badge idle'; }
+
+      document.getElementById('graceBanner').className = 'grace-banner' + (d.grace_open ? ' visible' : '');
+      if (d.grace_open) document.getElementById('graceBanner').textContent = '⚠️ VC EMPTY — ' + d.grace_seconds_left + 's to repopulate or the run FAILS!';
+      document.getElementById('pausedBanner').className = 'paused-banner' + (d.paused ? ' visible' : '');
+
+      var pct = (d.fraction * 100).toFixed(1);
+      document.getElementById('progressPct').textContent = pct + '%';
+      document.getElementById('progressBar').style.width = pct + '%';
+      document.getElementById('progressLabel').textContent = fmtShort(d.elapsed) + ' / ' + fmtShort(d.total);
+      document.getElementById('elapsedLabel').textContent = 'Elapsed: ' + fmt(d.elapsed);
+      document.getElementById('remainingLabel').textContent = 'Remaining: ' + fmt(d.remaining);
+
+      document.getElementById('vcCount').textContent = d.participants || '—';
+      if (d.current_milestone) {
+        document.getElementById('currentMs').textContent = d.current_milestone.hours + 'h';
+        document.getElementById('currentMsSub').textContent = d.current_milestone.short_reward || '';
+      } else { document.getElementById('currentMs').textContent='—'; document.getElementById('currentMsSub').textContent=''; }
+      if (d.upcoming_milestone) {
+        document.getElementById('nextMs').textContent = d.upcoming_milestone.hours + 'h';
+        document.getElementById('nextMsSub').textContent = d.upcoming_milestone.time_to != null ? 'in ' + fmt(d.upcoming_milestone.time_to) : '';
+      } else if (d.status==='RUNNING') {
+        document.getElementById('nextMs').textContent='✅'; document.getElementById('nextMsSub').textContent='All cleared!';
+      } else { document.getElementById('nextMs').textContent='—'; document.getElementById('nextMsSub').textContent=''; }
+      document.getElementById('totalLb').textContent = d.leaderboard_total || '—';
+
+      var tbody = document.getElementById('lbBody');
+      if (d.leaderboard && d.leaderboard.length) {
         var html = '';
-        for (var i = 0; i < commits.length; i++) {
-          var c = commits[i];
-          html += '<div style="margin-bottom:0.5rem"><a href="' + c.html_url + '" style="color:var(--blue)">' +
-            c.commit.message.split('\\n')[0] + '</a><br><span style="color:var(--muted);font-size:0.85rem">' +
-            c.commit.author.name + ' &middot; ' + new Date(c.commit.author.date).toLocaleString() + '</span></div>';
+        for (var i=0; i<d.leaderboard.length; i++) {
+          var e = d.leaderboard[i];
+          var medal='', cls='';
+          if (e.rank===1){medal='🥇';cls='medal-1';} else if(e.rank===2){medal='🥈';cls='medal-2';} else if(e.rank===3){medal='🥉';cls='medal-3';}
+          html += '<tr><td class="rank '+cls+'">'+(medal||e.rank)+'</td><td>'+esc(e.name)+'</td><td class="time">'+e.time+'</td></tr>';
         }
-        document.getElementById('githubStats').innerHTML = commits.length ? html : '<span class="empty">No commits.</span>';
-      })
-      .catch(function() {
-        document.getElementById('githubStats').innerHTML = '<span class="empty">GitHub API unreachable.</span>';
-      });
+        tbody.innerHTML = html;
+      } else {
+        tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:1rem">No contestants yet</td></tr>';
+      }
+
+      var ac = d.alive_check;
+      var acCard = document.getElementById('aliveCard');
+      if (ac) {
+        acCard.className = 'alive-card active';
+        document.getElementById('aliveText').textContent = '🚨 ' + ac.answered + '/' + ac.total + ' answered — ' + ac.seconds_left + 's remaining';
+        document.getElementById('aliveBarWrap').style.display = 'block';
+        document.getElementById('aliveBar').style.width = (ac.total > 0 ? (ac.answered/ac.total*100) : 0) + '%';
+      } else {
+        acCard.className = 'alive-card';
+        document.getElementById('aliveText').textContent = d.status==='RUNNING' ? '✅ No active roll call' : '—';
+        document.getElementById('aliveBarWrap').style.display = 'none';
+      }
+
+      document.getElementById('lastUpdate').textContent = d.ts ? new Date(d.ts*1000).toLocaleTimeString() : '—';
+    }
+
+    // ---- Start: try WebSocket, fall back to polling ----
+    connectWS();
+    // If WS doesn't connect within 3s, start polling immediately.
+    setTimeout(function() { if (!wsConnected) fallbackToPoll(); }, 3000);
   })();
   </script>
 </body>

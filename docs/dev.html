@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Welcome to Hell — Dev Dashboard</title>
+  <style>
+    :root {
+      --bg:#0a0a0a; --card:#141414; --border:#2a2a2a;
+      --text:#eee; --muted:#888;
+      --green:#2ecc71; --red:#e74c3c; --orange:#f39c12;
+      --ember:#e25822; --blue:#3498db; --purple:#9b59b6;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      font-family:'SF Mono','Fira Code','Cascadia Code','Consolas',monospace;
+      background:var(--bg); color:var(--text); padding:1.5rem; min-height:100vh; font-size:0.85rem;
+    }
+    .container { max-width:1100px; margin:0 auto; }
+    header { text-align:center; margin-bottom:1.5rem; padding-bottom:1rem; border-bottom:1px solid var(--border); }
+    header h1 { font-size:1.5rem; color:var(--ember); }
+    header .subtitle { color:var(--muted); margin-top:0.3rem; font-size:0.8rem; }
+    .badge { display:inline-block; margin-top:0.5rem; padding:0.2rem 0.8rem; border-radius:1rem; font-size:0.75rem; font-weight:600; }
+    .badge.ok{background:var(--green);color:#000} .badge.warn{background:var(--orange);color:#000}
+    .badge.err{background:var(--red);color:#fff} .badge.idle{background:var(--border);color:var(--muted)}
+
+    .conn-banner { text-align:center; padding:0.3rem; font-size:0.75rem; font-weight:600; border-radius:0.4rem; margin-bottom:0.75rem; display:none; }
+    .conn-banner.live { display:block; background:rgba(46,204,113,0.12); color:var(--green); border:1px solid rgba(46,204,113,0.25); }
+    .conn-banner.polling { display:block; background:rgba(52,152,219,0.12); color:var(--blue); border:1px solid rgba(52,152,219,0.25); }
+    .conn-banner.disconnected { display:block; background:rgba(231,76,60,0.12); color:var(--red); border:1px solid rgba(231,76,60,0.25); }
+
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:0.75rem; margin-bottom:1.25rem; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:0.5rem; padding:0.75rem 1rem; }
+    .card h3 { font-size:0.65rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.3rem; }
+    .card .value { font-size:1.3rem; font-weight:700; }
+    .card .sub { font-size:0.7rem; color:var(--muted); margin-top:0.15rem; }
+    .green{color:var(--green)} .red{color:var(--red)} .orange{color:var(--orange)} .blue{color:var(--blue)} .ember{color:var(--ember)}
+
+    .section { margin-bottom:1.25rem; }
+    .section h2 { font-size:0.85rem; margin-bottom:0.5rem; color:var(--ember); border-bottom:1px solid var(--border); padding-bottom:0.4rem; display:flex; justify-content:space-between; align-items:center; }
+    .section h2 .count { font-size:0.7rem; padding:0.1rem 0.5rem; border-radius:0.8rem; font-weight:600; }
+    .count.zero{background:rgba(46,204,113,0.15);color:var(--green)} .count.some{background:rgba(231,76,60,0.15);color:var(--red)} .count.warn{background:rgba(243,156,18,0.15);color:var(--orange)}
+
+    .log-box { background:#0d0d0d; border:1px solid var(--border); border-radius:0.5rem; padding:0.75rem; max-height:400px; overflow-y:auto; font-size:0.75rem; line-height:1.6; }
+    .log-box::-webkit-scrollbar{width:6px} .log-box::-webkit-scrollbar-track{background:transparent} .log-box::-webkit-scrollbar-thumb{background:#333;border-radius:3px}
+    .log-line{white-space:pre-wrap;word-break:break-all} .log-line.error{color:var(--red)} .log-line.warning{color:var(--orange)} .log-line.info{color:var(--text)} .log-line.debug{color:#666}
+
+    .event-list{list-style:none}
+    .event-list li { padding:0.4rem 0.6rem; border-left:3px solid transparent; margin-bottom:0.2rem; border-radius:0.2rem; font-size:0.8rem; line-height:1.4; }
+    .event-list li.error{border-left-color:var(--red);background:rgba(231,76,60,0.06)}
+    .event-list li.warn{border-left-color:var(--orange);background:rgba(243,156,18,0.06)}
+    .event-list li.info-item{border-left-color:var(--green);background:rgba(46,204,113,0.06)}
+    .empty{color:var(--muted);font-style:italic;padding:0.5rem}
+
+    .two-col { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+    @media(max-width:700px){.two-col{grid-template-columns:1fr}}
+
+    footer { text-align:center; color:var(--muted); font-size:0.7rem; padding-top:1rem; border-top:1px solid var(--border); margin-top:0.5rem; }
+    footer a{color:var(--blue);text-decoration:none}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div id="connBanner" class="conn-banner">⏳ Connecting&hellip;</div>
+
+    <header>
+      <h1>🔧 Welcome to Hell — Dev Dashboard</h1>
+      <p class="subtitle">Operator diagnostics &middot; errors, warnings, logs, health</p>
+      <div id="statusBadge" class="badge idle">Connecting&hellip;</div>
+    </header>
+
+    <div class="grid">
+      <div class="card"><h3>Event Status</h3><div class="value blue" id="evStatus">—</div></div>
+      <div class="card"><h3>Elapsed</h3><div class="value ember" id="evElapsed">—</div></div>
+      <div class="card"><h3>In VC</h3><div class="value blue" id="evVc">—</div></div>
+      <div class="card"><h3>Active Tasks</h3><div class="value" id="evTasks">—</div></div>
+      <div class="card"><h3>Rate Limits</h3><div class="value" id="evRl">—</div><div class="sub">5 min window</div></div>
+      <div class="card"><h3>Monitor</h3><div class="value" id="evMonitor">—</div><div class="sub">last VC observation</div></div>
+      <div class="card"><h3>Blind</h3><div class="value" id="evBlind">—</div><div class="sub">seconds unable to see VC</div></div>
+      <div class="card"><h3>Operator DM</h3><div class="value" id="evDm">—</div></div>
+    </div>
+
+    <div class="two-col">
+      <div class="section">
+        <h2>❌ Preflight Errors <span class="count" id="errCount">0</span></h2>
+        <ul class="event-list" id="errorList"><li class="empty">No errors</li></ul>
+      </div>
+      <div class="section">
+        <h2>⚠️ Preflight Warnings <span class="count" id="warnCount">0</span></h2>
+        <ul class="event-list" id="warningList"><li class="empty">No warnings</li></ul>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>✅ Preflight Info <span class="count zero" id="infoCount">0</span></h2>
+      <ul class="event-list" id="infoList"><li class="empty">No info</li></ul>
+    </div>
+
+    <div class="section">
+      <h2>📜 Live Log Tail <span style="font-size:0.7rem;color:var(--muted)">(last 50 lines)</span></h2>
+      <div class="log-box" id="logBox"><div class="empty">Waiting for log data&hellip;</div></div>
+    </div>
+
+    <footer>
+      <p>Welcome to Hell &middot; <a href="/">Live Dashboard</a> &middot; <a href="https://github.com/jaime-gaming/hellbot">GitHub</a></p>
+      <p style="margin-top:0.2rem">Last update: <span id="lastUpdate">—</span> &middot; <span id="modeLabel">—</span></p>
+    </footer>
+  </div>
+
+  <script>
+  (function() {
+    var ws=null, reconnectTimer=null, pollTimer=null;
+    var banner=document.getElementById('connBanner');
+    var modeLabel=document.getElementById('modeLabel');
+    var logAutoScroll=true;
+    var logBox=document.getElementById('logBox');
+    logBox.addEventListener('scroll',function(){logAutoScroll=logBox.scrollHeight-logBox.scrollTop-logBox.clientHeight<30;});
+
+    function fmtHm(s){s=Math.max(0,Math.floor(s));var h=Math.floor(s/3600),m=Math.floor((s%3600)/60);return h+'h '+(m<10?'0':'')+m+'m';}
+    function esc(t){var d=document.createElement('div');d.appendChild(document.createTextNode(t));return d.innerHTML;}
+
+    // ---- WebSocket ----
+    function connectWS(){
+      try{var p=location.protocol==='https:'?'wss:':'ws:';ws=new WebSocket(p+'//'+location.host+'/ws');}catch(e){fallbackToPoll();return;}
+      ws.onopen=function(){stopPolling();banner.className='conn-banner live';banner.textContent='🟢 Live — real-time updates';banner.style.display='block';modeLabel.textContent='live (WebSocket)';};
+      ws.onclose=function(){fallbackToPoll();};
+      ws.onerror=function(){ws.close();};
+      ws.onmessage=function(e){var d;try{d=JSON.parse(e.data);}catch(x){return;}if(d.type==='snapshot')render(d);};
+    }
+
+    // ---- Polling fallback ----
+    function fallbackToPoll(){
+      banner.className='conn-banner polling';banner.textContent='🔵 Polling — refreshing every 15s';banner.style.display='block';modeLabel.textContent='polling (15s)';
+      startPolling();
+    }
+    function startPolling(){stopPolling();pollNow();pollTimer=setInterval(pollNow,15000);}
+    function stopPolling(){if(pollTimer){clearInterval(pollTimer);pollTimer=null;}}
+    function pollNow(){
+      fetch('status.json',{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.json();})
+        .then(function(d){renderFromStatusJson(d);})
+        .catch(function(){banner.className='conn-banner disconnected';banner.textContent='🔴 Cannot reach status data';banner.style.display='block';});
+    }
+
+    function renderFromStatusJson(d){
+      var elapsed=(d.event_elapsed_hours||0)*3600;
+      render({
+        type:'snapshot',ts:new Date(d.last_updated).getTime()/1000,
+        status:d.event_status||'IDLE',elapsed:Math.round(elapsed),participants:0,
+        active_tasks:0,rate_limits_5min:d.rate_limits_5min||0,
+        monitor_stale_seconds:d.monitor_stale_seconds,blind_seconds:0,
+        operator_dm_ok:d.operator_dm_ok!==false,
+        health_errors:d.errors_last_24h||[],health_warnings:d.warnings_last_24h||[],health_info:[],
+        log_tail:[],version:'?',
+      });
+    }
+
+    // ---- Render ----
+    function render(d){
+      var badge=document.getElementById('statusBadge');
+      if(d.status==='RUNNING'){badge.textContent='🔥 RUNNING';badge.className='badge ok';}
+      else if(d.status==='COMPLETED'){badge.textContent='🏆 COMPLETED';badge.className='badge ok';}
+      else if(d.status==='FAILED'){badge.textContent='💀 FAILED';badge.className='badge err';}
+      else if(d.status==='CANCELLED'){badge.textContent='✋ CANCELLED';badge.className='badge warn';}
+      else{badge.textContent='💤 IDLE';badge.className='badge idle';}
+
+      document.getElementById('evStatus').textContent=d.status;
+      document.getElementById('evElapsed').textContent=fmtHm(d.elapsed);
+      document.getElementById('evVc').textContent=d.participants||'—';
+      document.getElementById('evTasks').textContent=d.active_tasks;
+      var rl=d.rate_limits_5min||0,rlEl=document.getElementById('evRl');
+      rlEl.textContent=rl;rlEl.className='value '+(rl>5?'red':rl>0?'orange':'green');
+
+      var stale=d.monitor_stale_seconds,monEl=document.getElementById('evMonitor');
+      if(stale!=null&&stale>60){monEl.textContent=Math.round(stale)+'s ago';monEl.className='value red';}
+      else{monEl.textContent='OK';monEl.className='value green';}
+
+      var blindEl=document.getElementById('evBlind');
+      blindEl.textContent=d.blind_seconds;blindEl.className='value '+(d.blind_seconds>30?'red':d.blind_seconds>0?'orange':'green');
+
+      var dmEl=document.getElementById('evDm');
+      dmEl.textContent=d.operator_dm_ok?'Open':'Closed';dmEl.className='value '+(d.operator_dm_ok?'green':'red');
+
+      renderList('errorList',d.health_errors,'error','errCount','some');
+      renderList('warningList',d.health_warnings,'warn','warnCount','warn');
+      renderList('infoList',d.health_info,'info-item','infoCount','zero');
+      renderLogs(d.log_tail||[]);
+
+      document.getElementById('lastUpdate').textContent=d.ts?new Date(d.ts*1000).toLocaleTimeString():'—';
+    }
+
+    function renderList(id,items,cls,cid,cc){
+      var ul=document.getElementById(id),ce=document.getElementById(cid);
+      ce.textContent=items?items.length:0;ce.className='count '+(items&&items.length>0?cc:'zero');
+      if(!items||!items.length){ul.innerHTML='<li class="empty">None</li>';return;}
+      var h='';for(var i=0;i<items.length;i++)h+='<li class="'+cls+'">'+esc(items[i])+'</li>';
+      ul.innerHTML=h;
+    }
+
+    function renderLogs(lines){
+      if(!lines.length){logBox.innerHTML='<div class="empty">No log lines</div>';return;}
+      var h='';
+      for(var i=0;i<lines.length;i++){
+        var l=lines[i],c='log-line';
+        if(l.indexOf('\u274c')>=0||l.indexOf('ERROR')>=0)c+=' error';
+        else if(l.indexOf('\u26a0')>=0||l.indexOf('WARNING')>=0)c+=' warning';
+        else if(l.indexOf('\u2022')>=0||l.indexOf('INFO')>=0)c+=' info';
+        else c+=' debug';
+        h+='<div class="'+c+'">'+esc(l)+'</div>';
+      }
+      logBox.innerHTML=h;if(logAutoScroll)logBox.scrollTop=logBox.scrollHeight;
+    }
+
+    connectWS();
+    setTimeout(function(){if(!document.querySelector('.conn-banner.live'))fallbackToPoll();},3000);
+  })();
+  </script>
+</body>
+</html>

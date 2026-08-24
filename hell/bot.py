@@ -379,7 +379,7 @@ class HellBot(commands.Bot):
             await self.monitor.kick_clankers([member])
 
     async def on_message(self, message: discord.Message) -> None:
-        """Handle alive-check answers in guild channels and ! prefix commands in DMs/guild channels."""
+        """Handle alive-check answers in guild channels and ! prefix commands strictly in DMs."""
         if message.author.bot:
             return
         if message.guild is not None:
@@ -387,12 +387,15 @@ class HellBot(commands.Bot):
                 await self.monitor.handle_message(message)
             except Exception:  # pragma: no cover - never break on a chat message
                 log.exception("Failed to handle a message for the alive check")
+            return
+        # Direct Messages (DMs) only: process ! prefix commands
         await self.process_commands(message)
 
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
+        if ctx.guild is not None:
+            return
         if isinstance(error, commands.CommandNotFound):
-            if ctx.guild is None:
-                await ctx.send("Unknown command. Type `!help` or `!status` for a list of available commands.")
+            await ctx.send("Unknown command. Type `!help` or `!status` for a list of available commands.")
             return
         if isinstance(error, commands.MissingRequiredArgument):
             await ctx.send(f"Missing required argument `{error.param.name}`. Type `!help` for usage.")

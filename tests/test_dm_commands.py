@@ -420,10 +420,19 @@ def test_hell_group_subcommand_dispatching(wired, config, engine):
     assert "Unknown subcommand `foobar`" in ctx_unk.text()
 
 
-# ------------------------------------------------------------- bot event routing
+# ------------------------------------------------------------- DM-only enforcement
 
 
-def test_bot_on_message_routes_dms_to_process_commands(wired, config):
+def test_cog_check_enforces_dm_only(wired):
+    cog, bot, _text, _voice = wired
+    dm_ctx = FakeContext(bot, FakeAuthor(uid=100), guild_id=None)
+    guild_ctx = FakeContext(bot, FakeAuthor(uid=100), guild_id=123)
+
+    assert run(cog.cog_check(dm_ctx)) is True
+    assert run(cog.cog_check(guild_ctx)) is False
+
+
+def test_bot_on_message_routes_dms_only(wired, config):
     from hell.bot import build_bot
 
     bot = build_bot(config)
@@ -434,13 +443,22 @@ def test_bot_on_message_routes_dms_to_process_commands(wired, config):
 
     bot.process_commands = fake_process  # type: ignore[assignment]
 
-    # DM message from user
+    # DM message from user -> processed
     dm = MagicMock(spec=discord.Message)
     dm.guild = None
     dm.author.bot = False
     dm.content = "!status"
     run(bot.on_message(dm))
     assert calls == ["!status"]
+
+    # Server/guild message -> NOT processed for prefix commands
+    guild_msg = MagicMock(spec=discord.Message)
+    guild_msg.guild = MagicMock()
+    guild_msg.guild.id = 123
+    guild_msg.author.bot = False
+    guild_msg.content = "!status"
+    run(bot.on_message(guild_msg))
+    assert calls == ["!status"]  # length unchanged
 
     # Bot message -> ignored
     bot_msg = MagicMock(spec=discord.Message)
@@ -463,6 +481,11 @@ def test_bot_on_command_error_friendly_dm_feedback(wired, config):
     ctx_dm.guild = None
     run(bot.on_command_error(ctx_dm, commands.CommandNotFound("unknown")))
     assert "Unknown command" in ctx_dm.text()
+
+    # Unknown command in guild -> ignored
+    ctx_guild = FakeContext(bot, FakeAuthor(uid=100), guild_id=123)
+    run(bot.on_command_error(ctx_guild, commands.CommandNotFound("unknown")))
+    assert len(ctx_guild.sent) == 0
 
     # Missing arg
     ctx_arg = FakeContext(bot, FakeAuthor(uid=100))

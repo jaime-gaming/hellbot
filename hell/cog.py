@@ -65,6 +65,10 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         )
         return True
 
+    async def cog_check(self, ctx: commands.Context) -> bool:
+        """Enforce that prefix commands can ONLY be run in Direct Messages (DMs)."""
+        return ctx.guild is None
+
     # =========================================================================
     # Shared Helper Builders
     # =========================================================================

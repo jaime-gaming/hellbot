@@ -430,9 +430,17 @@ class VoiceMonitor:
         pending = self.alive_checks.pending
         if pending is None:
             return
-        if self.alive_checks.register_reply(message.author.id, message.content, message.channel.id):
+        handled = await self.alive_checks.process_reply(
+            message.author.id, message.content, message.channel.id
+        )
+        if handled == "yes":
             try:
                 await message.add_reaction("✅")
+            except discord.HTTPException:
+                pass
+        elif handled == "no":
+            try:
+                await message.add_reaction("👋")
             except discord.HTTPException:
                 pass
 

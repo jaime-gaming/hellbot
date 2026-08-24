@@ -16,6 +16,7 @@ what makes the whole flow unit-testable.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 import uuid
@@ -33,6 +34,55 @@ from .timeutil import format_hm, now_ts
 log = logging.getLogger("hell.alivecheck")
 
 ACCEPTED_REPLY = "yes"
+_PUNCT = " \t.!¡?¿,;:\"'`"
+
+# More ways to say Yes (case-insensitive, punctuation ignored).
+YES_REPLIES = frozenset(
+    {
+        "yes", "yep", "yup", "yeah", "ya", "y", "sí", "si", "sì", "yes please",
+        "yes sir", "aye", "affirmative", "correct", "sure", "ok", "okay", "all good",
+        "i am alive", "im alive", "i'm alive",
+    }
+)
+# Ways to say No (results in an immediate kick + "Alright then").
+NO_REPLIES = frozenset(
+    {
+        "no", "nope", "n", "no thanks", "no thank you",
+        "negative", "not me",
+    }
+)
+
+
+def _normalize_reply(content: str) -> str:
+    return content.strip().strip(_PUNCT).casefold()
+
+
+def _reply_words(content: str) -> list[str]:
+    return [w for w in _normalize_reply(content).split() if w]
+
+
+def classify_reply(content: str) -> Optional[str]:
+    """Classify a roll-call answer as ``"yes"``, ``"no"`` or ``None``."""
+    normalized = _normalize_reply(content)
+    if not normalized:
+        return None
+    if normalized in NO_REPLIES or any(w in NO_REPLIES for w in _reply_words(content)):
+        return "no"
+    if normalized in YES_REPLIES or any(w in YES_REPLIES for w in _reply_words(content)):
+        return "yes"
+    return None
+
+
+def is_valid_reply(content: str, *, strict: bool = False) -> bool:
+    """Does this message count as answering the roll call?
+
+    Non-strict (default) accepts the YES_REPLIES set (`Yes`, `yeah`, `yep`, `si`,
+    ``okay``, …) and tolerates trailing punctuation/whitespace.  Strict mode
+    still requires the exact string `Yes`.
+    """
+    if strict:
+        return content.strip() == "Yes"
+    return classify_reply(content) == "yes"
 
 
 def check_text() -> str:
@@ -65,6 +115,8 @@ class PendingCheck:
     mute_duration: int = 60
     trapped: set[int] = field(default_factory=set)
     muted: set[int] = field(default_factory=set)
+    declined: set[int] = field(default_factory=set)        # said No on an alive check
+    declined_kicked: set[int] = field(default_factory=set) # of the above, actually removed from VC
 
     @property
     def missing(self) -> set[int]:
@@ -86,6 +138,8 @@ class PendingCheck:
             "mute_duration": self.mute_duration,
             "trapped": sorted(self.trapped),
             "muted": sorted(self.muted),
+            "declined": sorted(self.declined),
+            "declined_kicked": sorted(self.declined_kicked),
         }
 
     @classmethod
@@ -102,6 +156,8 @@ class PendingCheck:
             mute_duration=int(row.get("mute_duration", 60)),
             trapped={int(u) for u in row.get("trapped", [])},
             muted={int(u) for u in row.get("muted", [])},
+            declined={int(u) for u in row.get("declined", [])},
+            declined_kicked={int(u) for u in row.get("declined_kicked", [])},
         )
 
 
@@ -140,20 +196,6 @@ class AliveCheckIO(Protocol):
         """Read back replies posted while the bot was offline."""
 
 
-# ------------------------------------------------------------------- helpers
-
-
-def is_valid_reply(content: str, *, strict: bool = False) -> bool:
-    """Does this message count as answering the roll call?
-
-    Non-strict (default) accepts `Yes`, `yes`, `YES`, and tolerates trailing
-    punctuation/whitespace.  Strict mode requires the exact string `Yes`.
-    """
-    if strict:
-        return content.strip() == "Yes"
-    return content.strip().strip(".!¡?¿,;:").casefold() == ACCEPTED_REPLY
-
-
 # ------------------------------------------------------------------ manager
 
 
@@ -177,6 +219,7 @@ class AliveCheckManager:
         self.pending: Optional[PendingCheck] = None
         self._event_uid: Optional[str] = None
         self._active_tasks: set[Any] = set()
+        self._resolve_lock = asyncio.Lock()
 
     # ------------------------------------------------------------- lifecycle
 
@@ -261,6 +304,10 @@ class AliveCheckManager:
             return None
 
         if self.pending is not None:
+            # If every required user has answered, finish right away instead of
+            # making them wait for the rest of the timeout window.
+            if self.pending.check_type == "alive" and not self.pending.missing:
+                return await self.resolve(now, participants)
             if now >= self.pending.deadline_ts:
                 return await self.resolve(now, participants)
             return None
@@ -339,7 +386,13 @@ class AliveCheckManager:
     # -------------------------------------------------------------- replies
 
     def register_reply(self, user_id: int, content: str, channel_id: Optional[int] = None) -> bool:
-        """Record a `Yes`. Returns True when it counted for a pending check."""
+        """Record an answer. Returns True when it counted for a pending check.
+
+        A ``Yes`` (or one of the accepted variants) marks the user as answered.
+        A ``No`` also counts as answered for check-completion purposes and is
+        marked as declined so :meth:`process_reply` / :meth:`resolve` can kick
+        them from the VC and say "Alright then".
+        """
         check = self.pending
         if check is None or not self._event_uid:
             return False
@@ -347,15 +400,21 @@ class AliveCheckManager:
             return False
         if user_id not in check.required or user_id in check.responded:
             return False
-        if not is_valid_reply(content, strict=self.config.alive_check_strict):
+
+        answer = classify_reply(content)
+        if answer is None:
+            return False
+        # In strict mode only the exact word "Yes" counts as a positive answer.
+        if answer == "yes" and not is_valid_reply(content, strict=self.config.alive_check_strict):
             return False
 
         check.responded.add(user_id)
+        if answer == "no":
+            check.declined.add(user_id)
         if check.check_type == "dead":
             check.trapped.add(user_id)
             if hasattr(self.io, "mute") and user_id not in check.muted:
                 check.muted.add(user_id)
-                import asyncio
                 try:
                     loop = asyncio.get_running_loop()
                     t = loop.create_task(
@@ -378,9 +437,58 @@ class AliveCheckManager:
             check.required.get(user_id, user_id),
             len(check.responded),
             len(check.required),
-            " [TRAPPED & MUTED]" if check.check_type == "dead" else "",
+            " [TRAPPED & MUTED]" if check.check_type == "dead" else (
+                " [DECLINED]" if answer == "no" else ""
+            ),
         )
         return True
+
+    async def process_reply(
+        self, user_id: int, content: str, channel_id: Optional[int] = None
+    ) -> Optional[str]:
+        """Handle a reply with real Discord side effects.
+
+        Returns ``"yes"``, ``"no"``, ``"invalid"`` or ``"ignored"``.  On a
+        ``"no"`` it kicks the player and posts "Alright then" immediately; once
+        everyone has answered it resolves the alive check right away.
+        """
+        answer = classify_reply(content)
+        if answer is None:
+            return "invalid"
+        if not self.register_reply(user_id, content, channel_id):
+            return "ignored"
+        check = self.pending
+        if check is None:
+            return answer
+        if check.check_type == "alive" and answer == "no":
+            await self._handle_no(user_id)
+        await self._resolve_if_complete()
+        return answer
+
+    async def _handle_no(self, user_id: int) -> None:
+        """Kick a player who said No and reply "Alright then" in the channel."""
+        check = self.pending
+        if check is None or check.check_type != "alive":
+            return
+        reason = "Welcome to Hell: said no to the alive check"
+        kicked = []
+        try:
+            kicked = await self.io.kick([user_id], reason)
+        except Exception:  # pragma: no cover - never break on a reply
+            log.exception("Could not disconnect %s after a No reply", user_id)
+        if kicked:
+            check.declined_kicked.add(user_id)
+            self.store.save_alive_check(self._event_uid or "", check.to_row())
+        await self.io.send_result(str(getattr(TEXT, "ALIVE_CHECK_NO_REPLY", "Alright then")))
+
+    async def _resolve_if_complete(self) -> Optional[CheckResult]:
+        """Resolve an alive check as soon as every required user has answered."""
+        check = self.pending
+        if check is None:
+            return None
+        if check.check_type != "alive" or check.missing:
+            return None
+        return await self.resolve(now_ts(), [])
 
     async def backfill_replies(self) -> int:
         """After a restart, read the channel for answers posted while offline."""
@@ -413,116 +521,126 @@ class AliveCheckManager:
         cancelled: bool = False,
         reason: str = "",
     ) -> Optional[CheckResult]:
-        """Deadline reached: resolve check outcomes."""
-        check = self.pending
-        if check is None or not self._event_uid:
-            return None
+        """Deadline reached (or everyone answered): resolve check outcomes."""
+        async with self._resolve_lock:
+            check = self.pending
+            if check is None or not self._event_uid:
+                return None
 
-        present = {p.user_id for p in participants}
-        responded = [ParticipantRef(uid, check.required[uid]) for uid in sorted(check.responded)]
-        silent = sorted(check.missing)
-        left_early = [ParticipantRef(uid, check.required[uid]) for uid in silent if uid not in present]
+            present = {p.user_id for p in participants}
+            responded = [ParticipantRef(uid, check.required[uid]) for uid in sorted(check.responded)]
+            silent = sorted(check.missing)
+            left_early = [ParticipantRef(uid, check.required[uid]) for uid in silent if uid not in present]
 
-        if check.check_type == "dead":
-            # For dead checks: silent users are SAFE; nobody is kicked from VC!
-            to_kick: list[int] = []
-            trapped_refs = [ParticipantRef(uid, check.required[uid]) for uid in sorted(check.trapped)]
-            # Ensure trapped users who weren't muted yet (e.g. backfilled) are muted
-            if not cancelled:
-                unmuted = [uid for uid in check.trapped if uid not in check.muted]
-                for uid in unmuted:
-                    try:
-                        await self.io.mute(
-                            uid,
-                            check.mute_duration,
-                            f"Welcome to Hell: replied to a dead check ({check.check_id})",
-                        )
-                        check.muted.add(uid)
-                    except Exception:
-                        log.warning("Could not mute %s during dead check resolution", uid, exc_info=True)
+            if check.check_type == "dead":
+                # For dead checks: silent users are SAFE; nobody is kicked from VC!
+                to_kick: list[int] = []
+                trapped_refs = [ParticipantRef(uid, check.required[uid]) for uid in sorted(check.trapped)]
+                # Ensure trapped users who weren't muted yet (e.g. backfilled) are muted
+                if not cancelled:
+                    unmuted = [uid for uid in check.trapped if uid not in check.muted]
+                    for uid in unmuted:
+                        try:
+                            await self.io.mute(
+                                uid,
+                                check.mute_duration,
+                                f"Welcome to Hell: replied to a dead check ({check.check_id})",
+                            )
+                            check.muted.add(uid)
+                        except Exception:
+                            log.warning("Could not mute %s during dead check resolution", uid, exc_info=True)
 
-            self.store.record_alive_check_history(
-                self._event_uid,
-                check_id=check.check_id,
-                started_ts=check.started_ts,
-                resolved_ts=now,
-                required=len(check.required),
-                responded=len(check.responded),
-                kicked=[],
-                cancelled=cancelled,
-            )
-            kicked_ids: list[int] = []
-            kicked: list[ParticipantRef] = []
-            emptied_vc = False
-        else:
-            trapped_refs = []
-            to_kick = [uid for uid in silent if uid in present]
-
-            # 1) Save history to DB BEFORE any Discord I/O.
-            self.store.record_alive_check_history(
-                self._event_uid,
-                check_id=check.check_id,
-                started_ts=check.started_ts,
-                resolved_ts=now,
-                required=len(check.required),
-                responded=len(check.responded),
-                kicked=list(to_kick) if not cancelled else [],
-                cancelled=cancelled,
-            )
-
-            # 2) Disconnect silent users
-            kicked_ids = []
-            if not cancelled and to_kick:
-                kicked_ids = await self.io.kick(
-                    to_kick, "Welcome to Hell: no answer to the alive check"
+                self.store.record_alive_check_history(
+                    self._event_uid,
+                    check_id=check.check_id,
+                    started_ts=check.started_ts,
+                    resolved_ts=now,
+                    required=len(check.required),
+                    responded=len(check.responded),
+                    kicked=[],
+                    cancelled=cancelled,
                 )
-            if to_kick and not kicked_ids and not cancelled:
-                log.error(
-                    "Alive check %s: %d user(s) ignored it but none could be disconnected",
-                    check.check_id,
-                    len(to_kick),
+                kicked_ids: list[int] = []
+                kicked: list[ParticipantRef] = []
+                emptied_vc = False
+            else:
+                trapped_refs = []
+                to_kick = [uid for uid in silent if uid in present]
+                # A "No" reply should have been kicked already; if not (e.g. it
+                # came in while the bot was offline) clean it up here.
+                for uid in sorted(check.declined):
+                    if uid not in check.declined_kicked and uid in present:
+                        to_kick.append(uid)
+
+                # 1) Save history to DB BEFORE any Discord I/O.
+                self.store.record_alive_check_history(
+                    self._event_uid,
+                    check_id=check.check_id,
+                    started_ts=check.started_ts,
+                    resolved_ts=now,
+                    required=len(check.required),
+                    responded=len(check.responded),
+                    kicked=list(to_kick) if not cancelled else [],
+                    cancelled=cancelled,
                 )
-            kicked = [ParticipantRef(uid, check.required[uid]) for uid in kicked_ids]
-            emptied_vc = bool(
-                not cancelled
-                and kicked_ids
-                and present
-                and (present <= set(kicked_ids))
+
+                # 2) Disconnect silent users (and declining users still present)
+                kicked_ids = []
+                if not cancelled and to_kick:
+                    kicked_ids = await self.io.kick(
+                        to_kick, "Welcome to Hell: no answer to the alive check"
+                    )
+                    for uid in sorted(to_kick):
+                        if uid in check.declined and uid in kicked_ids:
+                            check.declined_kicked.add(uid)
+                if to_kick and not kicked_ids and not cancelled:
+                    log.error(
+                        "Alive check %s: %d user(s) ignored it but none could be disconnected",
+                        check.check_id,
+                        len(to_kick),
+                    )
+                all_kicked = set(kicked_ids) | set(check.declined_kicked)
+                kicked = [ParticipantRef(uid, check.required[uid]) for uid in sorted(all_kicked)]
+                emptied_vc = bool(
+                    not cancelled
+                    and kicked_ids
+                    and present
+                    and (present <= set(kicked_ids))
+                )
+                if emptied_vc and self._event_uid:
+                    self.store.set_alive_check_emptied(self._event_uid, now)
+                    if self.engine is not None:
+                        self.engine.notify_alive_check_emptied(now)
+
+            self.store.clear_alive_check(self._event_uid)
+            self.pending = None
+            self.schedule_next(now)
+
+            result = CheckResult(
+                check_id=check.check_id,
+                responded=responded,
+                kicked=kicked,
+                left_early=left_early,
+                cancelled=cancelled,
+                reason=reason,
+                emptied_vc=emptied_vc,
+                check_type=check.check_type,
+                mute_duration=check.mute_duration,
+                trapped=trapped_refs,
             )
-            if emptied_vc and self._event_uid:
-                self.store.set_alive_check_emptied(self._event_uid, now)
-                if self.engine is not None:
-                    self.engine.notify_alive_check_emptied(now)
 
-        self.store.clear_alive_check(self._event_uid)
-        self.pending = None
-        self.schedule_next(now)
-
-        result = CheckResult(
-            check_id=check.check_id,
-            responded=responded,
-            kicked=kicked,
-            left_early=left_early,
-            cancelled=cancelled,
-            reason=reason,
-            emptied_vc=emptied_vc,
-            check_type=check.check_type,
-            mute_duration=check.mute_duration,
-            trapped=trapped_refs,
-        )
-
-        log.info(
-            "%s check %s resolved: %d/%d answered, %d disconnected, %d trapped%s",
-            check.check_type.title(),
-            check.check_id,
-            len(responded),
-            len(check.required),
-            len(kicked),
-            len(trapped_refs),
-            " (cancelled)" if cancelled else "",
-        )
-        await self.io.send_result(self.render_result(result))
-        return result
+            log.info(
+                "%s check %s resolved: %d/%d answered, %d disconnected, %d trapped%s",
+                check.check_type.title(),
+                check.check_id,
+                len(responded),
+                len(check.required),
+                len(kicked),
+                len(trapped_refs),
+                " (cancelled)" if cancelled else "",
+            )
+            await self.io.send_result(self.render_result(result))
+            return result
 
     async def cancel(self, now: float, reason: str) -> Optional[CheckResult]:
         """Abandon a check without kicking anybody (used after a restart)."""

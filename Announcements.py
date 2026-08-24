@@ -362,9 +362,11 @@ LEADERBOARD_RANK = "`#{rank}`"        # used from 4th place down
 
 ALIVE_CHECK_TEXT = "🚨 ARE YOU ALIVE? Say: Yes"
 ALIVE_CHECK_INSTRUCTIONS = (
-    "*Reply with* `Yes` *in this channel within {minutes} minutes or you will be "
+    "*Reply with* `Yes` *(or `yeah`, `yep`, `yup`, `si`, `sure`, `okay`, "
+    "`i'm alive`, …)* *in this channel within {minutes} minutes or you will be "
     "disconnected from the VC. You keep all your leaderboard time and can rejoin "
-    "immediately.*"
+    "immediately.*\n\n"
+    "*If you answer* `No`, *you will be kicked from the voice channel.*"
 )
 ALIVE_CHECK_RESULT_TITLE = "🚨 **Alive check finished**"
 ALIVE_CHECK_RESULT_ANSWERED = "✅ Answered: **{answered}**"
@@ -374,14 +376,15 @@ ALIVE_CHECK_RESULT_KICKED_NOTE = (
 )
 ALIVE_CHECK_RESULT_NOBODY_KICKED = "❌ Disconnected: **nobody** — everyone answered in time."
 ALIVE_CHECK_RESULT_LEFT_EARLY = "↩️ Already out of the VC: {left_early}"
+ALIVE_CHECK_NO_REPLY = "Alright then"
 ALIVE_CHECK_CANCELLED = (
     "🚨 **Alive check cancelled** — {reason}. Nobody was disconnected."
 )
 ALIVE_CHECK_CANCELLED_DEFAULT_REASON = "the bot was restarted while it was running"
 ALIVE_CHECK_STATUS_RUNNING = "🚨 Alive check running — **{answered}/{total}** answered, {left}s left"
 ALIVE_CHECK_STATUS_IDLE = (
-    "🚨 Alive checks: random, every **{min_hours:g}–{max_hours:g}h** — reply `Yes` within "
-    "{minutes} min"
+    "🚨 Alive checks: random, every **{min_hours:g}–{max_hours:g}h** — reply `Yes` "
+    "(or `yeah`, `yep`, `si`, …) within {minutes} min"
 )
 
 # --- Dead checks (introduced in Difficulty 2+) ------------------------------

@@ -23,7 +23,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/opt/hellbot/data /opt/hellbot/logs
+ReadWritePaths=/opt/hellbot/data /opt/hellbot/logs /opt/hellbot/docs
 
 [Install]
 WantedBy=multi-user.target

@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # reads all of its message text from it and refuses to start without it.
 COPY hell/ ./hell/
 COPY tools/healthcheck.py ./tools/
+COPY docs/ ./docs/
 COPY Announcements.py bot.py ./
 
 # Event state and logs live on a volume so restarts (and image rebuilds)

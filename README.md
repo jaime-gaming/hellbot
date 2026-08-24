@@ -206,6 +206,11 @@ in the log, and in the launcher's Dashboard.
 | `/hell user` | everyone | How long someone has spent in Hell: time, rank, share of the event, milestones claimed. |
 | `/hell export` | `@gamenight host` | The leaderboard as a CSV attachment, for handing out rewards outside Discord. |
 | `/hell milestones` | everyone | All five milestones, their rewards, when each was reached and how many users were eligible. |
+| `/hell difficulty` | everyone | Show the 5 difficulty tiers and current challenge level. |
+| `/hell setdifficulty` | `@gamenight host` | Override or set the difficulty tier (`0` to `4`, or `auto`). |
+| `/hell announcedifficulty` | `@gamenight host` | Broadcast the current difficulty update or 5-tier overview to the announcement channel. |
+| `/hell hellevents` | everyone / `@gamenight host` | View active Hell Event, rules, or trigger an event (`action: trigger`, `@gamenight host` only). |
+| `/hell gamble` | everyone | Gamble your leaderboard timer (Difficulty 3+): win bonus time or risk losing personal time + 1 minute server mute. Supports optional `[hours]` bet. |
 | `/hell stop` | `@gamenight host` | **Two-step, operator-approved.** The bot DMs a one-time code to the operator's DMs, then the host runs `/hell approve` with it → event marked **CANCELLED** (explicitly *not* FAILED), leaderboard frozen. |
 | `/hell reset` | `@gamenight host` | **Two-step, operator-approved.** The bot DMs a one-time code to the operator's DMs, then the host runs `/hell approve` with it → all event data wiped for a fresh run. |
 | `/hell approve` | `@gamenight host` | Enter the 6-character code DM'd to the operator to confirm the pending `/hell stop`, `/hell reset` or resuming a failed run. Codes expire after 5 minutes and work exactly once; a new request invalidates the previous code. |
@@ -402,6 +407,40 @@ between re-posts it on the next startup instead of losing it.
 At **160 h** the event also becomes `COMPLETED`: the timer stops (it never counts past 160 h),
 leaderboard accumulation stops, the rankings are frozen and displayed, and the final Top 3 are
 announced as receiving **every milestone reward + `@cool people :D`**.
+
+### Difficulties (0 to 4)
+
+Difficulties make the challenge harder as the event progresses, expanding at every milestone reached:
+
+- **0 (Starter)**: 0h – 32h. Alive checks every **1–6h**. No dead checks, no gambling.
+- **1 (32h Milestone)**: 32h – 64h. Alive checks every **1–5h**. No dead checks, no gambling.
+- **2 (64h Milestone)**: 64h – 96h. Alive checks every **1–4h**. **Dead checks** enabled: reply `Yes` and you get **muted 1 minute** from the server.
+- **3 (96h Milestone)**: 96h – 128h. Alive checks every **1–3h**. Dead checks are more frequent with **1–5 minute mutes**. **Timer gambling unlocked** (`/hell gamble [hours]` or `!gamble [hours]`): max 1h bet, max 2 bets/hr, 40% win rate (+1.5x) / loss (-1.0x bet + 1m mute).
+- **4 (128h Milestone)**: 128h – 160h. Alive checks every **1–2h**. Dead checks with **5–15 minute mutes**. High-stakes gambling (max 2h bet, max 3 bets/hr, 30% win rate, 2.5x multiplier / loss -1.0x bet + 1m mute).
+
+### Hell Events
+
+**Hell Events** are temporary random occurrences that happen while the challenge is in the `RUNNING` status (and never when IDLE, FAILED, COMPLETED, CANCELLED, PAUSED, or during an empty-VC grace countdown). Only one Hell Event may be active at a time.
+
+Intervals between events occur randomly between **30 minutes and 3 hours** (scaling more frequently at higher difficulty tiers). All Hell Events persist in SQLite to survive bot restarts.
+
+1. **Double Time** (5 minutes): All valid humans in the VC receive **2× personal leaderboard time** while active. The global 160h clock is not accelerated.
+2. **Blood Pact** (Instant): Everyone currently in the VC at the moment of the event receives an instant personal survival time bonus (**+5 minutes**, scaling up to +10m on Difficulty 4).
+3. **Inferno** (10 minutes): Alive/Dead checks occur at a significantly accelerated frequency (every 3–6 minutes) while preserving normal response windows.
+4. **Blindness** (10 minutes): Temporarily hides remaining time and upcoming milestone from the progress card (`[HIDDEN BY BLINDNESS]`) while keeping the main elapsed timer and event status visible.
+5. **Hell Jackpot** (5 minutes): Temporarily increases gambling win multipliers (+1.0x bonus multiplier).
+
+### The 160-Hour Finale
+
+A dedicated finale system governs the final hour (`159:00:00 → 160:00:00`) of the challenge without accelerating the global timer:
+
+- **159:00:00 (`FINAL_HOUR`)**: Activates `FINAL_HOUR` mode and broadcasts announcement: `👹 THE FINAL HOUR — 1 HOUR REMAINING — DO NOT LET HELL GO EMPTY.`
+- **159:30:00 (30m remain)**: `⚠️ 30 MINUTES REMAIN` announcement.
+- **159:50:00 (10m remain)**: `🚨 10 MINUTES REMAIN — HELL IS ALMOST CONQUERED.` announcement.
+- **159:55:00 (5m remain)**: `🔥 5 MINUTES REMAIN` announcement.
+- **159:59:00 (Final minute)**: Progress display switches into **Final Countdown mode**, updating every second with exact seconds remaining (`60` down to `1`).
+- **160:00:00 (Exact completion)**: Atomic completion of 160h challenge: triggers 160h milestone, freezes all individual time, marks event `COMPLETED`, records peak VC population, sends `@everyone` completion announcement highlighting Top 3 rewards (`@cool people :D` + all milestone rewards), and DMs individual stat cards to all participants.
+- **Failure safety**: If the VC empties during the Final Hour, the standard empty-VC grace countdown runs. If nobody returns before expiration, the challenge fails permanently.
 
 ### Alive checks ("roll call")
 

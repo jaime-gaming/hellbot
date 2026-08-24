@@ -72,12 +72,17 @@ class FinalReportDM:
         return None
 
     def build_embed(self, report: UserReport) -> discord.Embed:
+        footer = (
+            getattr(TEXT, "CARD_EMBED_FOOTER_RUNNING", "Event in progress · Keep surviving to climb the ranks.")
+            if report.status is EventStatus.RUNNING
+            else getattr(TEXT, "CARD_EMBED_FOOTER", "Thanks for surviving with us. See you in the next one.")
+        )
         embed = discord.Embed(
             title=TEXT.CARD_EMBED_TITLE,
             description=render_report(report),
             color=int(TEXT.COLOR_CARD),
         )
-        embed.set_footer(text=TEXT.CARD_EMBED_FOOTER)
+        embed.set_footer(text=footer)
         return embed
 
     # -------------------------------------------------------------- sending

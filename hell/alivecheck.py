@@ -1,26 +1,17 @@
-"""Alive checks ("roll call").
+"""Alive checks ("roll call") and Dead checks.
 
-At a random interval between 1 and 6 hours the bot pings everybody currently
-in the VC and demands a `Yes` within 5 minutes.  Whoever stays silent is
-disconnected from the voice channel — they keep every second of leaderboard
-time they earned and may rejoin immediately.
+At a random interval (scaled by current Difficulty, 1-6h down to 1-2h) the bot
+pings everybody currently in the VC:
+- In an **Alive Check**: demands a `Yes` within 5 minutes. Whoever stays silent
+  is disconnected from the voice channel — they keep every second of leaderboard
+  time they earned and may rejoin immediately.
+- In a **Dead Check** (introduced at Difficulty 2+ / 64h+): demands everyone to
+  STAY SILENT. If a user replies `Yes`, they are trapped and muted from the server
+  (for 1 min at Diff 2, 1-5 min at Diff 3, 5-15 min at Diff 4).
 
 This module is **Discord-free**: it talks to the outside world through the
 :class:`AliveCheckIO` interface (implemented by :mod:`hell.aliveio`), which is
 what makes the whole flow unit-testable.
-
-Rules implemented here
-----------------------
-* Bots and `@clanker` users are never part of a check (they never reach this
-  module — the monitor filters them out first).
-* Only users who were in the VC when the check started must answer; joining
-  mid-check does not put you on the hook, and leaving mid-check simply means
-  there is nobody to disconnect.
-* Being disconnected never removes leaderboard time and never, by itself,
-  fails the event: the run only ends if the VC is left with no valid humans
-  at all (the normal failure rule, evaluated by the engine).
-* A check that was interrupted by a bot restart is **cancelled** rather than
-  enforced — nobody gets kicked because the bot was offline.
 """
 
 from __future__ import annotations
@@ -33,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol
 
 from .config import Config
+from .difficulty import DifficultyInfo, get_difficulty, get_difficulty_by_level
 from .models import ParticipantRef
 from .storage import Store
 from .texts import TEXT, say
@@ -69,6 +61,10 @@ class PendingCheck:
     responded: set[int] = field(default_factory=set)
     channel_id: Optional[int] = None
     message_id: Optional[int] = None
+    check_type: str = "alive"                # "alive" or "dead"
+    mute_duration: int = 60
+    trapped: set[int] = field(default_factory=set)
+    muted: set[int] = field(default_factory=set)
 
     @property
     def missing(self) -> set[int]:
@@ -86,6 +82,10 @@ class PendingCheck:
             "responded": sorted(self.responded),
             "channel_id": self.channel_id,
             "message_id": self.message_id,
+            "check_type": self.check_type,
+            "mute_duration": self.mute_duration,
+            "trapped": sorted(self.trapped),
+            "muted": sorted(self.muted),
         }
 
     @classmethod
@@ -98,6 +98,10 @@ class PendingCheck:
             responded={int(u) for u in row.get("responded", [])},
             channel_id=row.get("channel_id"),
             message_id=row.get("message_id"),
+            check_type=str(row.get("check_type", "alive")),
+            mute_duration=int(row.get("mute_duration", 60)),
+            trapped={int(u) for u in row.get("trapped", [])},
+            muted={int(u) for u in row.get("muted", [])},
         )
 
 
@@ -110,6 +114,9 @@ class CheckResult:
     cancelled: bool = False
     reason: str = ""
     emptied_vc: bool = False
+    check_type: str = "alive"
+    mute_duration: int = 60
+    trapped: list[ParticipantRef] = field(default_factory=list)
 
 
 class AliveCheckIO(Protocol):
@@ -123,6 +130,9 @@ class AliveCheckIO(Protocol):
 
     async def kick(self, user_ids: Sequence[int], reason: str) -> list[int]:
         """Disconnect users from the VC.  Returns the ids actually removed."""
+
+    async def mute(self, user_id: int, duration_seconds: int, reason: str) -> bool:
+        """Mute / timeout a user on the server for the specified duration."""
 
     async def replies_since(
         self, channel_id: int, message_id: int, user_ids: Sequence[int]
@@ -148,7 +158,7 @@ def is_valid_reply(content: str, *, strict: bool = False) -> bool:
 
 
 class AliveCheckManager:
-    """Schedules, runs and resolves roll calls for the current event."""
+    """Schedules, runs and resolves roll calls and dead checks for the current event."""
 
     def __init__(
         self,
@@ -166,6 +176,7 @@ class AliveCheckManager:
         self.engine = engine
         self.pending: Optional[PendingCheck] = None
         self._event_uid: Optional[str] = None
+        self._active_tasks: set[Any] = set()
 
     # ------------------------------------------------------------- lifecycle
 
@@ -190,24 +201,42 @@ class AliveCheckManager:
         self.pending = None
         self._event_uid = None
 
+    # ------------------------------------------------------------ difficulties
+
+    def current_difficulty(self, now: Optional[float] = None) -> DifficultyInfo:
+        """Get the current difficulty tier based on elapsed event time or override."""
+        if self.engine is not None and getattr(self.engine, "status", None) and self.engine.status.is_active:
+            override = getattr(self.engine, "difficulty_override", None)
+            elapsed = self.engine.elapsed(now)
+            return get_difficulty(elapsed, override=override)
+        return get_difficulty_by_level(0)
+
     # ------------------------------------------------------------ scheduling
 
     @property
     def enabled(self) -> bool:
         return self.config.alive_check_enabled
 
-    def pick_delay(self) -> float:
-        """A random delay in the configured window (default 1–6 hours)."""
-        low = min(self.config.alive_check_min_hours, self.config.alive_check_max_hours) * 3600.0
-        high = max(self.config.alive_check_min_hours, self.config.alive_check_max_hours) * 3600.0
+    def pick_delay(self, now: Optional[float] = None) -> float:
+        """A random delay scaled by current difficulty (1-6h, 1-5h, 1-4h, 1-3h, 1-2h)."""
+        # If Inferno Hell Event is active, checks occur at an accelerated 3–6 minute interval
+        if self.engine is not None and getattr(self.engine, "hell_events", None):
+            if self.engine.hell_events.is_inferno_active(now):
+                return self.rng.uniform(180.0, 360.0)
+
+        diff = self.current_difficulty(now)
+        min_hours = min(self.config.alive_check_min_hours, diff.min_check_hours)
+        max_hours = min(self.config.alive_check_max_hours, diff.max_check_hours)
+        low = min(min_hours, max_hours) * 3600.0
+        high = max(min_hours, max_hours) * 3600.0
         return self.rng.uniform(low, high)
 
     def schedule_next(self, now: float) -> float:
-        delay = self.pick_delay()
+        delay = self.pick_delay(now)
         when = now + delay
         if self._event_uid:
             self.store.set_next_alive_check(self._event_uid, when)
-        log.info("Next alive check in %s (at %.0f)", format_hm(delay), when)
+        log.info("Next roll call in %s (at %.0f)", format_hm(delay), when)
         return when
 
     def next_check_ts(self) -> Optional[float]:
@@ -242,23 +271,31 @@ class AliveCheckManager:
 
     # ----------------------------------------------------------------- start
 
-    async def start(self, now: float, participants: Sequence[ParticipantRef]) -> Optional[PendingCheck]:
-        """Post the roll call and start the 5-minute clock.
-
-        CRASH-SAFE ORDERING: The check is persisted to SQLite BEFORE the
-        Discord API call.  If the bot crashes after the DB write but before
-        ``send_check`` returns, the on-disk check has no ``channel_id`` /
-        ``message_id`` — on restart ``bind()`` loads it, ``backfill_replies``
-        sees the missing IDs and returns 0, ``is_due`` won't fire a new one
-        (pending is set), and the pending check sits there harmlessly until
-        it expires and gets cancelled.  Crucially, the DB never says "a check
-        exists" when Discord has no record of it.
-
-        If the Discord call fails, the tentative DB row is deleted and the
-        check is rescheduled.
-        """
+    async def start(
+        self,
+        now: float,
+        participants: Sequence[ParticipantRef],
+        *,
+        force_type: Optional[str] = None,
+    ) -> Optional[PendingCheck]:
+        """Post the roll call (or dead check) and start the clock."""
         if self.pending is not None or not self._event_uid or not participants:
             return None
+
+        diff = self.current_difficulty(now)
+        if force_type is not None:
+            check_type = force_type
+        elif diff.dead_checks_enabled and (self.rng.random() < diff.dead_check_chance):
+            check_type = "dead"
+        else:
+            check_type = "alive"
+
+        mute_duration = 60
+        if check_type == "dead":
+            if diff.min_mute_seconds < diff.max_mute_seconds:
+                mute_duration = self.rng.randint(diff.min_mute_seconds, diff.max_mute_seconds)
+            else:
+                mute_duration = diff.min_mute_seconds or 60
 
         timeout = max(30.0, self.config.alive_check_timeout_minutes * 60.0)
         check = PendingCheck(
@@ -266,23 +303,21 @@ class AliveCheckManager:
             started_ts=now,
             deadline_ts=now + timeout,
             required={p.user_id: p.display_name for p in participants},
+            check_type=check_type,
+            mute_duration=mute_duration,
         )
         # 1) Persist to DB first (tentative — no channel/message IDs yet).
         self.pending = check
         self.store.save_alive_check(self._event_uid, check.to_row())
 
-        # 2) Send to Discord.  If this fails (permission, rate-limit, net
-        #    partition, unexpected exception), clean up the tentative row so
-        #    we never end up with "DB says it's active, Discord says it
-        #    doesn't exist" — a phantom check would otherwise sit in memory
-        #    and later "resolve" by kicking people who never saw a message.
+        # 2) Send to Discord.
         try:
             sent = await self.io.send_check(self.render_check(check), list(check.required))
         except Exception:
-            log.exception("Alive check could not be posted — cleaning up and rescheduling")
+            log.exception("%s check could not be posted — cleaning up and rescheduling", check_type.title())
             sent = None
         if sent is None:
-            log.error("Alive check could not be posted — cleaning up and rescheduling")
+            log.error("%s check could not be posted — cleaning up and rescheduling", check_type.title())
             self.store.clear_alive_check(self._event_uid)
             self.pending = None
             self.schedule_next(now)
@@ -292,17 +327,19 @@ class AliveCheckManager:
         check.channel_id, check.message_id = sent
         self.store.save_alive_check(self._event_uid, check.to_row())
         log.info(
-            "Alive check %s started for %d user(s); deadline in %.0fs",
+            "%s check %s started for %d user(s); deadline in %.0fs (mute=%ds)",
+            check.check_type.title(),
             check.check_id,
             len(check.required),
             timeout,
+            mute_duration,
         )
         return check
 
     # -------------------------------------------------------------- replies
 
     def register_reply(self, user_id: int, content: str, channel_id: Optional[int] = None) -> bool:
-        """Record a `Yes`.  Returns True when it counted for a pending check."""
+        """Record a `Yes`. Returns True when it counted for a pending check."""
         check = self.pending
         if check is None or not self._event_uid:
             return False
@@ -312,14 +349,36 @@ class AliveCheckManager:
             return False
         if not is_valid_reply(content, strict=self.config.alive_check_strict):
             return False
+
         check.responded.add(user_id)
+        if check.check_type == "dead":
+            check.trapped.add(user_id)
+            if hasattr(self.io, "mute") and user_id not in check.muted:
+                check.muted.add(user_id)
+                import asyncio
+                try:
+                    loop = asyncio.get_running_loop()
+                    t = loop.create_task(
+                        self.io.mute(
+                            user_id,
+                            check.mute_duration,
+                            f"Welcome to Hell: replied to a dead check ({check.check_id})",
+                        )
+                    )
+                    self._active_tasks.add(t)
+                    t.add_done_callback(self._active_tasks.discard)
+                except RuntimeError:
+                    pass  # No running event loop in sync unit tests
+
         self.store.save_alive_check(self._event_uid, check.to_row())
         log.info(
-            "Alive check %s: %s replied (%d/%d)",
+            "%s check %s: %s replied (%d/%d)%s",
+            check.check_type.title(),
             check.check_id,
             check.required.get(user_id, user_id),
             len(check.responded),
             len(check.required),
+            " [TRAPPED & MUTED]" if check.check_type == "dead" else "",
         )
         return True
 
@@ -333,13 +392,15 @@ class AliveCheckManager:
                 check.channel_id, check.message_id, list(check.missing)
             )
         except Exception:  # pragma: no cover - never break recovery
-            log.exception("Could not backfill alive-check replies")
+            log.exception("Could not backfill replies")
             return 0
         new = {uid for uid in found if uid in check.required} - check.responded
         if new and self._event_uid:
             check.responded |= new
+            if check.check_type == "dead":
+                check.trapped |= new
             self.store.save_alive_check(self._event_uid, check.to_row())
-            log.info("Alive check %s: recovered %d reply(ies) after restart", check.check_id, len(new))
+            log.info("%s check %s: recovered %d reply(ies) after restart", check.check_type.title(), check.check_id, len(new))
         return len(new)
 
     # --------------------------------------------------------------- resolve
@@ -352,14 +413,7 @@ class AliveCheckManager:
         cancelled: bool = False,
         reason: str = "",
     ) -> Optional[CheckResult]:
-        """Deadline reached: disconnect whoever stayed silent.
-
-        CRASH-SAFE ORDERING: History is written to the DB BEFORE any Discord
-        API calls (kicks, result message).  If the bot crashes mid-kick, the
-        DB already has the full history record and the pending check has been
-        cleared — a restart will not see a stale pending check or try to
-        retroactively cancel it.
-        """
+        """Deadline reached: resolve check outcomes."""
         check = self.pending
         if check is None or not self._event_uid:
             return None
@@ -367,53 +421,82 @@ class AliveCheckManager:
         present = {p.user_id for p in participants}
         responded = [ParticipantRef(uid, check.required[uid]) for uid in sorted(check.responded)]
         silent = sorted(check.missing)
-        # Someone who already left the VC has nothing to be kicked from.
-        to_kick = [uid for uid in silent if uid in present]
         left_early = [ParticipantRef(uid, check.required[uid]) for uid in silent if uid not in present]
 
-        # 1) Save history to DB BEFORE any Discord I/O.  We record the users
-        #    we *intend* to kick; actual kick results come after.  On crash
-        #    after this point the outcome is already recorded and the pending
-        #    check is gone — the bot will not replay or cancel a resolved check.
-        self.store.record_alive_check_history(
-            self._event_uid,
-            check_id=check.check_id,
-            started_ts=check.started_ts,
-            resolved_ts=now,
-            required=len(check.required),
-            responded=len(check.responded),
-            kicked=list(to_kick) if not cancelled else [],
-            cancelled=cancelled,
-        )
+        if check.check_type == "dead":
+            # For dead checks: silent users are SAFE; nobody is kicked from VC!
+            to_kick: list[int] = []
+            trapped_refs = [ParticipantRef(uid, check.required[uid]) for uid in sorted(check.trapped)]
+            # Ensure trapped users who weren't muted yet (e.g. backfilled) are muted
+            if not cancelled:
+                unmuted = [uid for uid in check.trapped if uid not in check.muted]
+                for uid in unmuted:
+                    try:
+                        await self.io.mute(
+                            uid,
+                            check.mute_duration,
+                            f"Welcome to Hell: replied to a dead check ({check.check_id})",
+                        )
+                        check.muted.add(uid)
+                    except Exception:
+                        log.warning("Could not mute %s during dead check resolution", uid, exc_info=True)
+
+            self.store.record_alive_check_history(
+                self._event_uid,
+                check_id=check.check_id,
+                started_ts=check.started_ts,
+                resolved_ts=now,
+                required=len(check.required),
+                responded=len(check.responded),
+                kicked=[],
+                cancelled=cancelled,
+            )
+            kicked_ids: list[int] = []
+            kicked: list[ParticipantRef] = []
+            emptied_vc = False
+        else:
+            trapped_refs = []
+            to_kick = [uid for uid in silent if uid in present]
+
+            # 1) Save history to DB BEFORE any Discord I/O.
+            self.store.record_alive_check_history(
+                self._event_uid,
+                check_id=check.check_id,
+                started_ts=check.started_ts,
+                resolved_ts=now,
+                required=len(check.required),
+                responded=len(check.responded),
+                kicked=list(to_kick) if not cancelled else [],
+                cancelled=cancelled,
+            )
+
+            # 2) Disconnect silent users
+            kicked_ids = []
+            if not cancelled and to_kick:
+                kicked_ids = await self.io.kick(
+                    to_kick, "Welcome to Hell: no answer to the alive check"
+                )
+            if to_kick and not kicked_ids and not cancelled:
+                log.error(
+                    "Alive check %s: %d user(s) ignored it but none could be disconnected",
+                    check.check_id,
+                    len(to_kick),
+                )
+            kicked = [ParticipantRef(uid, check.required[uid]) for uid in kicked_ids]
+            emptied_vc = bool(
+                not cancelled
+                and kicked_ids
+                and present
+                and (present <= set(kicked_ids))
+            )
+            if emptied_vc and self._event_uid:
+                self.store.set_alive_check_emptied(self._event_uid, now)
+                if self.engine is not None:
+                    self.engine.notify_alive_check_emptied(now)
+
         self.store.clear_alive_check(self._event_uid)
         self.pending = None
         self.schedule_next(now)
-
-        # 2) Now perform the Discord API calls.  Failures here are logged and
-        #    never corrupt the persisted state.
-        kicked_ids: list[int] = []
-        if not cancelled and to_kick:
-            kicked_ids = await self.io.kick(
-                to_kick, "Welcome to Hell: no answer to the alive check"
-            )
-        if to_kick and not kicked_ids and not cancelled:
-            log.error(
-                "Alive check %s: %d user(s) ignored it but none could be disconnected "
-                "(missing 'Move Members'?)",
-                check.check_id,
-                len(to_kick),
-            )
-        kicked = [ParticipantRef(uid, check.required[uid]) for uid in kicked_ids]
-        emptied_vc = bool(
-            not cancelled
-            and kicked_ids
-            and present
-            and (present <= set(kicked_ids))
-        )
-        if emptied_vc and self._event_uid:
-            self.store.set_alive_check_emptied(self._event_uid, now)
-            if self.engine is not None:
-                self.engine.notify_alive_check_emptied(now)
 
         result = CheckResult(
             check_id=check.check_id,
@@ -423,14 +506,19 @@ class AliveCheckManager:
             cancelled=cancelled,
             reason=reason,
             emptied_vc=emptied_vc,
+            check_type=check.check_type,
+            mute_duration=check.mute_duration,
+            trapped=trapped_refs,
         )
 
         log.info(
-            "Alive check %s resolved: %d/%d answered, %d disconnected%s",
+            "%s check %s resolved: %d/%d answered, %d disconnected, %d trapped%s",
+            check.check_type.title(),
             check.check_id,
             len(responded),
             len(check.required),
             len(kicked),
+            len(trapped_refs),
             " (cancelled)" if cancelled else "",
         )
         await self.io.send_result(self.render_result(result))
@@ -444,6 +532,13 @@ class AliveCheckManager:
 
     def render_check(self, check: Optional[PendingCheck] = None) -> str:
         minutes = int(max(30.0, self.config.alive_check_timeout_minutes * 60.0) // 60)
+        if check and check.check_type == "dead":
+            mute_str = format_hm(check.mute_duration) if check.mute_duration >= 60 else f"{check.mute_duration}s"
+            return TEXT.DEAD_CHECK_TEXT + "\n" + say(
+                TEXT.DEAD_CHECK_INSTRUCTIONS,
+                minutes=minutes,
+                mute_duration=mute_str,
+            )
         return TEXT.ALIVE_CHECK_TEXT + "\n" + say(TEXT.ALIVE_CHECK_INSTRUCTIONS, minutes=minutes)
 
     def render_result(self, result: CheckResult) -> str:
@@ -452,6 +547,21 @@ class AliveCheckManager:
                 TEXT.ALIVE_CHECK_CANCELLED,
                 reason=result.reason or TEXT.ALIVE_CHECK_CANCELLED_DEFAULT_REASON,
             )
+        if result.check_type == "dead":
+            mute_str = format_hm(result.mute_duration) if result.mute_duration >= 60 else f"{result.mute_duration}s"
+            lines = [TEXT.DEAD_CHECK_RESULT_TITLE]
+            if result.trapped:
+                lines.append(
+                    say(
+                        TEXT.DEAD_CHECK_RESULT_TRAPPED,
+                        trapped=", ".join(k.mention() for k in result.trapped),
+                        mute_duration=mute_str,
+                    )
+                )
+            else:
+                lines.append(TEXT.DEAD_CHECK_RESULT_NOBODY_TRAPPED)
+            return "\n".join(lines)
+
         lines = [
             TEXT.ALIVE_CHECK_RESULT_TITLE,
             say(TEXT.ALIVE_CHECK_RESULT_ANSWERED, answered=len(result.responded)),
@@ -481,7 +591,13 @@ class AliveCheckManager:
         """Short description for `/hell status` (never reveals the next time)."""
         if not self.enabled:
             return None
+        diff = self.current_difficulty(now)
         if self.pending is not None:
+            if self.pending.check_type == "dead":
+                return say(
+                    TEXT.DEAD_CHECK_STATUS_RUNNING,
+                    left=int(self.pending.seconds_left(now)),
+                )
             return say(
                 TEXT.ALIVE_CHECK_STATUS_RUNNING,
                 answered=len(self.pending.responded),
@@ -490,7 +606,7 @@ class AliveCheckManager:
             )
         return say(
             TEXT.ALIVE_CHECK_STATUS_IDLE,
-            min_hours=self.config.alive_check_min_hours,
-            max_hours=self.config.alive_check_max_hours,
+            min_hours=min(self.config.alive_check_min_hours, diff.min_check_hours),
+            max_hours=min(self.config.alive_check_max_hours, diff.max_check_hours),
             minutes=int(self.config.alive_check_timeout_minutes),
         )

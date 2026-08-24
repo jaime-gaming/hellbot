@@ -65,6 +65,9 @@ class VoiceMonitor:
         self.alive_io = DiscordAliveCheckIO(bot, config)
         self.alive_checks = AliveCheckManager(config, engine.store, self.alive_io, engine=engine)
         self.alive_checks.bind(engine.event_uid)
+        self.engine.hell_events.announcer = announcer
+        self.engine.hell_events.alive_checks = self.alive_checks
+        self.engine.finale.announcer = announcer
         self.reports = FinalReportDM(bot, config, engine, announcer)
         self.security = SuspicionTracker(self.alive_checks)
         self._ready_at: Optional[float] = None
@@ -258,11 +261,19 @@ class VoiceMonitor:
         for event in events:
             await self.dispatch(event)
 
-        # While paused the event is frozen: no roll calls may start or resolve
-        # (nobody should be kicked for failing to answer during a freeze).
+        # While paused the event is frozen: no roll calls or hell events advance
         if self.engine.is_running and not self.engine.is_paused:
             self._ensure_alive_checks_bound(now)
             self._pump_alive_check(now, humans)
+            # Hell Events & Finale tick
+            await self.engine.hell_events.tick(now, humans)
+            await self.engine.finale.tick(now, self.engine.elapsed(now), humans)
+
+            # In the final 60 seconds (countdown mode), update progress display every second
+            if self.engine.finale.is_countdown(self.engine.elapsed(now)):
+                await self.announcer.update_progress(
+                    self.engine.snapshot(now=now, participants=len(humans)), force=True
+                )
         self._heartbeat(len(humans))
         # Security/anomaly checks (run on every tick, cheap).
         self.security.check_stale()
@@ -471,6 +482,8 @@ class VoiceMonitor:
         # A roll call interrupted by the restart is cancelled, never enforced:
         # nobody gets disconnected because the bot was offline.
         self.alive_checks.bind(state.event_uid)
+        self.engine.hell_events.bind(state.event_uid, now=now_ts())
+        self.engine.finale.bind(state.event_uid)
         pending_check = self.alive_checks.pending
         if pending_check is not None:
             recovered = await self.alive_checks.backfill_replies()

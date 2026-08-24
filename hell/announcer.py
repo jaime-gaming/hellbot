@@ -24,6 +24,7 @@ import discord
 
 from . import assets
 from .config import Config
+from .difficulty import DifficultyInfo
 from .embeds import (  # re-exported for callers and tests
     MAX_CONTENT,
     MAX_DESCRIPTION,
@@ -51,6 +52,8 @@ from .engine import (
     MilestoneReached,
     Snapshot,
 )
+from .finale import FinaleAnnouncement
+from .hellevents import HellEventEnded, HellEventStarted
 from .models import LeaderboardEntry, MilestoneRecord
 from .texts import TEXT
 
@@ -241,6 +244,35 @@ class Announcer:
             content="@everyone",
             mention_everyone=True,
         )
+
+    async def announce_difficulty(self, diff: DifficultyInfo) -> Optional[discord.Message]:
+        """Broadcast a difficulty update/escalation to the announcement channel."""
+        return await self.send([self.embeds.difficulty_announcement(diff)])
+
+    async def announce_difficulty_overview(self) -> Optional[discord.Message]:
+        """Broadcast the full difficulty system breakdown to the announcement channel."""
+        return await self.send(
+            [self.embeds.difficulty_info(self.engine.elapsed(), override=self.engine.difficulty_override)]
+        )
+
+    async def announce_hell_event_start(self, event: HellEventStarted) -> Optional[discord.Message]:
+        """Broadcast a Hell Event start announcement to the announcement channel."""
+        embed = self.embeds.hell_event_start(event)
+        log.info("Announcing Hell Event start: %s", event.record.name)
+        return await self.send([embed])
+
+    async def announce_hell_event_end(self, event: HellEventEnded) -> Optional[discord.Message]:
+        """Broadcast a Hell Event end announcement to the announcement channel."""
+        embed = self.embeds.hell_event_end(event)
+        log.info("Announcing Hell Event end: %s", event.record.name)
+        return await self.send([embed])
+
+    async def announce_finale_stage(self, ann: FinaleAnnouncement) -> Optional[discord.Message]:
+        """Broadcast a 160-Hour Finale milestone stage to the announcement channel."""
+        embed = self.embeds.finale_stage(ann)
+        content = "@everyone" if ann.ping_everyone else None
+        log.info("Announcing Finale stage: %s", ann.stage.value)
+        return await self.send([embed], content=content, mention_everyone=ann.ping_everyone)
 
     async def announce_milestone(self, event: MilestoneReached) -> None:
         sent = await self.send(

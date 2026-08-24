@@ -221,6 +221,11 @@ PROGRESS_STARTED_VALUE = "{started_at}\n{started_relative}"
 PROGRESS_FOOTER_LIVE = "Live · updates every {interval}s · /hell status · /hell leaderboard"
 PROGRESS_FOOTER_FINAL = "Final state · this message is no longer updating"
 
+PROGRESS_REMAINING_BLIND = "👁️ *[HIDDEN BY BLINDNESS]*"
+PROGRESS_NEXT_BLIND = "👁️ *[HIDDEN BY BLINDNESS]*"
+PROGRESS_TITLE_FINAL_HOUR = "👹 THE FINAL HOUR"
+PROGRESS_TITLE_COUNTDOWN = "👹 FINAL COUNTDOWN"
+
 PROGRESS_FAILED_FIELD = "💀 FAILED"
 PROGRESS_FAILED_DEFAULT = "The VC became empty of valid participants."
 PROGRESS_COMPLETED_FIELD = "🏆 COMPLETED"
@@ -379,6 +384,17 @@ ALIVE_CHECK_STATUS_IDLE = (
     "{minutes} min"
 )
 
+# --- Dead checks (introduced in Difficulty 2+) ------------------------------
+DEAD_CHECK_TEXT = "💀 ARE YOU DEAD? DO NOT REPLY!"
+DEAD_CHECK_INSTRUCTIONS = (
+    "*This is a* **DEAD CHECK**! *DO NOT reply with* `Yes` *or anything else. "
+    "Anyone who replies will be muted from the server for {mute_duration}.*"
+)
+DEAD_CHECK_RESULT_TITLE = "💀 **Dead check finished**"
+DEAD_CHECK_RESULT_TRAPPED = "🔇 Muted for replying: {trapped} ({mute_duration})"
+DEAD_CHECK_RESULT_NOBODY_TRAPPED = "✅ **Nobody fell for the dead check.** Everyone stayed silent."
+DEAD_CHECK_STATUS_RUNNING = "💀 Dead check running — {left}s left (DO NOT REPLY)"
+
 
 # =============================================================================
 # 11. END-OF-EVENT STAT CARD  (DM'd to every contestant)
@@ -388,6 +404,7 @@ ALIVE_CHECK_STATUS_IDLE = (
 
 CARD_EMBED_TITLE = "🔥 WELCOME TO HELL"
 CARD_EMBED_FOOTER = "Thanks for surviving with us. See you in the next one."
+CARD_EMBED_FOOTER_RUNNING = "Event in progress · Keep surviving to climb the ranks."
 CARD_BODY = (
     "**WELCOME TO HELL**\n"
     "\n"
@@ -398,13 +415,26 @@ CARD_BODY = (
     "\n"
     "**YOU WON {reward_count} REWARD{reward_plural}**"
 )
+CARD_BODY_RUNNING = (
+    "**WELCOME TO HELL**\n"
+    "\n"
+    "**{survived} SURVIVED SO FAR**\n"
+    "\n"
+    "**CURRENT RANK: TOP {rank}**\n"
+    "*out of {participants} contestant(s)*\n"
+    "\n"
+    "**YOU HAVE CLAIMED {reward_count} REWARD{reward_plural} SO FAR**"
+)
 CARD_REWARD_LINE = "• {reward}"
 CARD_REWARD_TOP3_NOTE = "*Top 3: every milestone reward is yours.*"
 CARD_REWARD_NOTE = "*Claimable because you were in the VC when the milestone hit.*"
+CARD_REWARD_NOTE_RUNNING = "*Milestone reward(s) secured by being in the VC when milestones were reached.*"
 CARD_NO_REWARDS = "*You were not in the VC at any milestone moment — no rewards this time.*"
+CARD_NO_REWARDS_RUNNING = "*No milestone rewards unlocked yet — be in the VC when the next milestone hits!*"
 CARD_TOP3_BONUS_LINE = "Top 3 bonus — {bonus_role}"
 CARD_MILESTONE_LINE = "{hours}h — {reward}"
 CARD_OUTCOME = {
+    "RUNNING": "The challenge is **IN PROGRESS** — keep surviving in the VC!",
     "COMPLETED": "The challenge was **COMPLETED** — 160 consecutive hours.",
     "FAILED": "The challenge **FAILED** — the VC emptied before 160 hours.",
     "CANCELLED": "The challenge was **CANCELLED** by a host.",
@@ -520,6 +550,96 @@ CMD_ALIVECHECK_FAILED = (
 CMD_ALIVECHECK_STARTED = (
     "🚨 Alive check posted in {check_channel}. "
     "Everyone in the VC has {minutes} minutes to reply `Yes`."
+)
+CMD_DEADCHECK_STARTED = (
+    "💀 Dead check posted in {check_channel}. "
+    "Anyone who replies within {minutes} minutes will be muted for {mute_duration}."
+)
+
+CMD_DIFFICULTY_TITLE = "⚡ WELCOME TO HELL — DIFFICULTIES"
+CMD_DIFFICULTY_DESCRIPTION = (
+    "Difficulties make the challenge progressively harder at each milestone reached."
+)
+CMD_DIFFICULTY_CURRENT = "⚡ **Current Difficulty:** Level {level} ({name})\n• {description}"
+DIFFICULTY_ANNOUNCE_TITLE = "⚡ DIFFICULTY UPDATE — LEVEL {level} ({name})"
+CMD_SETDIFFICULTY_DONE = "⚡ Difficulty set to **Level {level} ({name})**.\n• {description}"
+CMD_SETDIFFICULTY_AUTO = "⚡ Difficulty override cleared — difficulty is now managed **automatically** based on event progress (currently **Level {level}: {name}**)."
+CMD_ANNOUNCE_DIFFICULTY_DONE = "📢 Difficulty announcement posted to {channel}."
+
+# Hell Events
+HELL_EVENT_TITLE = "⚡ HELL EVENT — {name}"
+HELL_EVENT_DOUBLE_TIME_START = (
+    "🔥 **HELL EVENT — DOUBLE TIME**\n\n"
+    "For the next **{duration} minutes**, your personal leaderboard time is being multiplied by **{multiplier}x**."
+)
+HELL_EVENT_DOUBLE_TIME_END = "🔥 **DOUBLE TIME HAS ENDED**\n\nHell is no longer feeling generous."
+HELL_EVENT_BLOOD_PACT_START = (
+    "🩸 **HELL EVENT — BLOOD PACT**\n\n"
+    "Everyone currently in Hell ({count} participants) has been granted **+{bonus}** of personal survival time."
+)
+HELL_EVENT_INFERNO_START = (
+    "🔥 **HELL EVENT — INFERNO**\n\n"
+    "Hell is getting hotter.\n"
+    "Alive and Dead Checks will occur more frequently for the next **{duration} minutes**."
+)
+HELL_EVENT_INFERNO_END = "🔥 **INFERNO HAS SUBSIDED**\n\nThe heat recedes. Check frequency has returned to normal."
+HELL_EVENT_BLINDNESS_START = (
+    "👁️ **HELL EVENT — BLINDNESS**\n\n"
+    "For the next **{duration} minutes**, Hell will hide your remaining time."
+)
+HELL_EVENT_BLINDNESS_END = "👁️ **BLINDNESS HAS ENDED**\n\nYou can see the remaining time again."
+HELL_EVENT_JACKPOT_START = (
+    "🎰 **HELL EVENT — JACKPOT**\n\n"
+    "For the next **{duration} minutes**, gambling rewards are increased."
+)
+HELL_EVENT_JACKPOT_END = "🎰 **JACKPOT HAS ENDED**\n\nGambling rewards have returned to normal."
+CMD_HELLEVENTS_TITLE = "⚡ HELL EVENTS"
+CMD_HELLEVENTS_STATUS_NONE = "*No Hell Event is currently active.*"
+CMD_HELLEVENTS_TRIGGERED = "⚡ Triggered Hell Event: **{name}**."
+
+# Finale System
+FINALE_FINAL_HOUR_TITLE = "👹 THE FINAL HOUR"
+FINALE_FINAL_HOUR_ANNOUNCE = (
+    "👹 **THE FINAL HOUR HAS BEGUN**\n\n"
+    "**1 HOUR REMAINING**\n"
+    "DO NOT LET HELL GO EMPTY."
+)
+FINALE_30M_TITLE = "⚠️ 30 MINUTES REMAIN"
+FINALE_30M_ANNOUNCE = "⚠️ **30 MINUTES REMAIN**\n\nHell is crumbling. Keep the voice channel alive!"
+FINALE_10M_TITLE = "🚨 10 MINUTES REMAIN"
+FINALE_10M_ANNOUNCE = "🚨 **10 MINUTES REMAIN**\n\n**HELL IS ALMOST CONQUERED.**"
+FINALE_5M_TITLE = "🔥 5 MINUTES REMAIN"
+FINALE_5M_ANNOUNCE = "🔥 **5 MINUTES REMAIN**\n\nThe end of Hell is in sight. Stay in the VC!"
+COMPLETION_FINALE_TITLE = "👹 WELCOME TO HELL HAS BEEN COMPLETED"
+COMPLETION_FINALE_DESCRIPTION = (
+    "**160:00:00 SURVIVED**\n\n"
+    "**HELL HAS BEEN CONQUERED.**\n\n"
+    "{vc} never emptied — not for one single second.\n\n"
+    "Completed {completed_at}."
+)
+
+CMD_GAMBLE_LOCKED = (
+    "❌ **Gambling is locked.** Gambling unlocks at **Difficulty 3** (96h milestone). "
+    "Current difficulty: **Level {level} ({name})**."
+)
+CMD_GAMBLE_NOT_RUNNING = "❌ No event is currently running (status `{status}`)."
+CMD_GAMBLE_PAUSED = "⏸️ Cannot gamble while the event is paused."
+CMD_GAMBLE_NO_TIME = "❌ You have **{user_time}** recorded time, but you need at least **{min_time}** to place this bet."
+CMD_GAMBLE_INVALID_BET = "❌ Bet amount must be positive and at most **{max_hours}h** for Difficulty {level}."
+CMD_GAMBLE_HOURLY_LIMIT = (
+    "❌ **Hourly gambling limit reached.** You can only gamble **{limit} time(s) per hour**. "
+    "Next gamble available in **{time_left}**."
+)
+CMD_GAMBLE_COOLDOWN = "⏳ You must wait **{cooldown}** before gambling again."
+CMD_GAMBLE_WIN = (
+    "🎰 **GAMBLE WON!** 🎲 {who} rolled a WIN ({win_chance}% odds) on Difficulty {level}!\n\n"
+    "**+{reward_time}** has been added to your personal leaderboard timer! 🔥\n"
+    "*Bet:* `{bet_time}` · *Net gain:* `+{net_gain}` · *New leaderboard time:* `{new_time}`"
+)
+CMD_GAMBLE_LOSE = (
+    "💀 **GAMBLE LOST!** 🎲 {who} rolled a LOSS on Difficulty {level}!\n\n"
+    "You lost **-{penalty_time}** from your leaderboard timer and have been muted for **{mute_duration}** from the server. 🔇\n"
+    "*Bet:* `{bet_time}` · *New leaderboard time:* `{new_time}`"
 )
 
 CMD_MYSTATS_NONE = (

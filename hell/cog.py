@@ -7,7 +7,7 @@ import csv
 import io
 import logging
 import re
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import discord
 from discord import app_commands
@@ -19,6 +19,7 @@ from .embeds import add_chunked_field
 from .engine import HellEngine, StartError
 from .errorcodes import lookup as _ec_lookup
 from .health import preflight
+from .hellevents import HellEventType
 from .milestones import MILESTONES, TOTAL_SECONDS
 from .models import EventStatus
 from .monitor import VoiceMonitor
@@ -51,6 +52,8 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         self._leaderboard_task: Optional[asyncio.Task] = None
         self._leaderboard_message: Optional[discord.Message] = None
         self._status_task: Optional[asyncio.Task] = None
+        self._gamble_cooldowns: dict[int, float] = {}
+        self._gamble_history: dict[int, list[float]] = {}
         super().__init__()
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -98,6 +101,244 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         if frozen and embeds:
             embeds[-1].set_footer(text="These rankings are frozen; the event is over.")
         return embeds
+
+    def _build_difficulty_embed(self) -> discord.Embed:
+        elapsed = self.engine.elapsed() if self.engine.is_running else 0.0
+        return self.announcer.embeds.difficulty_info(elapsed, override=self.engine.difficulty_override)
+
+    async def _handle_set_difficulty(self, level_input: str) -> tuple[bool, str]:
+        clean = level_input.strip().lower()
+        if clean in ("auto", "none", "clear", "reset", "default"):
+            diff = self.engine.set_difficulty_override(None)
+            self.monitor.sync_status()
+            return True, say(
+                getattr(TEXT, "CMD_SETDIFFICULTY_AUTO", "⚡ Difficulty override cleared — difficulty is now managed **automatically** based on event progress (currently **Level {level}: {name}**)."),
+                level=diff.level,
+                name=diff.name,
+            )
+        try:
+            lvl = int(clean)
+            if not (0 <= lvl <= 4):
+                return False, "❌ Difficulty level must be between 0 and 4, or `auto`."
+        except ValueError:
+            return False, "❌ Difficulty level must be an integer 0–4 (e.g. `0`, `1`, `2`, `3`, `4`) or `auto`."
+
+        diff = self.engine.set_difficulty_override(lvl)
+        self.monitor.sync_status()
+        return True, say(
+            getattr(TEXT, "CMD_SETDIFFICULTY_DONE", "⚡ Difficulty set to **Level {level} ({name})**.\n• {description}"),
+            level=diff.level,
+            name=diff.name,
+            description=diff.description,
+        )
+
+    async def _handle_announce_difficulty(self, overview: bool = False) -> tuple[bool, str]:
+        from .difficulty import get_difficulty
+        diff = get_difficulty(self.engine.elapsed(), override=self.engine.difficulty_override)
+        chan_id = self.config.announce_channel_id
+        if overview:
+            msg = await self.announcer.announce_difficulty_overview()
+        else:
+            msg = await self.announcer.announce_difficulty(diff)
+        if msg is None:
+            return False, f"❌ Failed to post announcement to <#{chan_id}> (channel missing or forbidden)."
+        return True, say(
+            getattr(TEXT, "CMD_ANNOUNCE_DIFFICULTY_DONE", "📢 Difficulty announcement posted to {channel}."),
+            channel=f"<#{chan_id}>",
+        )
+
+    def _build_hellevents_embed(self) -> discord.Embed:
+        embed = discord.Embed(
+            title=str(getattr(TEXT, "CMD_HELLEVENTS_TITLE", "⚡ HELL EVENTS")),
+            description="Temporary randomized events that occur while Welcome to Hell is RUNNING.",
+            color=int(TEXT.COLOR_RUNNING),
+        )
+        active = self.engine.hell_events.active_event
+        now = now_ts()
+        if active is not None and active.is_active:
+            left_s = int(active.seconds_left(now))
+            embed.add_field(
+                name=f"🔥 ACTIVE: {active.name}",
+                value=f"• Time remaining: **{left_s // 60}m {left_s % 60}s** (<t:{int(active.end_ts)}:R>)\n• State: `{active.state.value}`",
+                inline=False,
+            )
+        else:
+            next_ts = self.engine.hell_events.next_event_ts()
+            next_str = f"<t:{int(next_ts)}:R> (<t:{int(next_ts)}:t>)" if next_ts else "Not scheduled"
+            embed.add_field(
+                name="⚡ Active Event",
+                value=str(getattr(TEXT, "CMD_HELLEVENTS_STATUS_NONE", "*No Hell Event is currently active.*")) + f"\n• Next event scheduled: {next_str}",
+                inline=False,
+            )
+
+        events_desc = (
+            "1. **Double Time** (5m) — 2x personal leaderboard time for humans in VC.\n"
+            "2. **Blood Pact** (Instant) — +5m bonus survival time to everyone in VC.\n"
+            "3. **Inferno** (10m) — Accelerated Alive/Dead checks.\n"
+            "4. **Blindness** (10m) — Hides remaining time & next milestone on progress cards.\n"
+            "5. **Hell Jackpot** (5m) — Boosts gambling reward multipliers."
+        )
+        embed.add_field(name="📜 Event Types", value=events_desc, inline=False)
+
+        history = self.engine.hell_events.history()[:5]
+        if history:
+            h_lines = [
+                f"• **{h['name']}** — <t:{int(h['start_ts'])}:R> (`{h['state']}`)"
+                for h in history
+            ]
+            embed.add_field(name="🕒 Recent Events", value="\n".join(h_lines), inline=False)
+
+        embed.set_footer(text="Random interval: 30m to 3h · Scales by Difficulty Level")
+        self.announcer.embeds._brand(embed)
+        return embed
+
+    async def _handle_trigger_hell_event(self, event_type_str: str) -> tuple[bool, str]:
+        if not self.engine.is_running:
+            return False, "❌ Cannot trigger a Hell Event: the event is not running."
+        if self.engine.is_paused:
+            return False, "⏸️ Cannot trigger a Hell Event while the event is paused."
+        if self.engine.grace.is_open:
+            return False, "⚠️ Cannot trigger a Hell Event while the empty-VC grace window is open."
+        if self.engine.hell_events.active_event is not None:
+            return False, f"❌ A Hell Event (**{self.engine.hell_events.active_event.name}**) is already active."
+
+        clean = event_type_str.strip().lower()
+        matched: Optional[HellEventType] = None
+        for ev in HellEventType:
+            if ev.value == clean or ev.name.lower() == clean or clean in ev.value:
+                matched = ev
+                break
+        if matched is None:
+            opts = ", ".join(f"`{ev.value}`" for ev in HellEventType)
+            return False, f"❌ Unknown event type `{event_type_str}`. Valid options: {opts}."
+
+        collected = await self.monitor.collect()
+        participants = collected[0] if collected else list(self.engine.last_participants)
+        if not participants:
+            return False, "❌ Cannot trigger a Hell Event: the VC is empty."
+
+        now = now_ts()
+        started = await self.engine.hell_events.start_event(matched, now, participants)
+        if started is None:
+            return False, "❌ Failed to trigger Hell Event."
+        return True, say(
+            getattr(TEXT, "CMD_HELLEVENTS_TRIGGERED", "⚡ Triggered Hell Event: **{name}**."),
+            name=started.record.name,
+        )
+
+    async def _perform_gamble(self, user: Any, hours: Optional[float] = None) -> tuple[bool, str]:
+        if not self.engine.is_running:
+            return False, say(TEXT.CMD_GAMBLE_NOT_RUNNING, status=self.engine.status.value)
+        if self.engine.is_paused:
+            return False, TEXT.CMD_GAMBLE_PAUSED
+
+        from .difficulty import get_difficulty
+        diff = get_difficulty(self.engine.elapsed(), override=self.engine.difficulty_override)
+        if not diff.gamble_enabled:
+            return False, say(TEXT.CMD_GAMBLE_LOCKED, level=diff.level, name=diff.name)
+
+        bet_hours = float(hours) if hours is not None else 0.25
+        if bet_hours <= 0:
+            return False, "❌ Bet amount must be positive (e.g. `0.25`, `0.5`, `1.0`)."
+        if bet_hours > diff.gamble_max_bet_hours:
+            return False, say(
+                getattr(TEXT, "CMD_GAMBLE_INVALID_BET", "❌ Bet amount must be positive and at most **{max_hours}h** for Difficulty {level}."),
+                max_hours=f"{diff.gamble_max_bet_hours:g}",
+                level=diff.level,
+            )
+
+        user_id = user.id
+        board = self.engine.leaderboard()
+        user_entry = next((e for e in board if e.user_id == user_id), None)
+        user_time = user_entry.seconds if user_entry else 0.0
+        bet_seconds = bet_hours * 3600.0
+
+        if user_time < bet_seconds:
+            user_time_str = format_hm(user_time)
+            bet_str = format_hm(bet_seconds)
+            return False, say(TEXT.CMD_GAMBLE_NO_TIME, user_time=user_time_str, min_time=bet_str)
+
+        now = now_ts()
+
+        # Hourly gambling frequency limit check
+        history = [t for t in self._gamble_history.get(user_id, []) if now - t < 3600.0]
+        self._gamble_history[user_id] = history
+        if len(history) >= diff.gamble_hourly_limit:
+            oldest = min(history)
+            left_sec = int(3600.0 - (now - oldest))
+            left_str = f"{left_sec // 60}m {left_sec % 60}s" if left_sec >= 60 else f"{left_sec}s"
+            return False, say(
+                getattr(
+                    TEXT,
+                    "CMD_GAMBLE_HOURLY_LIMIT",
+                    "❌ **Hourly gambling limit reached.** You can only gamble **{limit} time(s) per hour**. Next gamble available in **{time_left}**.",
+                ),
+                limit=diff.gamble_hourly_limit,
+                time_left=left_str,
+            )
+
+        # Cooldown check
+        last_gamble = self._gamble_cooldowns.get(user_id, 0.0)
+        cooldown = diff.gamble_cooldown_seconds
+        if now - last_gamble < cooldown:
+            left_sec = int(cooldown - (now - last_gamble))
+            left_str = f"{left_sec // 60}m {left_sec % 60}s" if left_sec >= 60 else f"{left_sec}s"
+            return False, say(TEXT.CMD_GAMBLE_COOLDOWN, cooldown=left_str)
+
+        self._gamble_cooldowns[user_id] = now
+        self._gamble_history.setdefault(user_id, []).append(now)
+
+        import random
+        won = random.random() < diff.gamble_win_chance
+        mention = getattr(user, "mention", f"<@{user_id}>")
+        display_name = getattr(user, "display_name", None) or str(user)
+        bet_time_str = format_hm(bet_seconds)
+
+        jackpot_bonus = self.engine.hell_events.get_gamble_modifier(now)
+        win_mult = diff.gamble_win_multiplier + jackpot_bonus
+
+        if won:
+            reward_sec = bet_seconds * win_mult
+            net_gain_sec = reward_sec - bet_seconds
+            new_seconds = self.engine.add_user_bonus_seconds(user_id, display_name, reward_sec, now)
+            reward_time = format_hm(reward_sec)
+            net_gain = format_hm(net_gain_sec)
+            new_time = format_hm(new_seconds)
+            jackpot_note = " 🎰 **(JACKPOT BONUS ACTIVE!)**" if jackpot_bonus > 0 else ""
+            msg = say(
+                TEXT.CMD_GAMBLE_WIN,
+                who=mention,
+                win_chance=int(diff.gamble_win_chance * 100),
+                level=diff.level,
+                reward_time=reward_time,
+                bet_time=bet_time_str,
+                net_gain=net_gain,
+                new_time=new_time,
+            )
+            if jackpot_note:
+                msg += f"\n{jackpot_note}"
+            return True, msg
+        else:
+            penalty_sec = bet_seconds
+            new_seconds = self.engine.add_user_bonus_seconds(user_id, display_name, -penalty_sec, now)
+            penalty_time = format_hm(penalty_sec)
+            new_time = format_hm(new_seconds)
+            mute_sec = diff.gamble_loss_mute_seconds
+            mute_str = f"{mute_sec // 60} minute" if mute_sec >= 60 else f"{mute_sec}s"
+            if hasattr(self.monitor.alive_checks, "io") and hasattr(self.monitor.alive_checks.io, "mute"):
+                try:
+                    await self.monitor.alive_checks.io.mute(user_id, mute_sec, "Welcome to Hell: lost gamble")
+                except Exception:
+                    log.warning("Could not mute user %d after gamble loss", user_id, exc_info=True)
+            return True, say(
+                TEXT.CMD_GAMBLE_LOSE,
+                who=mention,
+                level=diff.level,
+                bet_time=bet_time_str,
+                penalty_time=penalty_time,
+                mute_duration=mute_str,
+                new_time=new_time,
+            )
 
     def _build_milestones_embed(self) -> discord.Embed:
         records = {r.hours: r for r in self.engine.milestone_records()}
@@ -392,6 +633,16 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
     def _is_operator(self, ctx: commands.Context) -> bool:
         return ctx.author.id == self.config.log_dm_user_id
 
+    def _is_host(self, user: Union[discord.User, discord.Member]) -> bool:
+        if user.id == self.config.log_dm_user_id:
+            return True
+        if isinstance(user, discord.Member):
+            return any(r.id == self.config.gamenight_host_role_id for r in user.roles)
+        roles = getattr(user, "roles", None)
+        if roles:
+            return any(getattr(r, "id", None) == self.config.gamenight_host_role_id for r in roles)
+        return False
+
     # ----------------------------------------------------------------- start
 
     @app_commands.command(name="start", description="Start Welcome to Hell (160h). Requires @gamenight host.")
@@ -531,6 +782,100 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         await interaction.response.defer(thinking=True)
         embed = self._build_milestones_embed()
         await interaction.followup.send(embed=embed)
+
+    # ------------------------------------------------------------ difficulty
+
+    @app_commands.command(name="difficulty", description="Show difficulty tiers and the current challenge level.")
+    @app_commands.guild_only()
+    async def difficulty(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(thinking=True)
+        embed = self._build_difficulty_embed()
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(name="setdifficulty", description="Set or override the difficulty level (0-4 or auto). Requires @gamenight host.")
+    @app_commands.describe(level="Difficulty level: 0, 1, 2, 3, 4, or auto.")
+    @app_commands.choices(
+        level=[
+            app_commands.Choice(name="auto (Default based on elapsed time)", value="auto"),
+            app_commands.Choice(name="Level 0: Starter (1-6h alive checks)", value="0"),
+            app_commands.Choice(name="Level 1: Heating Up (1-5h alive checks)", value="1"),
+            app_commands.Choice(name="Level 2: Inferno (1-4h checks + dead checks 1m mute)", value="2"),
+            app_commands.Choice(name="Level 3: Torment (1-3h checks + dead checks + gambling)", value="3"),
+            app_commands.Choice(name="Level 4: Cataclysm (1-2h checks + high-stakes gambling)", value="4"),
+        ]
+    )
+    @is_host()
+    @app_commands.guild_only()
+    async def setdifficulty(self, interaction: discord.Interaction, level: app_commands.Choice[str]) -> None:
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        _ok, text = await self._handle_set_difficulty(level.value)
+        await interaction.followup.send(text, ephemeral=True)
+
+    @app_commands.command(name="announcedifficulty", description="Post the current difficulty tier or full overview to the announcement channel.")
+    @app_commands.describe(overview="Whether to post the full 5-tier overview instead of just the current tier.")
+    @is_host()
+    @app_commands.guild_only()
+    async def announcedifficulty(self, interaction: discord.Interaction, overview: bool = False) -> None:
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        _ok, text = await self._handle_announce_difficulty(overview=overview)
+        await interaction.followup.send(text, ephemeral=True)
+
+    @app_commands.command(name="hellevents", description="View active Hell Event, rules, or trigger an event (@gamenight host only).")
+    @app_commands.describe(
+        action="Whether to view status or force-trigger an event.",
+        event_type="The type of Hell Event to start (if action is 'trigger').",
+    )
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="status (View active event & rules)", value="status"),
+            app_commands.Choice(name="trigger (Host only: start a Hell Event)", value="trigger"),
+        ],
+        event_type=[
+            app_commands.Choice(name="Double Time (2x leaderboard time for 5m)", value="double_time"),
+            app_commands.Choice(name="Blood Pact (+5m bonus time to everyone in VC)", value="blood_pact"),
+            app_commands.Choice(name="Inferno (Accelerated checks for 10m)", value="inferno"),
+            app_commands.Choice(name="Blindness (Hides time left & next milestone for 10m)", value="blindness"),
+            app_commands.Choice(name="Hell Jackpot (Boosted gamble rewards for 5m)", value="jackpot"),
+        ],
+    )
+    @app_commands.guild_only()
+    async def hellevents(
+        self,
+        interaction: discord.Interaction,
+        action: Optional[app_commands.Choice[str]] = None,
+        event_type: Optional[app_commands.Choice[str]] = None,
+    ) -> None:
+        act = action.value if action else "status"
+        if act == "trigger":
+            if not self._is_host(interaction.user):
+                await interaction.response.send_message(
+                    say(TEXT.CMD_NOT_ALLOWED, host_role=f"<@&{self.config.gamenight_host_role_id}>"),
+                    ephemeral=True,
+                )
+                return
+            if not event_type:
+                await interaction.response.send_message(
+                    "❌ Please select an `event_type` to trigger.", ephemeral=True
+                )
+                return
+            await interaction.response.defer(thinking=True, ephemeral=True)
+            _ok, text = await self._handle_trigger_hell_event(event_type.value)
+            await interaction.followup.send(text, ephemeral=True)
+            return
+
+        await interaction.response.defer(thinking=True)
+        embed = self._build_hellevents_embed()
+        await interaction.followup.send(embed=embed)
+
+    # -------------------------------------------------------------- gambling
+
+    @app_commands.command(name="gamble", description="Gamble your leaderboard timer (Difficulty 3+): win bonus time or get 1 minute server mute.")
+    @app_commands.describe(hours="Hours of recorded time to bet (e.g. 0.25, 0.5, 1.0). Default: 0.25h (15m).")
+    @app_commands.guild_only()
+    async def gamble(self, interaction: discord.Interaction, hours: Optional[float] = None) -> None:
+        await interaction.response.defer(thinking=True)
+        _ok, msg = await self._perform_gamble(interaction.user, hours=hours)
+        await interaction.followup.send(msg)
 
     # ------------------------------------------------------------- log stream
 
@@ -1143,6 +1488,55 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         else:
             await ctx.send(err_text or f"Unknown code: **{code}**.")
 
+    async def _exec_difficulty(self, ctx: commands.Context) -> None:
+        embed = self._build_difficulty_embed()
+        await ctx.send(embed=embed)
+
+    async def _exec_setdifficulty(self, ctx: commands.Context, level: Optional[str] = None) -> None:
+        if not await self._is_host_or_operator(ctx):
+            await ctx.send(say(TEXT.CMD_NOT_ALLOWED, host_role=f"<@&{self.config.gamenight_host_role_id}>"))
+            return
+        if not level:
+            await ctx.send("Please specify a difficulty level (`0`, `1`, `2`, `3`, `4`, or `auto`).")
+            return
+        _ok, text = await self._handle_set_difficulty(level)
+        await ctx.send(text)
+
+    async def _exec_announcedifficulty(self, ctx: commands.Context, mode: Optional[str] = None) -> None:
+        if not await self._is_host_or_operator(ctx):
+            await ctx.send(say(TEXT.CMD_NOT_ALLOWED, host_role=f"<@&{self.config.gamenight_host_role_id}>"))
+            return
+        overview = bool(mode and mode.strip().lower() in ("overview", "all", "full"))
+        _ok, text = await self._handle_announce_difficulty(overview=overview)
+        await ctx.send(text)
+
+    async def _exec_hellevents(self, ctx: commands.Context) -> None:
+        embed = self._build_hellevents_embed()
+        await ctx.send(embed=embed)
+
+    async def _exec_triggerhellevent(self, ctx: commands.Context, event_type: Optional[str] = None) -> None:
+        if not await self._is_host_or_operator(ctx):
+            await ctx.send(say(TEXT.CMD_NOT_ALLOWED, host_role=f"<@&{self.config.gamenight_host_role_id}>"))
+            return
+        if not event_type:
+            opts = ", ".join(f"`{ev.value}`" for ev in HellEventType)
+            await ctx.send(f"Please specify a Hell Event type. Valid options: {opts}.")
+            return
+        _ok, text = await self._handle_trigger_hell_event(event_type)
+        await ctx.send(text)
+
+    async def _exec_gamble(self, ctx: commands.Context, hours: Optional[str] = None) -> None:
+        bet_h: Optional[float] = None
+        if hours:
+            clean = hours.strip().lower().rstrip("h")
+            try:
+                bet_h = float(clean)
+            except ValueError:
+                await ctx.send("❌ Bet amount must be a number of hours (e.g. `0.25`, `0.5`, `1.0`).")
+                return
+        _ok, msg = await self._perform_gamble(ctx.author, hours=bet_h)
+        await ctx.send(msg)
+
     async def _exec_help(self, ctx: commands.Context) -> None:
         embed = discord.Embed(
             title="🔥 Welcome to Hell — Commands",
@@ -1159,9 +1553,12 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             "\n".join([
                 "`!status` (or `!st`) — Show current event status, elapsed time & VC count",
                 "`!leaderboard` (or `!lb`, `!top`) — Show current or final rankings",
-                "`!mystats` (or `!stats`, `!me`) — Your personal stat card",
+                "`!mystats` (or `!mycard`, `!card`, `!stats`, `!me`) — Your personal stat card",
                 "`!user [@user/id/name]` — Look up anyone's time, rank & milestones",
                 "`!milestones` (or `!ms`) — Milestones, rewards & list of claimants",
+                "`!difficulty` (or `!diff`) — View the 5 difficulty tiers and current level",
+                "`!hellevents` (or `!events`) — View active Hell Event, next scheduled & event rules",
+                "`!gamble [hours]` (or `!bet`) — Gamble your leaderboard timer (Difficulty 3+)",
                 "`!errors <code>` — Look up an error code explanation (e.g. `!errors HEL-100`)",
                 "`!help` — Show this command help list",
             ]),
@@ -1170,6 +1567,9 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             embed,
             say("👑 Host & Operator Commands ({host_role} / Operator)", host_role=f"<@&{self.config.gamenight_host_role_id}>"),
             "\n".join([
+                "`!setdifficulty <0-4|auto>` — Set or override difficulty level",
+                "`!announcedifficulty [overview]` — Broadcast difficulty update to announcement channel",
+                "`!triggerhellevent <type>` — Force-trigger a Hell Event immediately",
                 "`!doctor` — Diagnostic self-check (permissions, state, runtime, config)",
                 "`!logs [status|on|off|test|tail|flush] [level]` — Control live log stream",
                 "`!security` — Anti-cheat and anomaly report",
@@ -1486,7 +1886,19 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             await self._exec_leaderboard(ctx)
         elif sub in ("milestones", "ms"):
             await self._exec_milestones(ctx)
-        elif sub in ("mystats", "stats", "me"):
+        elif sub in ("difficulty", "diff"):
+            await self._exec_difficulty(ctx)
+        elif sub in ("setdifficulty", "setdiff"):
+            await self._exec_setdifficulty(ctx, level=rest)
+        elif sub in ("announcedifficulty", "announcediff"):
+            await self._exec_announcedifficulty(ctx, mode=rest)
+        elif sub in ("hellevents", "events", "event"):
+            await self._exec_hellevents(ctx)
+        elif sub in ("triggerhellevent", "triggerevent", "trigger"):
+            await self._exec_triggerhellevent(ctx, event_type=rest)
+        elif sub in ("gamble", "bet"):
+            await self._exec_gamble(ctx, hours=rest)
+        elif sub in ("mystats", "stats", "me", "mycard", "card"):
             await self._exec_mystats(ctx)
         elif sub in ("user", "whois", "profile"):
             await self._exec_user(ctx, member=rest)
@@ -1541,8 +1953,43 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         """Show every milestone, its reward and who claimed it."""
         await self._exec_milestones(ctx)
 
+    @commands.command(name="difficulty", aliases=["diff"])
+    async def prefix_difficulty(self, ctx: commands.Context) -> None:
+        """Show the 5 difficulty tiers and current challenge level."""
+        await self._exec_difficulty(ctx)
+
+    @commands.command(name="setdifficulty", aliases=["setdiff"])
+    async def prefix_setdifficulty(self, ctx: commands.Context, level: Optional[str] = None) -> None:
+        """Set the difficulty level (0-4 or auto)."""
+        await self._exec_setdifficulty(ctx, level=level)
+
+    @commands.command(name="announcedifficulty", aliases=["announcediff"])
+    async def prefix_announcedifficulty(self, ctx: commands.Context, mode: Optional[str] = None) -> None:
+        """Post difficulty update to the announcement channel."""
+        await self._exec_announcedifficulty(ctx, mode=mode)
+
+    @commands.command(name="hellevents", aliases=["events"])
+    async def prefix_hellevents(self, ctx: commands.Context) -> None:
+        """View active Hell Event, next scheduled event, and event rules."""
+        await self._exec_hellevents(ctx)
+
+    @commands.command(name="triggerhellevent", aliases=["triggerevent", "trigger"])
+    async def prefix_triggerhellevent(self, ctx: commands.Context, *, event_type: Optional[str] = None) -> None:
+        """Force-trigger a Hell Event immediately (host only)."""
+        await self._exec_triggerhellevent(ctx, event_type=event_type)
+
+    @commands.command(name="gamble", aliases=["bet"])
+    async def prefix_gamble(self, ctx: commands.Context, hours: Optional[str] = None) -> None:
+        """Gamble your leaderboard timer (Difficulty 3+): win bonus time or get muted."""
+        await self._exec_gamble(ctx, hours=hours)
+
     @commands.command(name="mystats", aliases=["stats", "me"])
     async def prefix_mystats(self, ctx: commands.Context) -> None:
+        """Your personal Welcome to Hell stat card."""
+        await self._exec_mystats(ctx)
+
+    @commands.command(name="mycard", aliases=["card"])
+    async def prefix_mycard(self, ctx: commands.Context) -> None:
         """Your personal Welcome to Hell stat card."""
         await self._exec_mystats(ctx)
 

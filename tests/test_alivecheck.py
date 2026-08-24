@@ -22,6 +22,7 @@ class FakeIO:
         self.sent: list[tuple[str, list[int]]] = []
         self.results: list[str] = []
         self.kicked: list[list[int]] = []
+        self.muted: list[tuple[int, int, str]] = []  # (user_id, duration_seconds, reason)
         self.present: set[int] = set()          # who is actually in the VC
         self.offline_replies: set[int] = set()  # answers found after a restart
         self.fail_send = fail_send
@@ -40,6 +41,10 @@ class FakeIO:
         self.kicked.append(removed)
         self.present -= set(removed)
         return removed
+
+    async def mute(self, user_id, duration_seconds, reason):
+        self.muted.append((user_id, duration_seconds, reason))
+        return True
 
     async def replies_since(self, channel_id, message_id, user_ids):
         return set(self.offline_replies) & set(user_ids)

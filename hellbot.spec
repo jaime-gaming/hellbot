@@ -40,6 +40,7 @@ a = Analysis(
         "hell.bot",
         "hell.cog",
         "hell.config",
+        "hell.difficulty",
         "hell.dm",
         "hell.embeds",
         "hell.engine",

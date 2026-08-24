@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Optional
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 import pytest
@@ -238,6 +238,47 @@ def test_dm_help(wired):
     assert "Event Rules" in text
 
 
+def test_dm_difficulty_and_gamble(wired, engine):
+    cog, bot, _text, _voice = wired
+    now = now_ts()
+    start(engine, now - 10 * 3600, 100)
+    engine.tick(obs(now, 100))
+
+    # Difficulty lookup
+    ctx_diff = FakeContext(bot, FakeAuthor(uid=100))
+    call(cog, "prefix_difficulty", ctx_diff)
+    assert "DIFFICULTIES" in ctx_diff.text()
+
+    # Gamble when locked (level 0)
+    ctx_gamble = FakeContext(bot, FakeAuthor(uid=100))
+    call(cog, "prefix_gamble", ctx_gamble)
+    assert "locked" in ctx_gamble.text().lower()
+
+
+def test_dm_setdifficulty_and_announcedifficulty(wired, config, engine):
+    cog, bot, _text, _voice = wired
+    now = now_ts()
+    start(engine, now, 100)
+
+    # Outsider attempt
+    ctx_outsider = FakeContext(bot, FakeAuthor(uid=12345))
+    call(cog, "prefix_setdifficulty", ctx_outsider, level="3")
+    assert "cannot use this command" in ctx_outsider.text().lower()
+
+    # Host set to level 3
+    ctx_host = FakeContext(bot, FakeAuthor(uid=config.log_dm_user_id))
+    call(cog, "prefix_setdifficulty", ctx_host, level="3")
+    assert "Level 3" in ctx_host.text()
+    assert engine.difficulty_override == 3
+
+    # Host broadcast announcement
+    with patch.object(cog.announcer, "send", new_callable=AsyncMock) as mock_send:
+        mock_send.return_value = MagicMock()
+        ctx_ann = FakeContext(bot, FakeAuthor(uid=config.log_dm_user_id))
+        call(cog, "prefix_announcedifficulty", ctx_ann)
+        assert "posted to" in ctx_ann.text()
+
+
 # ----------------------------------------------------------- operator / host cmds
 
 
@@ -413,6 +454,16 @@ def test_hell_group_subcommand_dispatching(wired, config, engine):
     ctx_h = FakeContext(bot, FakeAuthor(uid=100))
     call(cog, "prefix_hell_group", ctx_h, subcommand="help")
     assert "!status" in ctx_h.text()
+
+    # !hell mycard
+    ctx_card = FakeContext(bot, FakeAuthor(uid=100))
+    call(cog, "prefix_hell_group", ctx_card, subcommand="mycard")
+    assert "no recorded time" in ctx_card.text().lower()
+
+    # !hell setdiff
+    ctx_sd = FakeContext(bot, FakeAuthor(uid=config.log_dm_user_id))
+    call(cog, "prefix_hell_group", ctx_sd, subcommand="setdiff", rest="2")
+    assert "Level 2" in ctx_sd.text()
 
     # !hell unknown
     ctx_unk = FakeContext(bot, FakeAuthor(uid=100))

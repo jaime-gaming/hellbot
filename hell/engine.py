@@ -39,10 +39,12 @@ import logging
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 from .config import Config
+from .finale import FinaleManager
 from .grace import ALIVE_CHECK_RECOVERY_GRACE_SECONDS, EmptyVcGracePeriod
+from .hellevents import HellEventManager
 from .leaderboard import top_participants
 from .milestones import (
     FINAL_MILESTONE_HOURS,
@@ -125,6 +127,7 @@ class EventCompleted(DomainEvent):
     completed_ts: float
     leaderboard: list[LeaderboardEntry] = field(default_factory=list)
     top3: list[ParticipantRef] = field(default_factory=list)
+    peak_population: int = 0
 
 
 @dataclass
@@ -159,6 +162,12 @@ class Snapshot:
     grace_seconds_left: float = 0.0
     grace_total: float = 0.0
     paused: bool = False
+    difficulty: int = 0
+    blindness_active: bool = False
+    is_final_hour: bool = False
+    countdown_seconds: Optional[int] = None
+    active_hell_event: Optional[Any] = None
+    peak_participants: int = 0
 
 
 class StartError(RuntimeError):
@@ -187,6 +196,12 @@ class HellEngine:
         )
         self.grace.restore(self.state.grace_started_ts, seconds=self.state.grace_duration)
         self._alive_check_emptied_ts: Optional[float] = None
+        self._difficulty_override: Optional[int] = None
+        self.hell_events = HellEventManager(config, store, engine=self)
+        self.finale = FinaleManager(config, store, engine=self)
+        if self.state.event_uid:
+            self.hell_events.bind(self.state.event_uid)
+            self.finale.bind(self.state.event_uid)
 
     # ------------------------------------------------------------- accessors
 
@@ -211,6 +226,21 @@ class HellEngine:
     @property
     def last_participants(self) -> tuple[ParticipantRef, ...]:
         return self._last_participants
+
+    @property
+    def difficulty_override(self) -> Optional[int]:
+        return self._difficulty_override
+
+    def set_difficulty_override(self, level: Optional[int]) -> Any:
+        if level is not None:
+            level = max(0, min(4, int(level)))
+        self._difficulty_override = level
+        from .difficulty import get_difficulty
+        return get_difficulty(self.elapsed(), override=self._difficulty_override)
+
+    def current_difficulty(self, now: Optional[float] = None) -> Any:
+        from .difficulty import get_difficulty
+        return get_difficulty(self.elapsed(now), override=self._difficulty_override)
 
     @property
     def timeline(self) -> Optional[EventTimeline]:
@@ -249,13 +279,18 @@ class HellEngine:
         now = now_ts() if now is None else now
         elapsed = self.elapsed(now)
         upcoming = next_milestone(elapsed)
+        from .difficulty import get_difficulty
+        diff = get_difficulty(elapsed, override=self._difficulty_override)
+        part_count = len(self._last_participants) if participants is None else participants
+        peak = self.store.get_peak_population(self.state.event_uid) if self.state.event_uid else 0
+        peak = max(peak, part_count)
         return Snapshot(
             status=self.state.status,
             elapsed=elapsed,
             total=TOTAL_SECONDS,
             remaining=max(0.0, TOTAL_SECONDS - elapsed),
             fraction=(elapsed / TOTAL_SECONDS) if TOTAL_SECONDS else 0.0,
-            participants=len(self._last_participants) if participants is None else participants,
+            participants=part_count,
             current=current_milestone(elapsed),
             upcoming=upcoming,
             time_to_next=(upcoming.seconds - elapsed) if upcoming else None,
@@ -267,7 +302,38 @@ class HellEngine:
             grace_seconds_left=self.grace.seconds_left(self._effective_now(now)),
             grace_total=self.grace.seconds,
             paused=self.is_paused,
+            difficulty=diff.level,
+            blindness_active=self.hell_events.is_blindness_active(now),
+            is_final_hour=self.finale.is_final_hour(elapsed),
+            countdown_seconds=self.finale.countdown_seconds_left(elapsed),
+            active_hell_event=self.hell_events.active_event,
+            peak_participants=peak,
         )
+
+    def add_user_bonus_seconds(
+        self, user_id: int, display_name: str, seconds: float, now: Optional[float] = None
+    ) -> float:
+        """Add (or deduct, if negative) bonus seconds to a participant's leaderboard time.
+
+        Clamps so total seconds never drop below 0. Returns the updated total seconds.
+        """
+        if not self.state.event_uid:
+            return 0.0
+        ts = now if now is not None else now_ts()
+        board = self.leaderboard()
+        current_entry = next((e for e in board if e.user_id == user_id), None)
+        current_seconds = current_entry.seconds if current_entry else 0.0
+        actual_delta = seconds
+        if seconds < 0 and (current_seconds + seconds < 0):
+            actual_delta = -current_seconds
+
+        self.store.add_user_time(
+            self.state.event_uid,
+            [(user_id, display_name, actual_delta, ts)],
+        )
+        new_total = max(0.0, current_seconds + actual_delta)
+        log.info("Adjusted time for user %s (%d) by %.1fs (new total %.1fs)", display_name, user_id, actual_delta, new_total)
+        return new_total
 
     # --------------------------------------------------------------- control
 
@@ -309,6 +375,10 @@ class HellEngine:
         self._presence_signature = frozenset(p.user_id for p in participants)
         self.store.replace_presence(uid, participants, now)
         self.store.touch_users(uid, participants, now)
+        if participants:
+            self.store.record_population(uid, len(participants))
+        self.hell_events.bind(uid, now=now)
+        self.finale.bind(uid)
         log.info("Event %s started at %.3f by %s", uid, now, started_by)
         return self.state
 
@@ -356,6 +426,7 @@ class HellEngine:
         if self.state.grace_started_ts is not None:
             self.state.grace_started_ts += duration
             self.grace.restore(self.state.grace_started_ts)
+        self.hell_events.shift_schedule(duration)
         self.store.save_state(self.state)
         log.warning(
             "Event %s resumed after %.1fs paused (total paused %.1fs)",
@@ -380,7 +451,9 @@ class HellEngine:
             raise StartError("Cannot resume — the event has not failed.")
         now = now_ts() if now is None else now
         if self.state.end_ts is not None:
-            self.state.paused_seconds = max(self.state.paused_seconds, now - self.state.end_ts)
+            fail_duration = max(0.0, now - self.state.end_ts)
+            self.state.paused_seconds = max(self.state.paused_seconds, fail_duration)
+            self.hell_events.shift_schedule(fail_duration)
         self.state.status = EventStatus.RUNNING
         self.state.end_ts = None
         self.state.end_reason = None
@@ -419,6 +492,9 @@ class HellEngine:
         self.state = self.store.load_state()
         self._last_participants = ()
         self._presence_signature = frozenset()
+        self._difficulty_override = None
+        self.hell_events.reset()
+        self.finale.reset()
         self.grace.restore(None)
         log.warning("Event data reset")
 
@@ -460,6 +536,7 @@ class HellEngine:
         #    Nothing here can affect the global 0 -> 160h timeline.
         previous = self.state.last_tick_ts if self.state.last_tick_ts is not None else timeline.start_ts
         bridge_users, bridge_seconds = self._bridge(previous, effective_now, obs)
+        time_mult = self.hell_events.get_time_multiplier(effective_now)
         self.tracker.credit(
             uid,
             previous_ts=previous,
@@ -468,6 +545,7 @@ class HellEngine:
             stamp=obs.now,
             bridge_users=bridge_users,
             bridge_seconds=bridge_seconds,
+            multiplier=time_mult,
         )
 
         self.state.last_tick_ts = effective_now
@@ -480,12 +558,9 @@ class HellEngine:
             self._presence_signature = signature
             self.store.replace_presence(uid, obs.participants, obs.now)
 
-        # 2) Track last-valid-observed timestamp for crash recovery.
-        #    This is the core reconstruction field: after a restart, the
-        #    system can tell *when* the VC was last occupied, which is
-        #    different from last_tick_ts (which is updated even on empty
-        #    observations).
+        # 2) Track last-valid-observed timestamp for crash recovery & peak population.
         if obs.count > 0:
+            self.store.record_population(uid, obs.count)
             if self.state.last_valid_observed_ts != effective_now:
                 self.state.last_valid_observed_ts = effective_now
                 self.store.set_last_valid_observed_ts(effective_now)
@@ -510,12 +585,14 @@ class HellEngine:
         if finished:
             self._terminate(EventStatus.COMPLETED, effective_now, "160 consecutive hours survived.")
             board = self.leaderboard()
-            log.info("Event %s COMPLETED", uid)
+            peak_pop = self.store.get_peak_population(uid)
+            log.info("Event %s COMPLETED (peak population: %d)", uid, peak_pop)
             events.append(
                 EventCompleted(
                     completed_ts=effective_now,
                     leaderboard=board,
                     top3=top_participants(board, 3),
+                    peak_population=peak_pop,
                 )
             )
         return events

@@ -81,6 +81,10 @@ class StatusFile:
         active_tasks: int = 0,
         voice_channel_id: Optional[int] = None,
         guild_id: Optional[int] = None,
+        difficulty_level: int = 0,
+        difficulty_name: str = "Starter",
+        dead_checks_enabled: bool = False,
+        gamble_enabled: bool = False,
         version: str = "1.0.0",
     ) -> dict[str, Any]:
         """Build the status.json payload from the current state."""
@@ -114,6 +118,10 @@ class StatusFile:
             "paused": paused,
             "pause_reason": pause_reason,
             "end_reason": end_reason,
+            "difficulty_level": difficulty_level,
+            "difficulty_name": difficulty_name,
+            "dead_checks_enabled": dead_checks_enabled,
+            "gamble_enabled": gamble_enabled,
             "event_elapsed_hours": round(event_elapsed_hours, 2),
             "elapsed_seconds": round(elapsed_seconds, 1),
             "total_seconds": round(total_seconds, 1),
@@ -276,6 +284,9 @@ class StatusFile:
             vc_id = engine.state.voice_channel_id or (monitor.config.voice_channel_id if monitor else None)
             guild_id = engine.state.guild_id or (monitor.config.guild_id if monitor else None)
 
+            from .difficulty import get_difficulty
+            diff = get_difficulty(snap.elapsed, override=getattr(engine, "difficulty_override", None))
+
             payload = self.snapshot(
                 bot_connected=True,
                 event_status=engine.status.value if engine.status else "IDLE",
@@ -290,6 +301,10 @@ class StatusFile:
                 paused=snap.paused,
                 pause_reason=engine.state.pause_reason,
                 end_reason=engine.state.end_reason,
+                difficulty_level=diff.level,
+                difficulty_name=diff.name,
+                dead_checks_enabled=diff.dead_checks_enabled,
+                gamble_enabled=diff.gamble_enabled,
                 participants=vc_count,
                 grace_open=snap.grace_open,
                 grace_seconds_left=snap.grace_seconds_left,

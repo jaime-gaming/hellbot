@@ -6,7 +6,12 @@ import pytest
 
 from hell.leaderboard import build_leaderboard, render_leaderboard, top_n
 from hell.milestones import MILESTONES, TOTAL_SECONDS, current_milestone, milestone_hours, next_milestone
-from hell.timeutil import format_hm, format_hms, progress_bar
+from hell.timeutil import (
+    format_hm,
+    format_hms,
+    milestone_progress_bar,
+    progress_bar,
+)
 
 HOUR = 3600
 
@@ -38,6 +43,41 @@ def test_progress_bar():
     assert progress_bar(0.5) == "█" * 10 + "░" * 10
     assert progress_bar(0.999).count("░") == 1  # never looks finished early
     assert progress_bar(0.0001).count("█") == 1  # but shows any progress
+
+
+HOURS = [32, 64, 96, 128, 160]
+MILESTONE_SECS = [h * 3600 for h in HOURS]
+
+
+def test_milestone_progress_bar_starts_empty():
+    bar = milestone_progress_bar(0, MILESTONE_SECS)
+    assert bar == "▱" * 4 + "┃" + "▱" * 4 + "┃" + "▱" * 4 + "┃" + "▱" * 4 + "┃" + "▱" * 4
+
+
+def test_milestone_progress_bar_partial_fills_toward_current_milestone():
+    # Halfway to the first milestone (16h): first segment should progress but
+    # not yet be full; every later segment stays empty.
+    bar = milestone_progress_bar(16 * 3600, MILESTONE_SECS)
+    segs = bar.split("┃")
+    assert segs[0].count("▰") == 2
+    assert segs[0] != "▰" * 4
+    assert all(s == "▱" * 4 for s in segs[1:])
+
+
+def test_milestone_progress_bar_keeps_previous_full_and_never_rounds_current_early():
+    # 40h: the 32h milestone is reached (full), the 64h segment is filling up
+    # but must never display a full block before 64h.
+    bar = milestone_progress_bar(40 * 3600, MILESTONE_SECS)
+    segs = bar.split("┃")
+    assert segs[0] == "▰" * 4
+    assert 0 <= segs[1].count("▰") < 4
+    assert all(s == "▱" * 4 for s in segs[2:])
+
+
+def test_milestone_progress_bar_completes_all_segments():
+    bar = milestone_progress_bar(160 * 3600, MILESTONE_SECS)
+    assert bar.count("▰") == 20
+    assert bar.count("▱") == 0
 
 
 # ------------------------------------------------------------ leaderboard

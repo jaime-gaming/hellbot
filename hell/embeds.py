@@ -36,7 +36,13 @@ from .leaderboard import format_entry, format_entry_live, top_n
 from .milestones import MILESTONES
 from .models import EventStatus, LeaderboardEntry, MilestoneRecord, ParticipantRef
 from .texts import TEXT, say
-from .timeutil import discord_ts, format_hm, format_hms, milestone_bar
+from .timeutil import (
+    discord_ts,
+    format_hm,
+    format_hms,
+    milestone_bar,
+    milestone_progress_bar,
+)
 
 log = logging.getLogger("hell.embeds")
 
@@ -62,15 +68,34 @@ def status_emoji(status: EventStatus) -> str:
 def status_color(status: EventStatus) -> int:
     return theme_color(status.value, theme_color("RUNNING"))
 
-def bar(fraction: float) -> str:
-    """The milestone-segmented progress bar, styled from Announcements.py."""
+def bar(fraction: float, *, elapsed: Optional[float] = None) -> str:
+    """The milestone-segmented progress bar, styled from Announcements.py.
+
+    When ``elapsed`` is supplied (the running live message), each divided line
+    fills progressively as *its* milestone approaches: completed milestones stay
+    full, the current one fills on the way there, and locked ones stay empty.
+    Without ``elapsed`` it falls back to a plain overall-progress bar.
+    """
+    cells_per_block = int(getattr(TEXT, "BAR_CELLS_PER_MILESTONE", 4))
+    full = str(getattr(TEXT, "BAR_FULL", "▰"))
+    empty = str(getattr(TEXT, "BAR_EMPTY", "▱"))
+    separator = str(getattr(TEXT, "BAR_SEPARATOR", "┃"))
+    if elapsed is not None and MILESTONES:
+        return milestone_progress_bar(
+            elapsed,
+            [m.seconds for m in MILESTONES],
+            cells_per_block=cells_per_block,
+            full=full,
+            empty=empty,
+            separator=separator,
+        )
     return milestone_bar(
         fraction,
         blocks=max(1, len(MILESTONES)),
-        cells_per_block=int(getattr(TEXT, "BAR_CELLS_PER_MILESTONE", 4)),
-        full=str(getattr(TEXT, "BAR_FULL", "▰")),
-        empty=str(getattr(TEXT, "BAR_EMPTY", "▱")),
-        separator=str(getattr(TEXT, "BAR_SEPARATOR", "┃")),
+        cells_per_block=cells_per_block,
+        full=full,
+        empty=empty,
+        separator=separator,
     )
 
 def dots(reached: int, total: Optional[int] = None) -> str:
@@ -217,7 +242,7 @@ class EmbedFactory:
         title = say(TEXT.PROGRESS_TITLE, emoji=status_emoji(snap.status))
         desc = say(
             TEXT.PROGRESS_DESCRIPTION,
-            bar=bar(snap.fraction),
+            bar=bar(snap.fraction, elapsed=snap.elapsed),
             elapsed=format_hm(snap.elapsed),
             total=format_hm(snap.total),
             percent=f"{snap.fraction * 100:.1f}%",
@@ -241,7 +266,7 @@ class EmbedFactory:
             elif snap.countdown_seconds is not None:
                 title = str(getattr(TEXT, "PROGRESS_TITLE_COUNTDOWN", "👹 FINAL COUNTDOWN"))
                 desc = (
-                    f"`{bar(snap.fraction)}`\n"
+                    f"`{bar(snap.fraction, elapsed=snap.elapsed)}`\n"
                     f"**{format_hm(snap.elapsed)}** of {format_hm(snap.total)}  ·  **{snap.fraction * 100:.1f}%**\n\n"
                     f"👹 **FINAL COUNTDOWN: `{snap.countdown_seconds}` SECONDS REMAINING**\n"
                     f"**DO NOT LET HELL GO EMPTY.**"
@@ -249,7 +274,7 @@ class EmbedFactory:
             elif snap.is_final_hour:
                 title = str(getattr(TEXT, "PROGRESS_TITLE_FINAL_HOUR", "👹 THE FINAL HOUR"))
                 desc = (
-                    f"`{bar(snap.fraction)}`\n"
+                    f"`{bar(snap.fraction, elapsed=snap.elapsed)}`\n"
                     f"**{format_hm(snap.elapsed)}** of {format_hm(snap.total)}  ·  **{snap.fraction * 100:.1f}%**  ·  {dots(reached_count(snap.elapsed))}\n\n"
                     f"👹 **1 HOUR REMAINING — DO NOT LET HELL GO EMPTY.**"
                 )

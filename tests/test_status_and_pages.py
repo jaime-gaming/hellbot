@@ -188,10 +188,12 @@ def test_write_status_completed(tmp_path, engine, monitor):
 
 def test_voice_monitor_sync_status_triggers_pages_sync(tmp_path, engine, monitor):
     monitor.config.github_pages_sync = True
-    async def fake_push():
-        return True
 
-    with patch("hell.monitor.spawn") as mock_spawn, patch("hell.monitor.push_docs", side_effect=fake_push):
+    def mock_spawn_fn(coro, **kwargs):
+        coro.close()
+        return MagicMock()
+
+    with patch("hell.monitor.get_status_writer"), patch("hell.monitor.spawn", side_effect=mock_spawn_fn) as mock_spawn:
         monitor.sync_status()
         assert mock_spawn.called
 
@@ -206,8 +208,8 @@ def test_push_docs_handles_git_commands(tmp_path):
     with patch("shutil.which", return_value="/usr/bin/git"):
         with patch("asyncio.create_subprocess_exec") as mock_exec:
             # Mock git status --porcelain returning nothing
-            mock_proc = AsyncMock()
-            mock_proc.communicate.return_value = (b"", b"")
+            mock_proc = MagicMock()
+            mock_proc.communicate = AsyncMock(return_value=(b"", b""))
             mock_proc.returncode = 0
             mock_exec.return_value = mock_proc
 

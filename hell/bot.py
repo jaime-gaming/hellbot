@@ -33,10 +33,11 @@ from .logging_setup import setup_logging
 from .logsink import DiscordLogStream
 from .monitor import VoiceMonitor
 from .storage import Store
+from .tasks import spawn as _spawn
+from .texts import TEXT
 from .texts import source as texts_source
 from .timeutil import format_hm, format_hms, now_ts
 from .web import broadcast, start_server, stop_server
-from .tasks import spawn as _spawn
 
 log = logging.getLogger("hell")
 
@@ -61,7 +62,7 @@ class HellBot(commands.Bot):
         # a roll call.  It is a privileged intent: enable "Message Content
         # Intent" in the Developer Portal or login fails (PrivilegedIntents).
         intents.message_content = True
-        super().__init__(command_prefix=commands.when_mentioned, intents=intents, help_command=None)
+        super().__init__(command_prefix=commands.when_mentioned_or("!"), intents=intents, help_command=None)
 
         self.config = config
         self.store = Store(config.database_path)
@@ -75,7 +76,7 @@ class HellBot(commands.Bot):
         self.health: Optional[HealthReport] = None
         self._resumed = False
         self._status_task: Optional[asyncio.Task] = None
-        self._web_runner = None
+        self._web_runner: Optional[aiohttp.web.AppRunner] = None
         self._web_push_task: Optional[asyncio.Task] = None
 
     async def setup_hook(self) -> None:
@@ -117,6 +118,7 @@ class HellBot(commands.Bot):
         except Exception:  # pragma: no cover - streaming must never block boot
             log.exception("Could not start the live log stream")
         self.monitor.start()
+        self.monitor.sync_status()
         if not self._resumed:
             self._resumed = True
             try:
@@ -261,6 +263,32 @@ class HellBot(commands.Bot):
         current_ms = snap.current
         upcoming_ms = snap.upcoming
 
+        from .milestones import MILESTONES
+        milestone_records_map = {r.hours: r for r in self.engine.milestone_records()}
+        milestones_list: list[dict] = []
+        for m in MILESTONES:
+            rec = milestone_records_map.get(m.hours)
+            reached = rec is not None or (snap.elapsed >= m.seconds)
+            time_to = max(0.0, m.seconds - snap.elapsed) if not reached else 0.0
+            milestones_list.append({
+                "hours": m.hours,
+                "title": m.title,
+                "reward": m.reward,
+                "short_reward": m.short_reward or m.reward,
+                "blurb": m.blurb,
+                "reached": reached,
+                "reached_ts": rec.reached_ts if rec else None,
+                "members_count": len(rec.members) if rec else 0,
+                "time_to": round(time_to, 1) if (self.engine.status.is_active and not reached) else None,
+            })
+
+        estimated_end_ts: Optional[float] = None
+        if snap.start_ts is not None:
+            if self.engine.status.is_active:
+                estimated_end_ts = snap.start_ts + snap.total + self.engine.state.paused_seconds
+            elif snap.end_ts is not None:
+                estimated_end_ts = snap.end_ts
+
         # Health / errors / warnings.
         health_errors: list[str] = []
         health_warnings: list[str] = []
@@ -289,7 +317,12 @@ class HellBot(commands.Bot):
             "remaining": round(snap.remaining, 1),
             "fraction": round(snap.fraction, 4),
             "participants": snap.participants,
+            "start_ts": snap.start_ts,
+            "end_ts": snap.end_ts,
+            "estimated_end_ts": estimated_end_ts,
             "paused": snap.paused,
+            "pause_reason": self.engine.state.pause_reason,
+            "end_reason": self.engine.state.end_reason,
             "grace_open": snap.grace_open,
             "grace_seconds_left": round(snap.grace_seconds_left, 1),
             "grace_total": round(snap.grace_total, 1),
@@ -305,6 +338,7 @@ class HellBot(commands.Bot):
                 "short_reward": upcoming_ms.short_reward or upcoming_ms.reward,
                 "time_to": round(snap.time_to_next, 1) if snap.time_to_next is not None else None,
             } if upcoming_ms else None,
+            "milestones": milestones_list,
             # --- leaderboard ---
             "leaderboard": lb,
             "leaderboard_total": len(board),
@@ -319,6 +353,8 @@ class HellBot(commands.Bot):
             "monitor_stale_seconds": sec.get("stale_seconds"),
             "blind_seconds": round(self.monitor.blind_seconds, 1),
             "active_tasks": _active_tasks_count(),
+            "voice_channel_id": self.engine.state.voice_channel_id or self.config.voice_channel_id,
+            "guild_id": self.engine.state.guild_id or self.config.guild_id,
             "operator_dm_ok": stream.enabled if stream else True,
             "version": __version__,
         }
@@ -343,14 +379,35 @@ class HellBot(commands.Bot):
             await self.monitor.kick_clankers([member])
 
     async def on_message(self, message: discord.Message) -> None:
-        """Alive-check answers arrive as ordinary chat messages."""
-        if message.guild is None or message.author.bot:
+        """Handle alive-check answers in guild channels and ! prefix commands strictly in DMs."""
+        if message.author.bot:
             return
-        try:
-            await self.monitor.handle_message(message)
-        except Exception:  # pragma: no cover - never break on a chat message
-            log.exception("Failed to handle a message for the alive check")
+        if message.guild is not None:
+            try:
+                await self.monitor.handle_message(message)
+            except Exception:  # pragma: no cover - never break on a chat message
+                log.exception("Failed to handle a message for the alive check")
+            return
+        # Direct Messages (DMs) only: process ! prefix commands
         await self.process_commands(message)
+
+    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
+        if ctx.guild is not None:
+            return
+        if isinstance(error, commands.CommandNotFound):
+            await ctx.send("Unknown command. Type `!help` or `!status` for a list of available commands.")
+            return
+        if isinstance(error, commands.MissingRequiredArgument):
+            await ctx.send(f"Missing required argument `{error.param.name}`. Type `!help` for usage.")
+            return
+        if isinstance(error, (commands.CheckFailure, commands.NotOwner)):
+            await ctx.send(TEXT.CMD_NOT_A_HOST)
+            return
+        log.exception("Command error in %s: %s", getattr(ctx.command, "name", "?"), error)
+        try:
+            await ctx.send(TEXT.CMD_ERROR)
+        except Exception:
+            pass
 
     async def on_error(self, event_method: str, *args, **kwargs) -> None:  # pragma: no cover
         log.exception("Unhandled exception in %s", event_method)

@@ -131,6 +131,37 @@ class DiscordAliveCheckIO:
                 log.warning("Could not disconnect %s: %s", uid, exc)
         return removed
 
+    # --------------------------------------------------------------- muting
+
+    async def mute(self, user_id: int, duration_seconds: int, reason: str) -> bool:
+        """Mute / timeout a user on the server for the specified duration."""
+        import datetime
+
+        guild = self.bot.get_guild(self.config.guild_id)
+        if guild is None:
+            log.error("Cannot mute %d: guild %s not found", user_id, self.config.guild_id)
+            return False
+        member = guild.get_member(user_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(user_id)
+            except (discord.HTTPException, discord.Forbidden):
+                member = None
+        if member is None:
+            log.warning("Cannot mute %d: member not in guild", user_id)
+            return False
+        try:
+            until = discord.utils.utcnow() + datetime.timedelta(seconds=duration_seconds)
+            await member.timeout(until, reason=reason)
+            log.info("Muted/timed out %s (%d) for %ds: %s", member.display_name, user_id, duration_seconds, reason)
+            return True
+        except discord.Forbidden:
+            log.warning("Missing 'Moderate Members' permission — could not mute %s", user_id)
+            return False
+        except discord.HTTPException as exc:
+            log.warning("Could not mute %s: %s", user_id, exc)
+            return False
+
     # ------------------------------------------------------------- recovery
 
     async def replies_since(

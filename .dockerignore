@@ -16,7 +16,6 @@ logs/
 
 # Developer-only material
 tests/
-docs/
 assets/
 build/
 dist/

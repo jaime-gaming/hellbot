@@ -1,12 +1,109 @@
 {
-  "last_updated": "2026-08-24T00:28:17Z",
+  "last_updated": "2026-08-24T01:07:54Z",
+  "ts": 1787533674.4796813,
   "bot_connected": true,
   "event_status": "RUNNING",
+  "status": "RUNNING",
+  "paused": false,
+  "pause_reason": null,
+  "end_reason": null,
   "event_elapsed_hours": 160.0,
+  "elapsed_seconds": 576000.0,
+  "total_seconds": 576000.0,
+  "remaining_seconds": 0.0,
+  "fraction": 1.0,
+  "participants": 1,
+  "start_ts": 1700000000.0,
+  "end_ts": null,
+  "estimated_end_ts": 1700576000.0,
+  "grace_open": false,
+  "grace_seconds_left": 15.0,
+  "grace_total": 15.0,
+  "current_milestone": {
+    "hours": 160,
+    "title": "\ud83c\udfc6\ud83d\udd25 160 HOURS \u2014 WELCOME TO HELL",
+    "short_reward": "@hell master"
+  },
+  "upcoming_milestone": null,
+  "milestones": [
+    {
+      "hours": 32,
+      "title": "\ud83d\udd25 32 HOURS SURVIVED",
+      "reward": "@hell (limited)",
+      "short_reward": "@hell",
+      "blurb": "Welcome to Hell has reached the first milestone.",
+      "reached": true,
+      "reached_ts": null,
+      "members_count": 0,
+      "time_to": null
+    },
+    {
+      "hours": 64,
+      "title": "\ud83d\udd25\ud83d\udd25 64 HOURS \u2014 THE FIRE SPREADS",
+      "reward": "Limited-time Verity in **Find the Verities** \u2014 https://www.roblox.com/games/138268356635577/Find-the-Verities",
+      "short_reward": "a limited Verity in Find the Verities",
+      "blurb": "Two full days and change without the VC ever going quiet. The second milestone belongs to you.",
+      "reached": true,
+      "reached_ts": null,
+      "members_count": 0,
+      "time_to": null
+    },
+    {
+      "hours": 96,
+      "title": "\ud83d\udd25\ud83d\udd25\ud83d\udd25 96 HOURS \u2014 HALFWAY IS BEHIND YOU",
+      "reward": "@hell-ist (limited)",
+      "short_reward": "@hell-ist",
+      "blurb": "Four straight days in Hell. The third milestone is complete and there is no turning back now.",
+      "reached": true,
+      "reached_ts": null,
+      "members_count": 0,
+      "time_to": null
+    },
+    {
+      "hours": 128,
+      "title": "\ud83d\udd25\ud83d\udd25\ud83d\udd25\ud83d\udd25 128 HOURS \u2014 THE FINAL STRETCH",
+      "reward": "Music permissions for everyone, provided they are not abused.",
+      "short_reward": "music permissions",
+      "blurb": "The fourth milestone has fallen. Only 32 hours stand between this VC and immortality.",
+      "reached": true,
+      "reached_ts": null,
+      "members_count": 0,
+      "time_to": null
+    },
+    {
+      "hours": 160,
+      "title": "\ud83c\udfc6\ud83d\udd25 160 HOURS \u2014 WELCOME TO HELL",
+      "reward": "@hell master (limited)",
+      "short_reward": "@hell master",
+      "blurb": "The full 160 consecutive hours have been survived. The final milestone is complete.",
+      "reached": true,
+      "reached_ts": null,
+      "members_count": 0,
+      "time_to": null
+    }
+  ],
+  "leaderboard": [
+    {
+      "rank": 1,
+      "name": "User1",
+      "seconds": 0.0,
+      "time": "0h 00m 00s"
+    }
+  ],
+  "leaderboard_total": 1,
+  "alive_check_pending": false,
+  "alive_check": null,
   "errors_last_24h": [],
   "warnings_last_24h": [],
-  "alive_check_pending": false,
-  "monitor_stale_seconds": null,
+  "health_errors": [],
+  "health_warnings": [],
+  "health_info": [],
   "rate_limits_5min": 0,
-  "operator_dm_ok": true
+  "monitor_stale_seconds": null,
+  "blind_seconds": 0.0,
+  "active_tasks": 0,
+  "voice_channel_id": 1539756705997652079,
+  "guild_id": 1,
+  "operator_dm_ok": true,
+  "version": "1.4.0"
 }

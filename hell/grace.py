@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 DEFAULT_GRACE_SECONDS = 15.0
+ALIVE_CHECK_RECOVERY_GRACE_SECONDS = 120.0  # 2 minutes
 
 
 @dataclass
@@ -40,6 +41,7 @@ class EmptyVcGracePeriod:
     """Tracks the "VC is empty, tick tock" window for one event."""
 
     seconds: float = DEFAULT_GRACE_SECONDS
+    default_seconds: float = DEFAULT_GRACE_SECONDS
     empty_since: Optional[float] = None
 
     # --------------------------------------------------------------- state
@@ -68,8 +70,10 @@ class EmptyVcGracePeriod:
 
     # -------------------------------------------------------------- events
 
-    def open(self, now: float) -> float:
+    def open(self, now: float, *, seconds: Optional[float] = None) -> float:
         """Start the window (called the first tick the VC is empty)."""
+        if seconds is not None:
+            self.seconds = seconds
         if self.empty_since is None:
             self.empty_since = now
         return self.empty_since
@@ -82,8 +86,13 @@ class EmptyVcGracePeriod:
     def close(self) -> Optional[float]:
         """Somebody joined in time — cancel the window, return when it opened."""
         started, self.empty_since = self.empty_since, None
+        self.seconds = self.default_seconds
         return started
 
-    def restore(self, empty_since: Optional[float]) -> None:
+    def restore(self, empty_since: Optional[float], *, seconds: Optional[float] = None) -> None:
         """Reload a window that was in progress before a restart."""
         self.empty_since = empty_since
+        if seconds is not None:
+            self.seconds = seconds
+        elif empty_since is None:
+            self.seconds = self.default_seconds

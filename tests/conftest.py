@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from hell.config import Config
@@ -11,6 +13,24 @@ from hell.storage import Store
 
 HOUR = 3600.0
 T0 = 1_700_000_000.0  # fixed absolute start timestamp for deterministic tests
+
+
+@pytest.fixture(autouse=True)
+def isolate_status_file(tmp_path_factory):
+    """Prevent tests from writing to the repo's tracked docs/status.json."""
+    temp_docs = tmp_path_factory.mktemp("docs_status")
+    from hell.status_writer import StatusFile
+
+    orig_write = StatusFile.write
+
+    def isolated_write(self, path="docs/status.json", *args, **kwargs):
+        if str(path) == "docs/status.json" or Path(path) == Path("docs/status.json"):
+            path = temp_docs / "status.json"
+        return orig_write(self, path, *args, **kwargs)
+
+    StatusFile.write = isolated_write
+    yield
+    StatusFile.write = orig_write
 
 
 def make_config(tmp_path, **overrides) -> Config:

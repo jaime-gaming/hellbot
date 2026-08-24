@@ -20,6 +20,11 @@ for extra in (".env.example", "Announcements.py"):
     if path.exists():
         datas.append((str(path), "."))
 
+for folder in ("assets", "docs"):
+    folder_path = here / folder
+    if folder_path.exists():
+        datas.append((str(folder_path), folder))
+
 a = Analysis(
     ["launcher_main.py"],
     pathex=[str(here)],
@@ -31,11 +36,15 @@ a = Analysis(
         "hell.alivecheck",
         "hell.aliveio",
         "hell.announcer",
+        "hell.assets",
         "hell.bot",
         "hell.cog",
         "hell.config",
+        "hell.difficulty",
         "hell.dm",
+        "hell.embeds",
         "hell.engine",
+        "hell.errorcodes",
         "hell.grace",
         "hell.health",
         "hell.leaderboard",
@@ -44,13 +53,19 @@ a = Analysis(
         "hell.milestones",
         "hell.models",
         "hell.monitor",
+        "hell.pages_sync",
         "hell.paths",
         "hell.reports",
+        "hell.security",
+        "hell.status_writer",
         "hell.storage",
+        "hell.tasks",
         "hell.texts",
         "hell.timeline",
         "hell.timeutil",
         "hell.tracking",
+        "hell.ui",
+        "hell.web",
         "launcher",
         "launcher.gui",
         "launcher.runtime",

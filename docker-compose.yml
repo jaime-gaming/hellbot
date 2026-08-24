@@ -6,6 +6,8 @@ services:
     env_file: .env
     environment:
       DATABASE_PATH: /data/hell.sqlite3
+    ports:
+      - "8080:8080"
     volumes:
       - hell-data:/data
     logging:

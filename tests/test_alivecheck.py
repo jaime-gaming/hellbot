@@ -9,7 +9,7 @@ import pytest
 
 from hell.alivecheck import CHECK_TEXT, AliveCheckManager, is_valid_reply
 from hell.models import EventStatus
-from tests.conftest import T0, empty_out, make_config, obs, start, users
+from tests.conftest import T0, make_config, obs, start, users
 
 HOUR = 3600.0
 MINUTE = 60.0
@@ -22,6 +22,7 @@ class FakeIO:
         self.sent: list[tuple[str, list[int]]] = []
         self.results: list[str] = []
         self.kicked: list[list[int]] = []
+        self.muted: list[tuple[int, int, str]] = []  # (user_id, duration_seconds, reason)
         self.present: set[int] = set()          # who is actually in the VC
         self.offline_replies: set[int] = set()  # answers found after a restart
         self.fail_send = fail_send
@@ -40,6 +41,10 @@ class FakeIO:
         self.kicked.append(removed)
         self.present -= set(removed)
         return removed
+
+    async def mute(self, user_id, duration_seconds, reason):
+        self.muted.append((user_id, duration_seconds, reason))
+        return True
 
     async def replies_since(self, channel_id, message_id, user_ids):
         return set(self.offline_replies) & set(user_ids)
@@ -329,7 +334,7 @@ def test_event_survives_a_kick_while_someone_remains(engine, store, config):
 
 
 def test_event_fails_if_everyone_ignores_the_check(engine, store, config):
-    """Nobody answers -> everyone is disconnected -> the VC empties -> FAILED."""
+    """Nobody answers -> everyone is disconnected -> the VC empties -> 2-min recovery grace -> FAILED."""
     io = FakeIO()
     io.present = {1, 2}
     manager = AliveCheckManager(config, store, io, rng=random.Random(5))
@@ -339,10 +344,47 @@ def test_event_fails_if_everyone_ignores_the_check(engine, store, config):
     run(manager.tick(T0 + 1, users(1, 2)))
     result = run(manager.tick(T0 + 1 + 5 * MINUTE, users(1, 2)))
     assert sorted(p.user_id for p in result.kicked) == [1, 2]
+    assert result.emptied_vc
 
-    _opened, expired = empty_out(engine, T0 + 2 + 5 * MINUTE)
+    t_empty = T0 + 2 + 5 * MINUTE
+    opened = engine.tick(obs(t_empty))
+    assert opened and opened[0].seconds == 120.0  # 2-minute recovery grace period
+
+    # After normal 15s grace, still RUNNING because of 2-minute recovery period
+    engine.tick(obs(t_empty + 15.0))
+    assert engine.status is EventStatus.RUNNING
+
+    # After 120s without anyone returning, the event FAILS
+    expired = engine.tick(obs(t_empty + 120.0))
     assert engine.status is EventStatus.FAILED
     assert expired and type(expired[0]).__name__ == "EventFailed"
+
+
+def test_alive_check_recovery_grace_recovers_if_someone_returns(engine, store, config):
+    """Nobody answers -> disconnected -> 2-min recovery grace starts -> user returns at 60s -> run continues."""
+    io = FakeIO()
+    io.present = {1, 2}
+    manager = AliveCheckManager(config, store, io, rng=random.Random(5))
+    start(engine, T0, 1, 2)
+    manager.bind(engine.event_uid, now=T0)
+    store.set_next_alive_check(engine.event_uid, T0)
+    run(manager.tick(T0 + 1, users(1, 2)))
+    result = run(manager.tick(T0 + 1 + 5 * MINUTE, users(1, 2)))
+    assert result.emptied_vc
+
+    t_empty = T0 + 2 + 5 * MINUTE
+    opened = engine.tick(obs(t_empty))
+    assert opened and opened[0].seconds == 120.0
+
+    # User 1 rejoins at 60s (within 2-min recovery period)
+    recovered = engine.tick(obs(t_empty + 60.0, 1))
+    assert engine.status is EventStatus.RUNNING
+    assert recovered and type(recovered[0]).__name__ == "GraceRecovered"
+
+    # Future regular empty-VC uses the normal 15s grace period
+    t_normal_empty = t_empty + 100.0
+    normal_opened = engine.tick(obs(t_normal_empty))
+    assert normal_opened and normal_opened[0].seconds == 15.0
 
 
 def test_disabled_checks_never_fire(tmp_path, store):

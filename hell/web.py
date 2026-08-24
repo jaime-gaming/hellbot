@@ -15,14 +15,11 @@ Design constraints:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import time
 from pathlib import Path
 from typing import Any, Optional
 
-import aiohttp
 from aiohttp import web
 
 log = logging.getLogger("hell.web")
@@ -56,13 +53,21 @@ async def _handle_ws(request: web.Request) -> web.WebSocketResponse:
     _clients.add(ws)
     log.debug("WebSocket client connected (%d total)", len(_clients))
     try:
-        async for msg in ws:
+        async for _msg in ws:
             # We don't expect client messages; ignore them.
             pass
     finally:
         _clients.discard(ws)
         log.debug("WebSocket client disconnected (%d total)", len(_clients))
     return ws
+
+
+async def _handle_status_json(request: web.Request) -> web.StreamResponse:
+    """Serve the static status.json."""
+    path = _DOCS / "status.json"
+    if path.exists():
+        return web.FileResponse(path)
+    return web.json_response({"status": "IDLE"})
 
 
 async def _handle_health(request: web.Request) -> web.Response:
@@ -77,6 +82,7 @@ def create_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/", _handle_index)
     app.router.add_get("/dev", _handle_dev)
+    app.router.add_get("/status.json", _handle_status_json)
     app.router.add_get("/ws", _handle_ws)
     app.router.add_get("/health", _handle_health)
     return app

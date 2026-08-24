@@ -14,12 +14,13 @@ import discord
 import pytest
 from discord.ext import commands
 
+from hell import RESTART_EXIT_CODE
 from hell.announcer import Announcer
 from hell.cog import HellCommands
 from hell.models import EventStatus
 from hell.monitor import VoiceMonitor
 from hell.timeutil import now_ts
-from hell.ui import NotAHost
+from hell.ui import DMsClosed, NotAHost, NotOperator
 from tests.conftest import GRACE, T0, obs, start
 from tests.test_integration import FakeTextChannel
 from tests.test_monitor import FakeMember, FakeVoiceChannel
@@ -200,6 +201,57 @@ def test_host_check_accepts_hosts_and_rejects_everyone_else(wired, config, host)
     outsider = FakeInteraction(bot, _member(FakeAuthor(uid=7, roles=[999])))
     with pytest.raises(NotAHost):
         run(predicate(outsider))
+
+
+def test_dm_operator_only_check_rules(wired, config):
+    cog, bot, _text, _voice = wired
+    predicate = cog.restart.checks[0]
+
+    # In a guild -> DMsClosed
+    guild_interaction = FakeInteraction(bot, FakeAuthor(uid=config.log_dm_user_id))
+    with pytest.raises(DMsClosed):
+        run(predicate(guild_interaction))
+
+    # In DM, non-operator -> NotOperator
+    dm_outsider = FakeInteraction(bot, FakeAuthor(uid=12345))
+    dm_outsider.guild = None
+    with pytest.raises(NotOperator):
+        run(predicate(dm_outsider))
+
+    # In DM, operator -> allowed
+    dm_op = FakeInteraction(bot, FakeAuthor(uid=config.log_dm_user_id))
+    dm_op.guild = None
+    assert run(predicate(dm_op)) is True
+
+
+def test_restart_command_exits_with_restart_code(wired, config):
+    cog, bot, _text, _voice = wired
+    dm_op = FakeInteraction(bot, FakeAuthor(uid=config.log_dm_user_id))
+    dm_op.guild = None
+
+    with pytest.raises(SystemExit) as exc_info:
+        call(cog, "restart", dm_op)
+    assert exc_info.value.code == RESTART_EXIT_CODE
+    assert "restart" in dm_op.text().lower()
+
+
+def test_cog_app_command_error_handling(wired, config):
+    cog, bot, _text, _voice = wired
+    interaction = FakeInteraction(bot, FakeAuthor())
+
+    # NotAHost error
+    run(cog.cog_app_command_error(interaction, NotAHost("not allowed")))
+    assert "not allowed" in interaction.text().lower()
+
+    # DMsClosed error
+    interaction2 = FakeInteraction(bot, FakeAuthor())
+    run(cog.cog_app_command_error(interaction2, DMsClosed()))
+    assert "dm" in interaction2.text().lower()
+
+    # NotOperator error
+    interaction3 = FakeInteraction(bot, FakeAuthor())
+    run(cog.cog_app_command_error(interaction3, NotOperator()))
+    assert "operator" in interaction3.text().lower()
 
 
 def _member(author):
@@ -891,6 +943,44 @@ def test_resume_is_refused_when_not_paused(wired, host, engine):
 
     assert "not paused" in interaction.text().lower()
     assert not engine_is_paused(cog)
+
+
+def test_resume_failed_run_requires_mfa(wired, host, engine):
+    cog, bot, _text, _voice = wired
+    start(engine, now_ts() - 60, 1)
+    # Fail the event by emptying the VC
+    engine.tick(obs(now_ts() - 30))
+    engine.tick(obs(now_ts() - 30 + GRACE))
+    assert cog.engine.status is EventStatus.FAILED
+
+    # Host requests resume -> approval code sent to operator
+    interaction = FakeInteraction(bot, host)
+    call(cog, "resume", interaction)
+    assert "approval" in interaction.text().lower()
+    assert cog.engine.status is EventStatus.FAILED
+    assert bot.operator.sent_text
+    code = _operator_code(bot)
+
+    # Wrong code rejected
+    wrong = FakeInteraction(bot, host)
+    call(cog, "approve", wrong, code="WRONG1")
+    assert cog.engine.status is EventStatus.FAILED
+    assert "not correct" in wrong.text()
+
+    # Right code approves and resumes
+    right = FakeInteraction(bot, host)
+    call(cog, "approve", right, code=code)
+    assert cog.engine.status is EventStatus.RUNNING
+    assert "resumed" in right.text().lower()
+
+
+def test_resume_is_refused_when_idle(wired, host):
+    cog, bot, _text, _voice = wired
+    interaction = FakeInteraction(bot, host)
+
+    call(cog, "resume", interaction)
+
+    assert "not running" in interaction.text().lower()
 
 
 def test_pause_cancels_a_pending_alive_check(wired, host, engine):

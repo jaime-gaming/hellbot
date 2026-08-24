@@ -102,9 +102,14 @@ def build_reports(
 
 def render_report(report: UserReport) -> str:
     """The DM body — its shape is defined by `CARD_BODY` in Announcements.py."""
+    is_running = report.status is EventStatus.RUNNING
+    body_template = getattr(TEXT, "CARD_BODY_RUNNING", None) if is_running else getattr(TEXT, "CARD_BODY", None)
+    if not body_template:
+        body_template = TEXT.CARD_BODY
+
     lines = [
         say(
-            TEXT.CARD_BODY,
+            body_template,
             survived=report.survived,
             rank=report.rank,
             participants=report.participants,
@@ -114,9 +119,17 @@ def render_report(report: UserReport) -> str:
     ]
     if report.rewards:
         lines.extend(say(TEXT.CARD_REWARD_LINE, reward=reward) for reward in report.rewards)
-        lines.append(TEXT.CARD_REWARD_TOP3_NOTE if report.bonus else TEXT.CARD_REWARD_NOTE)
+        if report.bonus:
+            lines.append(TEXT.CARD_REWARD_TOP3_NOTE)
+        elif is_running:
+            lines.append(getattr(TEXT, "CARD_REWARD_NOTE_RUNNING", TEXT.CARD_REWARD_NOTE))
+        else:
+            lines.append(TEXT.CARD_REWARD_NOTE)
     else:
-        lines.append(TEXT.CARD_NO_REWARDS)
+        if is_running:
+            lines.append(getattr(TEXT, "CARD_NO_REWARDS_RUNNING", TEXT.CARD_NO_REWARDS))
+        else:
+            lines.append(TEXT.CARD_NO_REWARDS)
 
     try:
         outcome = dict(TEXT.CARD_OUTCOME).get(report.status.value, TEXT.CARD_OUTCOME_DEFAULT)

@@ -59,6 +59,7 @@ class UserTimeTracker:
         stamp: float | None = None,
         bridge_users: AbstractSet[int] = frozenset(),
         bridge_seconds: float = 0.0,
+        multiplier: float = 1.0,
     ) -> CreditResult:
         """Advance every present user's clock by the observed interval.
 
@@ -66,6 +67,9 @@ class UserTimeTracker:
         saw *before* it went down and still sees now was demonstrably in the VC
         the whole time, so that gap is credited back to them rather than lost.
         Everyone else only ever gets the normal per-observation credit.
+
+        `multiplier` applies to individual user credit (e.g. 2x during Double Time)
+        without affecting the global event timeline.
         """
         raw_delta = max(0.0, now_ts - previous_ts)
         credited = min(raw_delta, self.max_credit)
@@ -81,11 +85,12 @@ class UserTimeTracker:
                 total,
             )
 
+        mult = max(0.0, multiplier)
         if participants:
             if credited > 0:
                 self.store.add_user_time(
                     event_uid,
-                    [(p.user_id, p.display_name, credited, stamp) for p in participants],
+                    [(p.user_id, p.display_name, credited * mult, stamp) for p in participants],
                 )
             else:
                 # Still make sure everyone present has a leaderboard row.
@@ -96,17 +101,17 @@ class UserTimeTracker:
                 if restored:
                     self.store.add_user_time(
                         event_uid,
-                        [(p.user_id, p.display_name, bridged, stamp) for p in restored],
+                        [(p.user_id, p.display_name, bridged * mult, stamp) for p in restored],
                     )
                     log.info(
                         "Restored %.0fs of downtime to %d user(s) who never left: %s",
-                        bridged,
+                        bridged * mult,
                         len(restored),
                         ", ".join(p.display_name for p in restored[:10]),
                     )
 
         return CreditResult(
-            credited=credited, unverified=unverified, users=len(participants), bridged=bridged
+            credited=credited * mult, unverified=unverified, users=len(participants), bridged=bridged * mult
         )
 
     # ------------------------------------------------------------- readers

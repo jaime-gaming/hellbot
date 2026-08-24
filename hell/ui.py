@@ -2,7 +2,7 @@
 
 Kept apart from :mod:`hell.cog` so the command bodies stay readable: this file
 holds the host check and the approval-code gate that guards destructive actions
-(`/hell stop`, `/hell reset`).
+(`/hell stop`, `/hell reset`, `/hell resume` for failed runs).
 """
 
 from __future__ import annotations
@@ -41,12 +41,13 @@ class _PendingCode:
 class CodeGate:
     """One-time approval codes for dangerous commands.
 
-    A host asks for a destructive action (``/hell stop``, ``/hell reset``); the
-    code is delivered **by DM to the operator** (the account that receives the
-    live log stream) and the action only runs after the host enters it with
-    ``/hell approve``.  A code is single-use and expires after five minutes, so
-    a screenshot of a DM is useless shortly afterwards.  Only one code is
-    pending at a time; requesting a new one invalidates the previous.
+    A host asks for a destructive action (``/hell stop``, ``/hell reset``,
+    ``/hell resume`` for a failed run); the code is delivered **by DM to the
+    operator** (the account that receives the live log stream) and the action
+    only runs after the host enters it with ``/hell approve``.  A code is
+    single-use and expires after five minutes, so a screenshot of a DM is
+    useless shortly afterwards.  Only one code is pending at a time;
+    requesting a new one invalidates the previous.
     """
 
     def __init__(self) -> None:

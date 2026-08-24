@@ -34,6 +34,8 @@ if not exist "dist\.env" if exist ".env" copy /y ".env" "dist\.env" >nul
 if not exist "dist\.env" copy /y ".env.example" "dist\.env.example" >nul
 REM Ship the message file next to the exe so wording can be edited without rebuilding.
 copy /y "Announcements.py" "dist\Announcements.py" >nul
+if exist "assets" xcopy /y /i /e "assets" "dist\assets" >nul
+if exist "docs" xcopy /y /i /e "docs" "dist\docs" >nul
 
 echo.
 echo ============================================================

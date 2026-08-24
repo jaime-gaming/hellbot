@@ -21,6 +21,24 @@ except Exception:  # pragma: no cover - dotenv is in requirements but stay safe
 DEFAULT_VOICE_CHANNEL_ID = 1539756705997652079
 DEFAULT_LOG_DM_USER_ID = 984083829767675965  # Jaime Gaming — live log recipient
 
+# Bots that must always be kicked from the VC (comma-separated in KICK_BOT_IDS).
+_DEFAULT_KICK_BOT_IDS = frozenset({412347780841865216, 513423712582762502})
+
+
+def _parse_kick_bot_ids(raw: str) -> frozenset[int]:
+    """Parse comma-separated bot IDs; defaults to the hardcoded set."""
+    if not raw.strip():
+        return _DEFAULT_KICK_BOT_IDS
+    ids: set[int] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if part:
+            try:
+                ids.add(int(part))
+            except ValueError as exc:
+                raise ConfigError(f"KICK_BOT_IDS contains non-numeric value: {part!r}") from exc
+    return frozenset(ids) if ids else _DEFAULT_KICK_BOT_IDS
+
 
 class ConfigError(RuntimeError):
     """Raised when the environment is missing something the bot cannot run without."""
@@ -83,6 +101,9 @@ class Config:
     gamenight_host_role_id: int
     clanker_role_id: int
 
+    # Bots that are always kicked from the VC (never allowed to stay).
+    kick_bot_ids: frozenset[int] = field(default_factory=lambda: _DEFAULT_KICK_BOT_IDS)
+
     # Reward roles are announcement-only (the bot never assigns them), but the
     # IDs let the announcements render real mentions instead of plain text.
     hell_role_id: int | None = None
@@ -121,6 +142,10 @@ class Config:
     log_dm_ping_cooldown_seconds: float = 300.0  # min gap between alert pings
     log_level: str = "INFO"
 
+    # --- live web dashboard ---
+    web_port: int = 8080
+    github_pages_sync: bool = False
+
     @classmethod
     def from_env(cls, env_file: str | os.PathLike[str] | None = None) -> Config:
         """Load configuration from the environment (and `.env` next to the app)."""
@@ -139,6 +164,7 @@ class Config:
             announce_channel_id=_int_env("ANNOUNCE_CHANNEL_ID", required=True),  # type: ignore[arg-type]
             gamenight_host_role_id=_int_env("GAMENIGHT_HOST_ROLE_ID", required=True),  # type: ignore[arg-type]
             clanker_role_id=_int_env("CLANKER_ROLE_ID", required=True),  # type: ignore[arg-type]
+            kick_bot_ids=_parse_kick_bot_ids(os.getenv("KICK_BOT_IDS", "")),
             hell_role_id=_int_env("HELL_ROLE_ID"),
             hellist_role_id=_int_env("HELLIST_ROLE_ID"),
             hell_master_role_id=_int_env("HELL_MASTER_ROLE_ID"),
@@ -166,6 +192,8 @@ class Config:
             log_dm_ping_level=os.getenv("LOG_DM_PING_LEVEL", "ERROR").strip().upper() or "ERROR",
             log_dm_ping_cooldown_seconds=_float_env("LOG_DM_PING_COOLDOWN_SECONDS", 300.0),
             log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO",
+            web_port=int(os.getenv("WEB_PORT", "8080") or 8080),
+            github_pages_sync=_bool_env("GITHUB_PAGES_SYNC", False),
         )
 
     def summary(self) -> list[tuple[str, str]]:
@@ -176,6 +204,7 @@ class Config:
             ("Announcements", str(self.announce_channel_id)),
             ("Host role", str(self.gamenight_host_role_id)),
             ("Clanker role", str(self.clanker_role_id)),
+            ("Kick bot IDs", ", ".join(str(i) for i in sorted(self.kick_bot_ids)) if self.kick_bot_ids else "none"),
             ("Database", str(self.database_path)),
             ("Monitor / progress", f"{self.monitor_interval:g}s / {self.progress_interval:g}s"),
             ("Empty-VC grace", f"{self.empty_vc_grace_seconds:g}s"),

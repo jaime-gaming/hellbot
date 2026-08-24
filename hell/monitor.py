@@ -42,6 +42,7 @@ from .engine import (
 from .models import EventStatus, ParticipantRef
 from .security import SuspicionTracker
 from .status_writer import get_status as get_status_writer
+from .pages_sync import push_docs
 from .tasks import spawn
 from .timeutil import format_hm, now_ts
 
@@ -140,7 +141,10 @@ class VoiceMonitor:
         humans: list[ParticipantRef] = []
         clankers: list[discord.Member] = []
         for member in channel.members:
-            if member.bot:  # bots never count, ever
+            if member.bot:
+                # Force-kick specific bots that must never stay in the VC.
+                if member.id in self.config.kick_bot_ids:
+                    clankers.append(member)
                 continue
             if self.is_clanker(member):
                 clankers.append(member)
@@ -317,6 +321,12 @@ class VoiceMonitor:
             get_status_writer().write("docs/status.json", engine=self.engine, monitor=self, stream=getattr(self.bot, "log_stream", None))
         except Exception:
             log.debug("Could not write status.json", exc_info=True)
+        # Push docs/ to GitHub so Pages stays current (only when explicitly enabled).
+        if getattr(self.config, "github_pages_sync", False):
+            try:
+                spawn(push_docs(), name="pages-sync")
+            except RuntimeError:
+                pass  # no running event loop (e.g. in tests)
 
     @tasks.loop(seconds=20.0)
     async def _progress_loop(self) -> None:

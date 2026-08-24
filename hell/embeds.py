@@ -29,7 +29,7 @@ from .engine import (
     MilestoneReached,
     Snapshot,
 )
-from .leaderboard import format_entry, top_n
+from .leaderboard import format_entry, format_entry_live, top_n
 from .milestones import MILESTONES
 from .models import EventStatus, LeaderboardEntry, MilestoneRecord, ParticipantRef
 from .texts import TEXT, say
@@ -661,6 +661,62 @@ class EmbedFactory:
         embeds = [head]
         if rest:
             body = "\n".join(format_entry(e) for e in rest)
+            for index, chunk in enumerate(split_text(body, MAX_DESCRIPTION)):
+                embeds.append(
+                    discord.Embed(
+                        title=(
+                            TEXT.LEADERBOARD_REST_TITLE
+                            if index == 0
+                            else TEXT.LEADERBOARD_REST_TITLE_CONT
+                        ),
+                        description=chunk,
+                        color=colour,
+                    )
+                )
+        hidden = total - len(shown)
+        if hidden > 0:
+            embeds[-1].add_field(
+                name="…", value=say(TEXT.LEADERBOARD_MORE, hidden=hidden), inline=False
+            )
+        return embeds[:MAX_EMBEDS_PER_MESSAGE]
+
+    def leaderboard_live(
+        self,
+        entries: Sequence[LeaderboardEntry],
+        *,
+        title: Optional[str] = None,
+        color: Optional[int] = None,
+        limit: int = 50,
+        top_n: int = 5,
+    ) -> list[discord.Embed]:
+        """Live leaderboard: Top *top_n* show time with seconds, rest show position only."""
+        title = title if title is not None else TEXT.LEADERBOARD_TITLE
+        colour = color if color is not None else theme_color("RUNNING")
+
+        if not entries:
+            return [discord.Embed(title=title, description=TEXT.LEADERBOARD_EMPTY, color=colour)]
+
+        shown = list(entries[:limit])
+        podium = [e for e in shown if e.rank <= top_n]
+        rest = [e for e in shown if e.rank > top_n]
+
+        head = discord.Embed(
+            title=title,
+            description="\n".join(format_entry_live(e, top_n=top_n) for e in podium) or TEXT.LEADERBOARD_NO_PODIUM,
+            color=colour,
+        )
+        total = len(entries)
+        head.set_footer(
+            text=say(
+                TEXT.LEADERBOARD_FOOTER,
+                total=total,
+                tracked=format_hm(sum(e.seconds for e in entries)),
+            )
+        )
+        self._brand(head, timestamp=False)
+        embeds = [head]
+        if rest:
+            body = "\n".join(format_entry_live(e, top_n=top_n) for e in rest)
             for index, chunk in enumerate(split_text(body, MAX_DESCRIPTION)):
                 embeds.append(
                     discord.Embed(

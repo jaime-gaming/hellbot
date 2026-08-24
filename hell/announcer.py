@@ -183,6 +183,17 @@ class Announcer:
     ) -> list[discord.Embed]:
         return self.embeds.leaderboard(entries, title=title, color=color, limit=limit)
 
+    def build_leaderboard_live_embeds(
+        self,
+        entries: Sequence[LeaderboardEntry],
+        *,
+        title: Optional[str] = None,
+        color: Optional[int] = None,
+        limit: int = 50,
+        top_n: int = 5,
+    ) -> list[discord.Embed]:
+        return self.embeds.leaderboard_live(entries, title=title, color=color, limit=limit, top_n=top_n)
+
     def build_status(self, snap: Snapshot, *, alive_line: Optional[str] = None) -> discord.Embed:
         return self.embeds.status(
             snap, milestone_records=self.engine.milestone_records(), alive_line=alive_line

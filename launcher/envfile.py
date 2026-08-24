@@ -79,6 +79,12 @@ FIELDS: tuple[Field, ...] = (
     Field("DOWNTIME_CREDIT_SECONDS", "Credit back short outages (s)", "Advanced", default="300",
           help="After a restart, people who were in the VC before and after keep that time."),
     Field("HEARTBEAT_MINUTES", "Heartbeat log interval (min)", "Advanced", default="15"),
+    Field("KICK_BOT_IDS", "Force-kick bot IDs", "Advanced",
+          help="Comma-separated bot user IDs that must never stay in the VC."),
+    Field("WEB_PORT", "Web dashboard port", "Advanced", default="8080",
+          help="Port for the live web dashboard (0 to disable)."),
+    Field("GITHUB_PAGES_SYNC", "Push status to GitHub Pages", "Advanced", default="false",
+          help="Auto-commit and push docs/ after each heartbeat so GitHub Pages stays current."),
     Field("LOG_LEVEL", "Log level", "Advanced", default="INFO"),
 )
 

@@ -15,7 +15,7 @@ from discord.ext import commands
 
 from . import RESTART_EXIT_CODE, __version__
 from .config import Config
-from .embeds import add_chunked_field
+from .embeds import MAX_DESCRIPTION, add_chunked_field
 from .engine import HellEngine, StartError
 from .errorcodes import lookup as _ec_lookup
 from .health import preflight
@@ -34,6 +34,19 @@ from .ui import CODE_LIFETIME_SECONDS, CodeGate, DMsClosed, NotAHost, NotOperato
 __all__ = ["CodeGate", "HellCommands", "NotAHost", "is_host"]
 
 log = logging.getLogger("hell.commands")
+
+_BROADCAST_LEVELS: dict[str, tuple[str, str, int]] = {
+    "info": ("ℹ️", "INFO", None),
+    "success": ("✅", "SUCCESS", None),
+    "warning": ("⚠️", "WARNING", None),
+    "error": ("🚨", "ERROR", None),
+    "debug": ("🐞", "DEBUG", None),
+    "milestone": ("🔥", "MILESTONE", None),
+    "idle": ("💤", "IDLE", None),
+    "grace": ("⏳", "GRACE", None),
+    "completed": ("🏆", "COMPLETED", None),
+}
+_BROADCAST_TARGETS = ("announcements", "vc")
 
 
 class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell event controls"):
@@ -105,6 +118,23 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
     def _build_difficulty_embed(self) -> discord.Embed:
         elapsed = self.engine.elapsed() if self.engine.is_running else 0.0
         return self.announcer.embeds.difficulty_info(elapsed, override=self.engine.difficulty_override)
+
+    def _build_broadcast_embed(self, message: str, level: str) -> discord.Embed:
+        """One colored embed: the host's text, colored by severity, no plain text."""
+        meta = _BROADCAST_LEVELS.get(level, _BROADCAST_LEVELS["info"])
+        emoji, label, _ = meta
+        template = getattr(TEXT, f"BROADCAST_TITLE_{label}", None) or f"{emoji} {label}"
+        title = say(template, level=label, emoji=emoji).strip()
+        color_value = getattr(TEXT, f"COLOR_{label}", None)
+        if color_value is None:
+            color_value = getattr(TEXT, f"COLOR_{level.upper()}", 0xE25822)
+        embedding = discord.Embed(
+            title=title if title else None,
+            description=message[:MAX_DESCRIPTION],
+            color=int(color_value),
+        )
+        self.announcer.embeds._brand(embedding)
+        return embedding
 
     async def _handle_set_difficulty(self, level_input: str) -> tuple[bool, str]:
         clean = level_input.strip().lower()
@@ -475,7 +505,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
                 [
                     f"• Status: **{state.status.value}**",
                     f"• Paused: {paused}",
-                    f"• Elapsed: **{format_hm(self.engine.elapsed())}** / {format_hm(TOTAL_SECONDS)}",
+                    f"• Elapsed: **{format_hm(self.engine.elapsed())}** / {format_hm(self.engine.state.total_seconds)}",
                     f"• In the VC: **{vc_count}**",
                     f"• Milestones reached: **{len(self.engine.milestone_records())}**",
                     f"• Leaderboard rows: **{len(self.engine.leaderboard())}**",
@@ -785,16 +815,21 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
 
     # ------------------------------------------------------------ difficulty
 
-    @app_commands.command(name="difficulty", description="Show difficulty tiers and the current challenge level.")
-    @app_commands.guild_only()
-    async def difficulty(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(thinking=True)
-        embed = self._build_difficulty_embed()
-        await interaction.followup.send(embed=embed)
-
-    @app_commands.command(name="setdifficulty", description="Set or override the difficulty level (0-4 or auto). Requires @gamenight host.")
-    @app_commands.describe(level="Difficulty level: 0, 1, 2, 3, 4, or auto.")
+    @app_commands.command(
+        name="difficulty",
+        description="View difficulty tiers, set the current level, or post the tier to announcements.",
+    )
+    @app_commands.describe(
+        action="What to do: view (everyone), set (host only) or announce (host only).",
+        level="Difficulty level when action='set'.",
+        overview="Post the full 5-tier overview instead of only the current tier (announce only).",
+    )
     @app_commands.choices(
+        action=[
+            app_commands.Choice(name="👁️ View", value="view"),
+            app_commands.Choice(name="⚙️ Set (host)", value="set"),
+            app_commands.Choice(name="📢 Announce (host)", value="announce"),
+        ],
         level=[
             app_commands.Choice(name="auto (Default based on elapsed time)", value="auto"),
             app_commands.Choice(name="Level 0: Starter (1-6h alive checks)", value="0"),
@@ -802,23 +837,113 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             app_commands.Choice(name="Level 2: Inferno (1-4h checks + dead checks 1m mute)", value="2"),
             app_commands.Choice(name="Level 3: Torment (1-3h checks + dead checks + gambling)", value="3"),
             app_commands.Choice(name="Level 4: Cataclysm (1-2h checks + high-stakes gambling)", value="4"),
-        ]
+        ],
+    )
+    @app_commands.guild_only()
+    async def difficulty(
+        self,
+        interaction: discord.Interaction,
+        action: app_commands.Choice[str] = None,
+        level: app_commands.Choice[str] = None,
+        overview: bool = False,
+    ) -> None:
+        act = (action.value if action is not None else "view").lower()
+        if act == "view":
+            embed = self._build_difficulty_embed()
+            await interaction.response.send_message(embed=embed)
+            return
+        # Host-only actions defer and reply ephemerally.
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        if act == "set":
+            if not self._is_interaction_host(interaction):
+                await interaction.followup.send(
+                    say(TEXT.CMD_NOT_ALLOWED, host_role=f"<@&{self.config.gamenight_host_role_id}>"),
+                    ephemeral=True,
+                )
+                return
+            if level is None:
+                await interaction.followup.send(TEXT.CMD_SETDIFFICULTY_LEVEL_REQUIRED, ephemeral=True)
+                return
+            _ok, text = await self._handle_set_difficulty(level.value)
+            await interaction.followup.send(text, ephemeral=True)
+            return
+        if act == "announce":
+            if not self._is_interaction_host(interaction):
+                await interaction.followup.send(
+                    say(TEXT.CMD_NOT_ALLOWED, host_role=f"<@&{self.config.gamenight_host_role_id}>"),
+                    ephemeral=True,
+                )
+                return
+            _ok, text = await self._handle_announce_difficulty(overview=overview)
+            await interaction.followup.send(text, ephemeral=True)
+            return
+        embed = self._build_difficulty_embed()
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    def _is_interaction_host(self, interaction: discord.Interaction) -> bool:
+        member = interaction.user
+        roles = getattr(member, "roles", None)
+        if roles is None:
+            return False
+        return any(r.id == self.config.gamenight_host_role_id for r in roles)
+
+    @app_commands.command(name="broadcast", description="Post a colored embed in the VC text chat or the announcement channel (host message, no plain text).")
+    @app_commands.describe(
+        message="The host message to post inside the colored embed.",
+        level="Broadcast colour/severity (info, warning, error, …). Default: info.",
+        target="Where to post it: voice-chat text or the announcement channel. Default: announcements.",
+    )
+    @app_commands.choices(
+        level=[
+            app_commands.Choice(name="ℹ️ Info", value="info"),
+            app_commands.Choice(name="✅ Success", value="success"),
+            app_commands.Choice(name="⚠️ Warning", value="warning"),
+            app_commands.Choice(name="🚨 Error", value="error"),
+            app_commands.Choice(name="🐞 Debug", value="debug"),
+            app_commands.Choice(name="🔥 Milestone", value="milestone"),
+            app_commands.Choice(name="💤 Idle", value="idle"),
+            app_commands.Choice(name="⏳ Grace", value="grace"),
+            app_commands.Choice(name="🏆 Completed", value="completed"),
+        ],
+        target=[
+            app_commands.Choice(name="Announcement channel", value="announcements"),
+            app_commands.Choice(name="VC text chat", value="vc"),
+        ],
     )
     @is_host()
     @app_commands.guild_only()
-    async def setdifficulty(self, interaction: discord.Interaction, level: app_commands.Choice[str]) -> None:
+    async def broadcast(
+        self,
+        interaction: discord.Interaction,
+        message: str,
+        level: app_commands.Choice[str] = None,
+        target: app_commands.Choice[str] = None,
+    ) -> None:
         await interaction.response.defer(thinking=True, ephemeral=True)
-        _ok, text = await self._handle_set_difficulty(level.value)
-        await interaction.followup.send(text, ephemeral=True)
-
-    @app_commands.command(name="announcedifficulty", description="Post the current difficulty tier or full overview to the announcement channel.")
-    @app_commands.describe(overview="Whether to post the full 5-tier overview instead of just the current tier.")
-    @is_host()
-    @app_commands.guild_only()
-    async def announcedifficulty(self, interaction: discord.Interaction, overview: bool = False) -> None:
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        _ok, text = await self._handle_announce_difficulty(overview=overview)
-        await interaction.followup.send(text, ephemeral=True)
+        if not self._is_interaction_host(interaction):
+            await interaction.followup.send(
+                say(TEXT.CMD_NOT_ALLOWED, host_role=f"<@&{self.config.gamenight_host_role_id}>"),
+                ephemeral=True,
+            )
+            return
+        lvl = (level.value if level is not None else "info").lower()
+        tgt = (target.value if target is not None else "announcements")
+        embed = self._build_broadcast_embed(message, lvl)
+        sent = await self.announcer.send([embed], target=tgt)
+        if sent is None:
+            await interaction.followup.send(
+                say(TEXT.CMD_BROADCAST_FAILED, target=(TEXT.BROADCAST_TARGET_VC if tgt == "vc" else TEXT.BROADCAST_TARGET_ANNOUNCE)),
+                ephemeral=True,
+            )
+            return
+        await interaction.followup.send(
+            say(
+                TEXT.CMD_BROADCAST_DONE,
+                target=(TEXT.BROADCAST_TARGET_VC if tgt == "vc" else TEXT.BROADCAST_TARGET_ANNOUNCE),
+                level=lvl.upper(),
+            ),
+            ephemeral=True,
+        )
 
     @app_commands.command(name="hellevents", description="View active Hell Event, rules, or trigger an event (@gamenight host only).")
     @app_commands.describe(
@@ -1156,7 +1281,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
 
     @app_commands.command(
         name="resume",
-        description="Unfreeze the event after /hell pause or continue a failed run (needs MFA).",
+        description="Unfreeze after /hell pause, continue a failed run, or start Hell 2 after the 320h vote passes.",
     )
     @is_host()
     @app_commands.guild_only()
@@ -1166,6 +1291,29 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             if not await self._request_approval(interaction, "resume"):
                 return
             await interaction.followup.send(TEXT.CMD_APPROVAL_REQUESTED, ephemeral=True)
+            return
+
+        if self.engine.status is EventStatus.COMPLETED:
+            await interaction.response.defer(thinking=True, ephemeral=True)
+            if not self.monitor.continuation.yes_won():
+                await interaction.followup.send(TEXT.CMD_CONTINUATION_NOT_ALLOWED, ephemeral=True)
+                return
+            try:
+                async with self.monitor.lock:
+                    self.engine.resume_continuation(approved=True)
+            except StartError as exc:
+                await interaction.followup.send(f"❌ {exc}", ephemeral=True)
+                return
+            if self.monitor.alive_checks.pending is not None:
+                await self.monitor.alive_checks.cancel(now_ts(), "the event was resumed")
+            self.announcer.forget_progress_message()
+            count = len(self.engine.last_participants)
+            snap = self.engine.snapshot(participants=count)
+            await self.announcer.update_progress(snap, force=True)
+            await self.announcer.announce_continuation_resume()
+            log.warning("COMPLETED event RESUMED as Hell 2 by %s (%s)", interaction.user, interaction.user.id)
+            self.monitor.sync_status()
+            await interaction.followup.send(TEXT.CMD_CONTINUATION_DONE, ephemeral=True)
             return
 
         await interaction.response.defer(thinking=True, ephemeral=True)
@@ -1568,6 +1716,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             say("👑 Host & Operator Commands ({host_role} / Operator)", host_role=f"<@&{self.config.gamenight_host_role_id}>"),
             "\n".join([
                 "`!setdifficulty <0-4|auto>` — Set or override difficulty level",
+                "`!broadcast <info|warning|error|...> <announcements|vc> <message>` — Post a colored embed",
                 "`!announcedifficulty [overview]` — Broadcast difficulty update to announcement channel",
                 "`!triggerhellevent <type>` — Force-trigger a Hell Event immediately",
                 "`!doctor` — Diagnostic self-check (permissions, state, runtime, config)",
@@ -1701,6 +1850,34 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         self.monitor.sync_status()
         await ctx.send(TEXT.CMD_PAUSE_DONE)
 
+    async def _exec_broadcast(
+        self, ctx: commands.Context, level: str = "info", target: str = "announcements", message: str = ""
+    ) -> None:
+        if not await self._is_host_or_operator(ctx):
+            await ctx.send(say(TEXT.CMD_NOT_ALLOWED, host_role=f"<@&{self.config.gamenight_host_role_id}>"))
+            return
+        if not message.strip():
+            await ctx.send(TEXT.CMD_BROADCAST_NEED_MESSAGE)
+            return
+        lvl = level.lower()
+        if lvl not in _BROADCAST_LEVELS:
+            lvl = "info"
+        tgt = target if target in _BROADCAST_TARGETS else "announcements"
+        embed = self._build_broadcast_embed(message.strip(), lvl)
+        sent = await self.announcer.send([embed], target=tgt)
+        if sent is None:
+            await ctx.send(
+                say(TEXT.CMD_BROADCAST_FAILED, target=(TEXT.BROADCAST_TARGET_VC if tgt == "vc" else TEXT.BROADCAST_TARGET_ANNOUNCE))
+            )
+            return
+        await ctx.send(
+            say(
+                TEXT.CMD_BROADCAST_DONE,
+                target=(TEXT.BROADCAST_TARGET_VC if tgt == "vc" else TEXT.BROADCAST_TARGET_ANNOUNCE),
+                level=lvl.upper(),
+            )
+        )
+
     async def _exec_resume(self, ctx: commands.Context) -> None:
         if not await self._is_host_or_operator(ctx):
             await ctx.send(say(TEXT.CMD_NOT_ALLOWED, host_role=f"<@&{self.config.gamenight_host_role_id}>"))
@@ -1709,6 +1886,27 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             if not await self._request_approval_dm(ctx, "resume"):
                 return
             await ctx.send(TEXT.CMD_APPROVAL_REQUESTED)
+            return
+        if self.engine.status is EventStatus.COMPLETED:
+            if not self.monitor.continuation.yes_won():
+                await ctx.send(TEXT.CMD_CONTINUATION_NOT_ALLOWED)
+                return
+            try:
+                async with self.monitor.lock:
+                    self.engine.resume_continuation(approved=True)
+            except StartError as exc:
+                await ctx.send(f"❌ {exc}")
+                return
+            if self.monitor.alive_checks.pending is not None:
+                await self.monitor.alive_checks.cancel(now_ts(), "the event was resumed")
+            self.announcer.forget_progress_message()
+            count = len(self.engine.last_participants)
+            snap = self.engine.snapshot(participants=count)
+            await self.announcer.update_progress(snap, force=True)
+            await self.announcer.announce_continuation_resume()
+            log.warning("COMPLETED event RESUMED as Hell 2 by %s (%s) via prefix", ctx.author, ctx.author.id)
+            self.monitor.sync_status()
+            await ctx.send(TEXT.CMD_CONTINUATION_DONE)
             return
         if not self.engine.is_paused:
             await ctx.send("Event is not paused or failed.")
@@ -1892,6 +2090,12 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             await self._exec_setdifficulty(ctx, level=rest)
         elif sub in ("announcedifficulty", "announcediff"):
             await self._exec_announcedifficulty(ctx, mode=rest)
+        elif sub == "broadcast":
+            parts = rest.split(maxsplit=2) if rest else []
+            lvl = parts[0] if parts else "info"
+            tgt = parts[1] if len(parts) > 1 else "announcements"
+            msg = parts[2] if len(parts) > 2 else ""
+            await self._exec_broadcast(ctx, level=lvl, target=tgt, message=msg)
         elif sub in ("hellevents", "events", "event"):
             await self._exec_hellevents(ctx)
         elif sub in ("triggerhellevent", "triggerevent", "trigger"):

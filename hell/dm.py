@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 import discord
 
@@ -37,6 +37,7 @@ class FinalReportDM:
         self.config = config
         self.engine = engine
         self.announcer = announcer
+        self.continuation: Any = None  # injected by VoiceMonitor (ContinuationManager)
         self._task: Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()
 
@@ -210,3 +211,11 @@ class FinalReportDM:
                 inline=False,
             )
         await self.announcer.send([embed])
+
+        # A completed 160h run now opens the "keep on Hell?" question, once the
+        # stat cards really have been delivered (summary posted above).
+        if self.continuation is not None:
+            try:
+                await self.continuation.start(self.engine.event_uid or "")
+            except Exception:  # pragma: no cover - a UI bug must never break the cards
+                log.exception("Could not open the continuation vote after stat cards")

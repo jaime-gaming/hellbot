@@ -494,6 +494,62 @@ def test_resume_failed_when_not_failed_is_refused(engine):
         engine.resume_failed(now=T0 + 10)
 
 
+# ------------------------------------------------------- Hell 2 continuation
+
+
+def _complete_160h(engine):
+    start(engine, T0, 1, 2)
+    events = engine.tick(obs(T0 + TOTAL_SECONDS, 1, 2))
+    assert engine.status is EventStatus.COMPLETED
+    return events
+
+
+def test_resume_continuation_extends_to_320h_without_milestones(engine, store):
+    _complete_160h(engine)
+    store.record_continuation_vote(engine.event_uid, 1, "yes", T0)
+    store.record_continuation_vote(engine.event_uid, 2, "yes", T0)
+
+    # Wait 2 hours before the host resumes; that time is banked, not counted.
+    resume_at = T0 + TOTAL_SECONDS + 2 * HOUR
+    engine.resume_continuation(now=resume_at)
+    assert engine.status is EventStatus.RUNNING
+    assert engine.is_continuation
+    assert engine.state.total_seconds == 320 * HOUR
+    assert not engine.state.milestones_enabled
+    assert engine.elapsed(resume_at) == pytest.approx(TOTAL_SECONDS)
+
+    # Past the old 160h point there are no milestone events.
+    tick_at = resume_at + 100
+    events = engine.tick(obs(tick_at, 1))
+    assert not [e for e in events if isinstance(e, MilestoneReached)]
+    assert engine.status is EventStatus.RUNNING
+    assert engine.elapsed(tick_at) == pytest.approx(TOTAL_SECONDS + 100)
+
+    # Completion happens at 320h of effective event time.
+    finish_at = resume_at + (320 * HOUR - TOTAL_SECONDS)
+    events = engine.tick(obs(finish_at, 1))
+    completed = next(e for e in events if isinstance(e, EventCompleted))
+    assert engine.status is EventStatus.COMPLETED
+    assert completed.continuation is True
+    assert engine.state.total_seconds == 320 * HOUR
+
+
+def test_resume_continuation_requires_yes_majority(engine, store):
+    _complete_160h(engine)
+    store.record_continuation_vote(engine.event_uid, 1, "no", T0)
+    store.record_continuation_vote(engine.event_uid, 2, "no", T0)
+    with pytest.raises(StartError, match="vote has not passed"):
+        engine.resume_continuation(now=T0 + TOTAL_SECONDS + 1, approved=False)
+
+
+def test_resume_continuation_not_allowed_on_a_failed_run(engine):
+    start(engine, T0, 1)
+    engine.tick(obs(T0 + 1))
+    engine.tick(obs(T0 + 1 + GRACE))
+    with pytest.raises(StartError, match="not completed"):
+        engine.resume_continuation(now=T0 + 1000)
+
+
 def test_alive_check_recovery_grace_duration(engine):
     start(engine, T0, 1)
     engine.tick(obs(T0 + 60, 1))

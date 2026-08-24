@@ -93,16 +93,26 @@ class Announcer:
     # ------------------------------------------------------------- plumbing
 
     async def channel(self) -> Optional[discord.abc.Messageable]:
-        cid = self.engine.state.announce_channel_id or self.config.announce_channel_id
+        """The configured announcement channel."""
+        return await self.channel_for("announcements")
+
+    async def channel_for(self, target: str = "announcements") -> Optional[discord.abc.Messageable]:
+        """Resolve the announcement channel or the VC text chat."""
+        if target == "vc":
+            cid = self.config.alive_check_channel_id or self.config.voice_channel_id
+            label = "VC text chat"
+        else:
+            cid = self.engine.state.announce_channel_id or self.config.announce_channel_id
+            label = "announcement channel"
         chan = self.bot.get_channel(cid)
         if chan is None:
             try:
                 chan = await self.bot.fetch_channel(cid)
             except discord.HTTPException as exc:
-                log.error("Announcement channel %s unreachable: %s", cid, exc)
+                log.error("%s %s unreachable: %s", label, cid, exc)
                 return None
         if not isinstance(chan, discord.abc.Messageable):
-            log.error("Configured announcement channel %s is not a text channel", cid)
+            log.error("Configured %s %s is not a text channel", label, cid)
             return None
         return chan
 
@@ -112,12 +122,13 @@ class Announcer:
         *,
         content: Optional[str] = None,
         mention_everyone: bool = False,
+        target: str = "announcements",
     ) -> Optional[discord.Message]:
         """Post one or more embeds, chunked into as many messages as needed."""
         batch = list(embeds)
         if not batch and not content:
             return None  # Discord rejects a message with neither content nor embeds
-        chan = await self.channel()
+        chan = await self.channel_for(target)
         if chan is None:
             return None
         allowed = discord.AllowedMentions(
@@ -316,6 +327,12 @@ class Announcer:
 
     async def announce_completion(self, event: EventCompleted) -> None:
         await self.send(self.build_completion(event), content="@everyone", mention_everyone=True)
+
+    async def announce_continuation_resume(self) -> Optional[discord.Message]:
+        """Post the Hell 2 (320h continuation) start announcement."""
+        embed = self.embeds.continuation_resume()
+        log.info("Announcing Hell 2 continuation resume")
+        return await self.send([embed])
 
     # ------------------------------------------------ live progress message
 

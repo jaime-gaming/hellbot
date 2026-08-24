@@ -2,8 +2,8 @@
   "last_updated": "2026-08-24T01:07:54Z",
   "ts": 1787533674.4796813,
   "bot_connected": true,
-  "event_status": "RUNNING",
-  "status": "RUNNING",
+  "event_status": "COMPLETED",
+  "status": "COMPLETED",
   "paused": false,
   "pause_reason": null,
   "end_reason": null,
@@ -14,7 +14,7 @@
   "fraction": 1.0,
   "participants": 1,
   "start_ts": 1700000000.0,
-  "end_ts": null,
+  "end_ts": 1700576000.0,
   "estimated_end_ts": 1700576000.0,
   "grace_open": false,
   "grace_seconds_left": 15.0,
@@ -105,5 +105,10 @@
   "voice_channel_id": 1539756705997652079,
   "guild_id": 1,
   "operator_dm_ok": true,
-  "version": "1.4.0"
+  "version": "1.4.0",
+  "continuation": false,
+  "difficulty_level": 4,
+  "difficulty_name": "Cataclysm",
+  "dead_checks_enabled": true,
+  "gamble_enabled": true
 }

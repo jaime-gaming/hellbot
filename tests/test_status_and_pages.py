@@ -94,6 +94,8 @@ def test_write_status_running(tmp_path, engine, monitor):
     assert data["paused"] is False
     assert data["participants"] == 2
     assert data["start_ts"] == 1000.0
+    assert data["continuation"] is False
+    assert data["total_seconds"] == 576000.0
 
 
 def test_write_status_paused(tmp_path, engine, monitor):

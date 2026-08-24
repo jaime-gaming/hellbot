@@ -211,7 +211,9 @@
 
     <div class="grid">
       <div class="card"><h3>Event Status</h3><div class="value blue" id="evStatus">&mdash;</div></div>
-      <div class="card"><h3>Elapsed</h3><div class="value ember" id="evElapsed">&mdash;</div></div>
+      <div class="card"><h3>Mode</h3><div class="value" id="evMode">&mdash;</div><div class="sub" id="evModeSub">160h / Hell 2</div></div>
+      <div class="card"><h3>Elapsed</h3><div class="value ember" id="evElapsed">&mdash;</div><div class="sub" id="evTotal">/ 160h</div></div>
+      <div class="card"><h3>Difficulty</h3><div class="value" id="evDiff">&mdash;</div><div class="sub" id="evDiffSub">level &mdash;</div></div>
       <div class="card"><h3>In VC</h3><div class="value blue" id="evVc">&mdash;</div><div class="sub">active humans</div></div>
       <div class="card"><h3>Tasks</h3><div class="value" id="evTasks">&mdash;</div><div class="sub">async tasks</div></div>
       <div class="card"><h3>Rate Limits</h3><div class="value" id="evRl">&mdash;</div><div class="sub">5 min window</div></div>
@@ -234,6 +236,13 @@
     <div class="section">
       <h2>✅ Preflight Info <span class="count zero" id="infoCount">0</span></h2>
       <ul class="event-list" id="infoList"><li class="empty">No info</li></ul>
+    </div>
+
+    <div class="section">
+      <h2>
+        <span>📅 Full Milestone Roadmap <span style="font-size:0.72rem;color:var(--muted)">all states — the public page hides locked ones</span></span>
+      </h2>
+      <ul class="event-list" id="devMilestones" style="max-height:260px"><li class="empty">No milestone data</li></ul>
     </div>
 
     <div class="section">
@@ -326,6 +335,12 @@
         pause_reason: d.pause_reason || null,
         end_reason: d.end_reason || null,
         elapsed: Math.round(elapsed),
+        total: d.total_seconds || (160 * 3600),
+        continuation: Boolean(d.continuation),
+        difficulty_level: d.difficulty_level,
+        difficulty_name: d.difficulty_name || null,
+        dead_checks_enabled: Boolean(d.dead_checks_enabled),
+        gamble_enabled: Boolean(d.gamble_enabled),
         participants: d.participants != null ? d.participants : 0,
         active_tasks: d.active_tasks || 0,
         rate_limits_5min: d.rate_limits_5min || 0,
@@ -335,6 +350,7 @@
         health_errors: d.errors_last_24h || d.health_errors || [],
         health_warnings: d.warnings_last_24h || d.health_warnings || [],
         health_info: d.health_info || [],
+        milestones: d.milestones || [],
         log_tail: d.log_tail || [],
         version: d.version || '?',
       });
@@ -365,7 +381,20 @@
       else if (isStopped) { evStatusEl.textContent = 'STOPPED'; evStatusEl.className = 'value orange'; }
       else { evStatusEl.textContent = 'IDLE'; evStatusEl.className = 'value blue'; }
 
+      var total = Number(d.total) || (160 * 3600);
+      var isHell2 = Boolean(d.continuation) || total > (160 * 3600) + 1;
+      var totalH = Math.round(total / 3600);
+      var modeEl = document.getElementById('evMode');
+      modeEl.textContent = isHell2 ? '🔥 HELL 2' : '🔥 HELL 1';
+      modeEl.className = 'value ' + (isHell2 ? 'ember' : 'blue');
+      document.getElementById('evModeSub').textContent = (isHell2 ? totalH + 'h (continuation)' : '160h classic');
+      var diffEl = document.getElementById('evDiff');
+      diffEl.textContent = d.difficulty_name || '—';
+      diffEl.className = 'value ' + ((d.dead_checks_enabled || d.gamble_enabled) ? 'ember' : 'green');
+      document.getElementById('evDiffSub').textContent = 'L' + (d.difficulty_level != null ? d.difficulty_level : '?') + ' · dead ' + (d.dead_checks_enabled ? 'on' : 'off') + ' · gamble ' + (d.gamble_enabled ? 'on' : 'off');
+
       document.getElementById('evElapsed').textContent = fmtHm(d.elapsed);
+      document.getElementById('evTotal').textContent = '/ ' + fmtHm(total);
       document.getElementById('evVc').textContent = isRunning ? (d.participants || 0) : (status === 'IDLE' ? '—' : 0);
       document.getElementById('evTasks').textContent = d.active_tasks;
       
@@ -393,12 +422,34 @@
       renderList('errorList', d.health_errors, 'error', 'errCount', 'some');
       renderList('warningList', d.health_warnings, 'warn', 'warnCount', 'warn');
       renderList('infoList', d.health_info, 'info-item', 'infoCount', 'zero');
-      
+
+      renderDevMilestones(d.milestones, d.elapsed, status);
+
       rawLogs = d.log_tail || [];
       renderLogs();
 
       document.getElementById('lastUpdate').textContent = d.ts ? new Date(d.ts * 1000).toLocaleTimeString() : '—';
       document.getElementById('versionLabel').textContent = 'v' + (d.version || '1.0.0');
+    }
+
+    function renderDevMilestones(milestones, elapsed, status) {
+      var ul = document.getElementById('devMilestones');
+      if (!milestones || !milestones.length) {
+        ul.innerHTML = '<li class="empty">No milestone data</li>';
+        return;
+      }
+      var h = '';
+      for (var i = 0; i < milestones.length; i++) {
+        var m = milestones[i];
+        var reached = m.reached != null ? m.reached : (elapsed >= (m.hours * 3600));
+        var label = reached ? '✅ Cleared' : (status === 'RUNNING' ? '🔒 Locked' : '—');
+        if (m.time_to != null && !reached && status === 'RUNNING') label = '🔥 in ' + fmtHm(m.time_to);
+        var cls = 'info-item';
+        if (!reached) cls = 'warn';
+        h += '<li class="' + cls + '"><strong>' + m.hours + 'h</strong> · ' + esc(m.title) +
+             ' <span style="color:var(--muted)">(' + esc(m.short_reward || m.reward || '') + ')</span> — ' + label + '</li>';
+      }
+      ul.innerHTML = h;
     }
 
     function renderList(id, items, cls, cid, cc) {

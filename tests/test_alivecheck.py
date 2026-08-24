@@ -64,12 +64,16 @@ def alive(store, config):
 
 # ------------------------------------------------------------- reply parsing
 
-@pytest.mark.parametrize("text", ["Yes", "yes", "YES", " Yes ", "yes!", "Yes."])
+@pytest.mark.parametrize(
+    "text",
+    ["Yes", "yes", "YES", " Yes ", "yes!", "Yes.", "Yeah", "YEP", "yup", "y", "si", "sí",
+     "okay", "OK", "I'm alive!", "yes i am", "affirmative", "aye"],
+)
 def test_accepted_replies(text):
     assert is_valid_reply(text)
 
 
-@pytest.mark.parametrize("text", ["y", "yeah", "yes i am", "no", "", "si", "yesss"])
+@pytest.mark.parametrize("text", ["no", "nope", "nah", "", "yesss"])
 def test_rejected_replies(text):
     assert not is_valid_reply(text)
 
@@ -164,6 +168,63 @@ def test_only_silent_users_are_kicked(alive, store):
     assert [p.user_id for p in result.kicked] == [3]
     assert io.kicked == [[3]]
     assert manager.pending is None
+
+
+def test_alive_check_finishes_as_soon_as_everyone_answers(alive, store):
+    manager, io = alive
+    io.present = {1, 2}
+    store.set_next_alive_check("uid", T0)
+    run(manager.tick(T0 + 1, users(1, 2)))
+
+    assert manager.register_reply(1, "yeah", channel_id=999)
+    # Nobody has to wait for the 5-minute deadline: the final reply resolves it.
+    assert manager.register_reply(2, "yep", channel_id=999)
+    result = run(manager.tick(T0 + 2, users(1, 2)))
+    assert result is not None
+    assert [p.user_id for p in result.responded] == [1, 2]
+    assert result.kicked == []
+    assert manager.pending is None
+    assert "Alive check finished" in io.results[-1]
+
+
+def test_final_reply_resolves_immediately(alive, store):
+    manager, io = alive
+    io.present = {1, 2}
+    store.set_next_alive_check("uid", T0)
+    run(manager.tick(T0 + 1, users(1, 2)))
+
+    run(manager.process_reply(1, "sure", channel_id=999))
+    assert manager.pending is not None
+
+    result = run(manager.process_reply(2, "yes please", channel_id=999))
+    assert result == "yes"
+    assert manager.pending is None
+    assert "Alive check finished" in io.results[-1]
+    assert io.kicked == []
+
+
+def test_no_reply_kicks_and_says_alright_then(alive, store):
+    manager, io = alive
+    io.present = {1, 2}
+    store.set_next_alive_check("uid", T0)
+    run(manager.tick(T0 + 1, users(1, 2)))
+
+    result = run(manager.process_reply(1, "No", channel_id=999))
+    assert result == "no"
+    assert io.kicked == [[1]]
+    assert io.results[-1] == "Alright then"
+    assert manager.pending.declined == {1}
+    assert manager.pending.declined_kicked == {1}
+    assert 1 in manager.pending.responded
+
+    # User 2 still needs to answer; the check is not finished yet.
+    assert manager.pending is not None
+
+    # The final reply resolves the check and the result shows the declined kick.
+    result = run(manager.process_reply(2, "Yep", channel_id=999))
+    assert result == "yes"
+    assert manager.pending is None
+    assert "<@1>" in io.results[-1]
 
 
 def test_reply_in_another_channel_does_not_count(alive, store):
@@ -316,6 +377,25 @@ def test_kicked_user_keeps_leaderboard_time_and_can_return(engine, store, config
         engine.tick(obs(t + i, 1, 2))
     resumed = {e.user_id: e.seconds for e in engine.leaderboard()}
     assert resumed[2] > after_kick[2]                        # tracking resumed
+
+
+def test_all_no_replies_resolve_early_and_record_emptied_vc(engine, store, config):
+    io = FakeIO()
+    io.present = {1, 2}
+    manager = AliveCheckManager(config, store, io, rng=random.Random(5), engine=engine)
+    start(engine, T0, 1, 2)
+    manager.bind(engine.event_uid, now=T0)
+    store.set_next_alive_check(engine.event_uid, T0)
+    run(manager.tick(T0 + 1, users(1, 2)))
+
+    run(manager.process_reply(1, "No", channel_id=999))
+    # The second No kicks the last user and resolves the check immediately.
+    result = run(manager.process_reply(2, "No", channel_id=999))
+    assert result == "no"
+    assert manager.pending is None
+    assert io.kicked == [[1], [2]]
+    # The engine is told the alive check itself emptied the VC.
+    assert engine._alive_check_emptied_ts is not None
 
 
 def test_event_survives_a_kick_while_someone_remains(engine, store, config):

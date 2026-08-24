@@ -49,11 +49,19 @@ from .leaderboard import top_participants
 from .milestones import (
     FINAL_MILESTONE_HOURS,
     MILESTONES,
-    TOTAL_SECONDS,
     current_milestone,
     next_milestone,
 )
-from .models import EventState, EventStatus, LeaderboardEntry, Milestone, MilestoneRecord, ParticipantRef
+from .models import (
+    CONTINUATION_TOTAL_SECONDS,
+    DEFAULT_TOTAL_SECONDS,
+    EventState,
+    EventStatus,
+    LeaderboardEntry,
+    Milestone,
+    MilestoneRecord,
+    ParticipantRef,
+)
 from .storage import Store
 from .timeline import EventTimeline
 from .timeutil import format_hm, now_ts
@@ -128,6 +136,7 @@ class EventCompleted(DomainEvent):
     leaderboard: list[LeaderboardEntry] = field(default_factory=list)
     top3: list[ParticipantRef] = field(default_factory=list)
     peak_population: int = 0
+    continuation: bool = False
 
 
 @dataclass
@@ -168,6 +177,7 @@ class Snapshot:
     countdown_seconds: Optional[int] = None
     active_hell_event: Optional[Any] = None
     peak_participants: int = 0
+    continuation: bool = False
 
 
 class StartError(RuntimeError):
@@ -244,10 +254,10 @@ class HellEngine:
 
     @property
     def timeline(self) -> Optional[EventTimeline]:
-        """The global 0 → 160h clock, or None before the event starts."""
+        """The global event clock (0 → 160h, or 0 → 320h on Hell 2), or None before start."""
         if self.state.start_ts is None:
             return None
-        return EventTimeline(start_ts=self.state.start_ts, total=TOTAL_SECONDS)
+        return EventTimeline(start_ts=self.state.start_ts, total=self.state.total_seconds)
 
     def _effective_now(self, now: float) -> float:
         """`now` with every pause the event has taken removed.
@@ -263,7 +273,7 @@ class HellEngine:
         return now - paused
 
     def elapsed(self, now: Optional[float] = None) -> float:
-        """Elapsed event time, clamped to [0, 160h] and frozen once terminal.
+        """Elapsed event time, clamped to [0, total] and frozen once terminal.
 
         Pause time is never counted: while paused the value stands still, and
         after a resume it continues exactly where it stopped.
@@ -284,12 +294,13 @@ class HellEngine:
         part_count = len(self._last_participants) if participants is None else participants
         peak = self.store.get_peak_population(self.state.event_uid) if self.state.event_uid else 0
         peak = max(peak, part_count)
+        total = self.state.total_seconds
         return Snapshot(
             status=self.state.status,
             elapsed=elapsed,
-            total=TOTAL_SECONDS,
-            remaining=max(0.0, TOTAL_SECONDS - elapsed),
-            fraction=(elapsed / TOTAL_SECONDS) if TOTAL_SECONDS else 0.0,
+            total=total,
+            remaining=max(0.0, total - elapsed),
+            fraction=(elapsed / total) if total else 0.0,
             participants=part_count,
             current=current_milestone(elapsed),
             upcoming=upcoming,
@@ -308,6 +319,7 @@ class HellEngine:
             countdown_seconds=self.finale.countdown_seconds_left(elapsed),
             active_hell_event=self.hell_events.active_event,
             peak_participants=peak,
+            continuation=self.state.continuation,
         )
 
     def add_user_bonus_seconds(
@@ -367,6 +379,9 @@ class HellEngine:
             started_by=started_by,
             end_reason=None,
             final_saved=False,
+            total_seconds=DEFAULT_TOTAL_SECONDS,
+            milestones_enabled=True,
+            continuation=False,
         )
         self.grace.restore(None)
         self.store.save_state(self.state)
@@ -441,6 +456,11 @@ class HellEngine:
         if self.state.event_uid:
             self.store.set_alive_check_emptied(self.state.event_uid, ts)
 
+    @property
+    def is_continuation(self) -> bool:
+        """Whether this run has been extended into the 320h Hell 2 phase."""
+        return self.state.continuation
+
     def resume_failed(self, *, now: Optional[float] = None) -> EventState:
         """Continue a run that previously reached FAILED status.
 
@@ -467,6 +487,46 @@ class HellEngine:
         self.store.save_state(self.state)
         log.warning(
             "Event %s RESUMED from FAILED state (total paused %.1fs)",
+            self.state.event_uid, self.state.paused_seconds,
+        )
+        return self.state
+
+    def resume_continuation(self, *, now: Optional[float] = None, approved: bool = True) -> EventState:
+        """Resume a COMPLETED 160h run as Hell 2: 320h, no milestones, secret final reward.
+
+        The time between the 160h completion and this resume is banked so the
+        phase-2 clock continues exactly at 160h (never counting the pause).
+        """
+        if self.state.status is not EventStatus.COMPLETED:
+            raise StartError("Cannot resume — the event has not completed the 160h run.")
+        if not approved:
+            raise StartError("The continuation vote has not passed.")
+        now = now_ts() if now is None else now
+        if self.state.end_ts is not None:
+            wait_duration = max(0.0, now - self.state.end_ts)
+            self.state.paused_seconds = max(self.state.paused_seconds, wait_duration)
+            self.hell_events.shift_schedule(wait_duration)
+        self.state.continuation = True
+        self.state.milestones_enabled = False
+        self.state.total_seconds = CONTINUATION_TOTAL_SECONDS
+        self.state.status = EventStatus.RUNNING
+        self.state.end_ts = None
+        self.state.end_reason = None
+        self.state.final_saved = False
+        self.grace.restore(None)
+        self.state.grace_started_ts = None
+        self.state.grace_duration = None
+        self.state.paused_ts = None
+        self.state.pause_reason = None
+        self.state.last_tick_ts = self._effective_now(now)
+        self.store.save_state(self.state)
+        self.store.set_continuation_poll(
+            self.state.event_uid or "",
+            status="resumed",
+            result="yes",
+        )
+        log.warning(
+            "Event %s RESUMED as Hell 2 (320h, no milestones, secret final reward; banked %.1fs)",
             self.state.event_uid, self.state.paused_seconds,
         )
         return self.state
@@ -593,6 +653,7 @@ class HellEngine:
                     leaderboard=board,
                     top3=top_participants(board, 3),
                     peak_population=peak_pop,
+                    continuation=self.state.continuation,
                 )
             )
         return events
@@ -736,6 +797,9 @@ class HellEngine:
         assert self.state.event_uid is not None and self.state.start_ts is not None
         uid = self.state.event_uid
         out: list[MilestoneReached] = []
+        # Hell 2 continuation has no checkpoints: the only finish is the secret 320h reward.
+        if not self.state.milestones_enabled:
+            return out
         already = self.store.triggered_milestone_hours(uid)
         for milestone in MILESTONES:
             if milestone.hours in already or elapsed < milestone.seconds:

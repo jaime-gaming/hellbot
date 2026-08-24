@@ -211,7 +211,9 @@
 
     <div class="grid">
       <div class="card"><h3>Event Status</h3><div class="value blue" id="evStatus">&mdash;</div></div>
-      <div class="card"><h3>Elapsed</h3><div class="value ember" id="evElapsed">&mdash;</div></div>
+      <div class="card"><h3>Mode</h3><div class="value" id="evMode">&mdash;</div><div class="sub" id="evModeSub">160h / Hell 2</div></div>
+      <div class="card"><h3>Elapsed</h3><div class="value ember" id="evElapsed">&mdash;</div><div class="sub" id="evTotal">/ 160h</div></div>
+      <div class="card"><h3>Difficulty</h3><div class="value" id="evDiff">&mdash;</div><div class="sub" id="evDiffSub">level &mdash;</div></div>
       <div class="card"><h3>In VC</h3><div class="value blue" id="evVc">&mdash;</div><div class="sub">active humans</div></div>
       <div class="card"><h3>Tasks</h3><div class="value" id="evTasks">&mdash;</div><div class="sub">async tasks</div></div>
       <div class="card"><h3>Rate Limits</h3><div class="value" id="evRl">&mdash;</div><div class="sub">5 min window</div></div>
@@ -326,6 +328,12 @@
         pause_reason: d.pause_reason || null,
         end_reason: d.end_reason || null,
         elapsed: Math.round(elapsed),
+        total: d.total_seconds || (160 * 3600),
+        continuation: Boolean(d.continuation),
+        difficulty_level: d.difficulty_level,
+        difficulty_name: d.difficulty_name || null,
+        dead_checks_enabled: Boolean(d.dead_checks_enabled),
+        gamble_enabled: Boolean(d.gamble_enabled),
         participants: d.participants != null ? d.participants : 0,
         active_tasks: d.active_tasks || 0,
         rate_limits_5min: d.rate_limits_5min || 0,
@@ -365,7 +373,20 @@
       else if (isStopped) { evStatusEl.textContent = 'STOPPED'; evStatusEl.className = 'value orange'; }
       else { evStatusEl.textContent = 'IDLE'; evStatusEl.className = 'value blue'; }
 
+      var total = Number(d.total) || (160 * 3600);
+      var isHell2 = Boolean(d.continuation) || total > (160 * 3600) + 1;
+      var totalH = Math.round(total / 3600);
+      var modeEl = document.getElementById('evMode');
+      modeEl.textContent = isHell2 ? '🔥 HELL 2' : '🔥 HELL 1';
+      modeEl.className = 'value ' + (isHell2 ? 'ember' : 'blue');
+      document.getElementById('evModeSub').textContent = (isHell2 ? totalH + 'h (continuation)' : '160h classic');
+      var diffEl = document.getElementById('evDiff');
+      diffEl.textContent = d.difficulty_name || '—';
+      diffEl.className = 'value ' + ((d.dead_checks_enabled || d.gamble_enabled) ? 'ember' : 'green');
+      document.getElementById('evDiffSub').textContent = 'L' + (d.difficulty_level != null ? d.difficulty_level : '?') + ' · dead ' + (d.dead_checks_enabled ? 'on' : 'off') + ' · gamble ' + (d.gamble_enabled ? 'on' : 'off');
+
       document.getElementById('evElapsed').textContent = fmtHm(d.elapsed);
+      document.getElementById('evTotal').textContent = '/ ' + fmtHm(total);
       document.getElementById('evVc').textContent = isRunning ? (d.participants || 0) : (status === 'IDLE' ? '—' : 0);
       document.getElementById('evTasks').textContent = d.active_tasks;
       

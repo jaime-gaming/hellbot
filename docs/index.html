@@ -126,8 +126,23 @@
     .banner-completed { background: rgba(46, 204, 113, 0.15); color: #55efc4; border: 1px solid rgba(46, 204, 113, 0.4); box-shadow: 0 0 20px rgba(46,204,113,0.15); }
     .banner-paused { background: rgba(155, 89, 182, 0.15); color: #dcdde1; border: 1px solid rgba(155, 89, 182, 0.4); }
     .banner-grace { background: rgba(231, 76, 60, 0.22); color: #ff7675; border: 1px solid rgba(231, 76, 60, 0.5); animation: pulse 1.5s infinite; }
+    .banner-hell2 { background: rgba(255, 87, 34, 0.14); color: #ffd2c2; border: 1px solid rgba(255, 87, 34, 0.45); box-shadow: 0 0 20px rgba(255,87,34,0.12); }
+    .badge.hell2 { background: linear-gradient(135deg, var(--ember), var(--gold)); color: #fff; box-shadow: 0 0 15px var(--ember-glow); }
+
+    /* Configuration chips */
+    .chips { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.5rem; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 0.35rem;
+      padding: 0.3rem 0.7rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 700;
+      background: #0e1017; border: 1px solid var(--border); color: var(--muted);
+    }
+    .chip.on { background: rgba(46, 204, 113, 0.12); border-color: rgba(46, 204, 113, 0.35); color: var(--green); }
+    .chip.off { background: rgba(255,255,255,0.03); border-color: var(--border); color: var(--muted); }
+    .chip.hell2 { background: var(--ember); border-color: var(--ember); color: #fff; }
 
     @keyframes pulse { 0%,100%{opacity:1; transform:scale(1);} 50%{opacity:0.8; transform:scale(0.98);} }
+    @keyframes fadein { from { opacity:0; transform: translateY(4px); } to { opacity:1; transform:none; } }
+    .fade-in { animation: fadein 0.35s ease; }
 
     /* Progress bar card */
     .progress-wrap {
@@ -380,6 +395,7 @@
 <body>
   <div class="container">
     <div id="connBanner" class="conn-banner">⏳ Connecting&hellip;</div>
+    <div id="hell2Banner" class="status-banner banner-hell2">🔥 HELL 2 — The 160h vote won, the same run now continues to 320h. No more milestones after 160h — only the final secret reward.</div>
     <div id="graceBanner" class="status-banner banner-grace">⚠️ VC EMPTY — Grace period counting down!</div>
     <div id="pausedBanner" class="status-banner banner-paused">⏸️ EVENT PAUSED</div>
     <div id="idleBanner" class="status-banner banner-idle">💤 <strong>EVENT NOT STARTED</strong> — Waiting for <code>/hell start</code> in Discord to begin the 160-hour endurance run.</div>
@@ -389,7 +405,7 @@
 
     <header>
       <div class="hero-title">🔥 Welcome to Hell</div>
-      <p class="hero-sub">160-Hour Discord Endurance Event &middot; Live Status Dashboard</p>
+      <p class="hero-sub" id="heroSub">160-Hour Discord Endurance Event &middot; Live Status Dashboard</p>
       <div class="status-badge-wrap">
         <div id="statusBadge" class="badge idle"><span class="dot off"></span> Connecting&hellip;</div>
       </div>
@@ -439,11 +455,26 @@
       </div>
     </div>
 
+    <!-- Live Configuration -->
+    <div class="section">
+      <div class="section-header">
+        <h2>⚙️ Live Configuration</h2>
+        <span id="configMode" style="font-size:0.8rem;color:var(--muted)">&mdash;</span>
+      </div>
+      <div class="chips">
+        <span class="chip hell2" id="chipHell2">🔥 Hell 1</span>
+        <span class="chip" id="chipDifficulty">⚡ Difficulty: &mdash;</span>
+        <span class="chip off" id="chipDead">💀 Dead checks: off</span>
+        <span class="chip off" id="chipGamble">🎲 Gambling: off</span>
+        <span class="chip" id="chipAlive">🚨 Alive: random</span>
+      </div>
+    </div>
+
     <!-- Milestones Roadmap -->
     <div class="section">
       <div class="section-header">
         <h2>🏁 Milestones Roadmap</h2>
-        <span style="font-size:0.8rem;color:var(--muted)">Global Event Clock (160h)</span>
+        <span id="clockLabel" style="font-size:0.8rem;color:var(--muted)">Global Event Clock (160h)</span>
       </div>
       <div class="milestone-track" id="milestonesTrack">
         <!-- Generated via JS -->
@@ -488,26 +519,35 @@
         <h3>📜 Core Rules</h3>
         <ul style="font-size:0.85rem;color:var(--muted);padding-left:1.2rem;margin-top:0.4rem;line-height:1.6">
           <li><strong>Continuous presence:</strong> VC must have &ge;1 real human at all times.</li>
-          <li><strong>Random roll calls:</strong> Respond with <code>Yes</code> within 5 minutes.</li>
+          <li><strong>Random roll calls:</strong> Reply <code>Yes</code> (or <code>yeah</code>, <code>yep</code>, <code>si</code>, <code>okay</code>, <code>i'm alive</code>&hellip;) within 5 minutes. Saying <code>No</code> immediately kicks you and replies <em>Alright then</em>.</li>
+          <li><strong>Dead checks:</strong> If the bot asks a trick roll call, <strong>replying at all</strong> gets you muted — stay silent to survive.</li>
           <li><strong>Empty VC Grace:</strong> 15s countdown to rejoin (120s if alive check caused empty VC).</li>
+          <li><strong>Hell 2:</strong> If the 160h vote passes, the same run continues to <strong>320h</strong> with no milestones — only one final secret reward.</li>
           <li><strong>Bots &amp; Clankers:</strong> Kicked on sight and earn no time.</li>
         </ul>
       </div>
       <div class="card">
         <h3>💬 Discord Commands</h3>
-        <p style="font-size:0.82rem;color:var(--muted);margin-bottom:0.5rem">Slash commands available in Discord:</p>
+        <p style="font-size:0.82rem;color:var(--muted);margin-bottom:0.5rem">Slash commands (tap to copy):</p>
         <div>
-          <span class="cmd-pill" onclick="navigator.clipboard.writeText('/hell status')">/hell status</span>
-          <span class="cmd-pill" onclick="navigator.clipboard.writeText('/hell leaderboard')">/hell leaderboard</span>
-          <span class="cmd-pill" onclick="navigator.clipboard.writeText('/hell mystats')">/hell mystats</span>
-          <span class="cmd-pill" onclick="navigator.clipboard.writeText('/hell milestones')">/hell milestones</span>
+          <span class="cmd-pill" onclick="copyCmd('/hell status', this)">/hell status</span>
+          <span class="cmd-pill" onclick="copyCmd('/hell leaderboard', this)">/hell leaderboard</span>
+          <span class="cmd-pill" onclick="copyCmd('/hell mystats', this)">/hell mystats</span>
+          <span class="cmd-pill" onclick="copyCmd('/hell milestones', this)">/hell milestones</span>
+          <span class="cmd-pill" onclick="copyCmd('/hell difficulty', this)">/hell difficulty</span>
+          <span class="cmd-pill" onclick="copyCmd('/hell alivecheck', this)">/hell alivecheck</span>
+        </div>
+        <p style="font-size:0.82rem;color:var(--muted);margin:0.6rem 0 0.4rem">Host-only tools:</p>
+        <div>
+          <span class="cmd-pill" onclick="copyCmd('/hell broadcast', this)">/hell broadcast</span>
+          <span class="cmd-pill" onclick="copyCmd('/hell resume', this)">/hell resume (Hell 2)</span>
         </div>
       </div>
     </div>
 
     <footer>
       <p>Welcome to Hell &middot; <a href="dev.html">Developer Diagnostics</a> &middot; <a href="https://github.com/jaime-gaming/hellbot" target="_blank" rel="noreferrer">GitHub Repository</a></p>
-      <p style="margin-top:0.4rem">Last update: <span id="lastUpdate">&mdash;</span> &middot; Mode: <span id="modeLabel">&mdash;</span></p>
+      <p style="margin-top:0.4rem">Last update: <span id="lastUpdate">&mdash;</span> &middot; Mode: <span id="modeLabel">&mdash;</span> &middot; Bot: <span id="versionFoot">&mdash;</span> &middot; <a href="#" id="manualRefresh">Refresh now</a></p>
     </footer>
   </div>
 
@@ -645,9 +685,29 @@
         active_tasks: d.active_tasks || 0,
         operator_dm_ok: d.operator_dm_ok !== false,
         version: d.version || '?',
+        continuation: Boolean(d.continuation),
+        difficulty_level: d.difficulty_level,
+        difficulty_name: d.difficulty_name || null,
+        dead_checks_enabled: Boolean(d.dead_checks_enabled),
+        gamble_enabled: Boolean(d.gamble_enabled),
       };
       render(obj);
     }
+
+    // ---- Copy helper (gives click feedback) ----
+    window.copyCmd = function(text, el) {
+      navigator.clipboard.writeText(text).then(function() {
+        if (el) {
+          var old = el.textContent;
+          el.textContent = '✓ Copied';
+          setTimeout(function() { el.textContent = old; }, 1200);
+        }
+      });
+    };
+    document.getElementById('manualRefresh').addEventListener('click', function(e) {
+      e.preventDefault();
+      pollNow();
+    });
 
     // ---- Unified render ----
     function render(d) {
@@ -660,16 +720,22 @@
       var isCompleted = status === 'COMPLETED';
       var isIdle = status === 'IDLE';
 
+      var total = Number(d.total) || (160 * 3600);
+      var isHell2 = Boolean(d.continuation) || total > (160 * 3600) + 1;
+      var totalH = Math.round(total / 3600);
+      var heroSub = document.getElementById('heroSub');
+      heroSub.textContent = (isHell2 ? totalH + '-Hour' : '160-Hour') + ' Discord Endurance Event · Live Status Dashboard';
+
       // 1. Status Badge
       if (isPaused) {
-        badge.innerHTML = '<span class="dot paused"></span> ⏸️ PAUSED';
-        badge.className = 'badge paused';
+        badge.innerHTML = '<span class="dot paused"></span> ⏸️ PAUSED' + (isHell2 ? ' · HELL 2' : '');
+        badge.className = 'badge paused' + (isHell2 ? ' hell2' : '');
       } else if (isRunning) {
-        badge.innerHTML = '<span class="dot live"></span> 🔥 RUNNING';
-        badge.className = 'badge ok';
+        badge.innerHTML = '<span class="dot live"></span> 🔥 RUNNING' + (isHell2 ? ' · HELL 2' : '');
+        badge.className = 'badge ok' + (isHell2 ? ' hell2' : '');
       } else if (isCompleted) {
-        badge.innerHTML = '<span class="dot ok"></span> 🏆 COMPLETED';
-        badge.className = 'badge ok';
+        badge.innerHTML = '<span class="dot ok"></span> 🏆 COMPLETED' + (isHell2 ? ' · HELL 2' : '');
+        badge.className = 'badge ok' + (isHell2 ? ' hell2' : '');
       } else if (isFailed) {
         badge.innerHTML = '<span class="dot err"></span> 💀 FAILED';
         badge.className = 'badge err';
@@ -680,6 +746,10 @@
         badge.innerHTML = '<span class="dot off"></span> 💤 NOT STARTED';
         badge.className = 'badge idle';
       }
+
+      // 1b. Hell 2 banner
+      var hell2El = document.getElementById('hell2Banner');
+      hell2El.className = 'status-banner banner-hell2' + ((isHell2 && (isRunning || isPaused || isCompleted)) ? ' visible' : '');
 
       // 2. Status Banners
       var graceEl = document.getElementById('graceBanner');
@@ -702,17 +772,24 @@
       idleEl.className = 'status-banner banner-idle' + (isIdle ? ' visible' : '');
       failedEl.className = 'status-banner banner-failed' + (isFailed ? ' visible' : '');
       if (isFailed) {
-        failedEl.innerHTML = '💀 <strong>EVENT FAILED</strong> — The run ended at <strong>' + fmt(d.elapsed) + '</strong> / 160h.' +
+        failedEl.innerHTML = '💀 <strong>EVENT FAILED</strong> — The run ended at <strong>' + fmt(d.elapsed) + '</strong> / ' + fmtShort(total) + '.' +
           (d.end_reason ? '<br><span style="font-size:0.88rem;color:#ffaaaa">Reason: ' + esc(d.end_reason) + '</span>' : '');
       }
 
       stoppedEl.className = 'status-banner banner-stopped' + (isStopped ? ' visible' : '');
       if (isStopped) {
-        stoppedEl.innerHTML = '✋ <strong>EVENT STOPPED</strong> — The run was stopped by an operator at <strong>' + fmt(d.elapsed) + '</strong> / 160h.' +
+        stoppedEl.innerHTML = '✋ <strong>EVENT STOPPED</strong> — The run was stopped by an operator at <strong>' + fmt(d.elapsed) + '</strong> / ' + fmtShort(total) + '.' +
           (d.end_reason ? '<br><span style="font-size:0.88rem;color:#ffeaa7">Reason: ' + esc(d.end_reason) + '</span>' : '');
       }
 
       compEl.className = 'status-banner banner-completed' + (isCompleted ? ' visible' : '');
+      if (isCompleted) {
+        if (isHell2) {
+          compEl.innerHTML = '🏆 <strong>HELL 2 COMPLETED</strong> — ' + totalH + ' consecutive hours conquered! The final secret reward is unlocked.';
+        } else {
+          compEl.innerHTML = '🏆 <strong>EVENT COMPLETED</strong> — 160 consecutive hours conquered! If the 160h vote passed, a host can run <code>/hell resume</code> to continue to 320h.';
+        }
+      }
 
       // 3. Progress Section
       var pct = (d.fraction * 100).toFixed(1);
@@ -728,33 +805,33 @@
       var remainingLabel = document.getElementById('remainingLabel');
 
       if (isIdle) {
-        progressTitle.textContent = 'Event Progress';
-        progressLabel.textContent = '0h 00m / 160h (Not Started)';
+        progressTitle.textContent = isHell2 ? 'Hell 2 — 320h Progress' : 'Event Progress';
+        progressLabel.textContent = '0h 00m / ' + fmtShort(total) + ' (Not Started)';
         elapsedLabel.textContent = 'Elapsed: 0h 00m 00s';
-        remainingLabel.textContent = 'Remaining: 160h 00m 00s';
+        remainingLabel.textContent = 'Remaining: ' + fmt(total);
       } else if (isFailed) {
-        progressTitle.textContent = 'Final Progress';
-        progressLabel.textContent = fmtShort(d.elapsed) + ' / 160h (Failed)';
+        progressTitle.textContent = 'Final Progress' + (isHell2 ? ' (Hell 2)' : '');
+        progressLabel.textContent = fmtShort(d.elapsed) + ' / ' + fmtShort(total) + ' (Failed)';
         elapsedLabel.textContent = 'Final Time: ' + fmt(d.elapsed);
         remainingLabel.textContent = 'Remaining: 0h 00m (Run Failed)';
       } else if (isStopped) {
-        progressTitle.textContent = 'Final Progress';
-        progressLabel.textContent = fmtShort(d.elapsed) + ' / 160h (Stopped)';
+        progressTitle.textContent = 'Final Progress' + (isHell2 ? ' (Hell 2)' : '');
+        progressLabel.textContent = fmtShort(d.elapsed) + ' / ' + fmtShort(total) + ' (Stopped)';
         elapsedLabel.textContent = 'Final Time: ' + fmt(d.elapsed);
         remainingLabel.textContent = 'Remaining: 0h 00m (Run Stopped)';
       } else if (isCompleted) {
-        progressTitle.textContent = 'Event Completed';
-        progressLabel.textContent = '160h 00m / 160h (Conquered!)';
-        elapsedLabel.textContent = 'Final Time: 160h 00m 00s';
+        progressTitle.textContent = isHell2 ? 'Hell 2 Completed' : 'Event Completed';
+        progressLabel.textContent = totalH + 'h / ' + totalH + 'h (Conquered!)';
+        elapsedLabel.textContent = 'Final Time: ' + fmt(total);
         remainingLabel.textContent = 'Remaining: 0h 00m 00s (All Clear!)';
       } else if (isPaused) {
-        progressTitle.textContent = 'Event Progress (Frozen)';
-        progressLabel.textContent = fmtShort(d.elapsed) + ' / ' + fmtShort(d.total) + ' (Paused)';
+        progressTitle.textContent = (isHell2 ? 'Hell 2 ' : 'Event ') + 'Progress (Frozen)';
+        progressLabel.textContent = fmtShort(d.elapsed) + ' / ' + fmtShort(total) + ' (Paused)';
         elapsedLabel.textContent = 'Elapsed: ' + fmt(d.elapsed) + ' (Paused)';
         remainingLabel.textContent = 'Remaining: ' + fmt(d.remaining);
       } else {
-        progressTitle.textContent = 'Event Progress';
-        progressLabel.textContent = fmtShort(d.elapsed) + ' / ' + fmtShort(d.total);
+        progressTitle.textContent = isHell2 ? 'Hell 2 — 320h Progress' : 'Event Progress';
+        progressLabel.textContent = fmtShort(d.elapsed) + ' / ' + fmtShort(total);
         elapsedLabel.textContent = 'Elapsed: ' + fmt(d.elapsed);
         remainingLabel.textContent = 'Remaining: ' + fmt(d.remaining);
       }
@@ -791,9 +868,12 @@
       if (d.current_milestone) {
         document.getElementById('currentMs').textContent = d.current_milestone.hours + 'h';
         document.getElementById('currentMsSub').textContent = d.current_milestone.short_reward || d.current_milestone.title || '';
+      } else if (isHell2 && (isRunning || isPaused)) {
+        document.getElementById('currentMs').textContent = totalH + 'h';
+        document.getElementById('currentMsSub').textContent = 'No milestones — final secret reward';
       } else if (isCompleted) {
-        document.getElementById('currentMs').textContent = '160h';
-        document.getElementById('currentMsSub').textContent = 'Grand Champion';
+        document.getElementById('currentMs').textContent = isHell2 ? totalH + 'h' : '160h';
+        document.getElementById('currentMsSub').textContent = isHell2 ? 'Hell 2 · Secret reward' : 'Grand Champion';
       } else {
         document.getElementById('currentMs').textContent = '—';
         document.getElementById('currentMsSub').textContent = isIdle ? 'None yet' : '';
@@ -802,9 +882,12 @@
       if (d.upcoming_milestone) {
         document.getElementById('nextMs').textContent = d.upcoming_milestone.hours + 'h';
         document.getElementById('nextMsSub').textContent = d.upcoming_milestone.time_to != null ? 'in ' + fmt(d.upcoming_milestone.time_to) : (d.upcoming_milestone.short_reward || '');
+      } else if (isHell2 && (isRunning || isPaused)) {
+        document.getElementById('nextMs').textContent = '🔒';
+        document.getElementById('nextMsSub').textContent = 'Secret reward at ' + totalH + 'h';
       } else if (isCompleted) {
         document.getElementById('nextMs').textContent = '🏆';
-        document.getElementById('nextMsSub').textContent = 'All conquered!';
+        document.getElementById('nextMsSub').textContent = isHell2 ? 'All conquered!' : '160h conquered';
       } else if (isRunning) {
         document.getElementById('nextMs').textContent = '✅';
         document.getElementById('nextMsSub').textContent = 'All cleared!';
@@ -819,7 +902,7 @@
       document.getElementById('lbTotalCount').textContent = totalLbCount + ' contestant(s)';
 
       // 5. Milestone Roadmap Track
-      renderMilestoneRoadmap(d.milestones || defaultMilestones, d.elapsed, status);
+      renderMilestoneRoadmap(d.milestones || defaultMilestones, d.elapsed, status, isHell2, totalH, d.remaining);
 
       // 6. Leaderboard
       var lbHeading = document.getElementById('lbHeading');
@@ -831,7 +914,7 @@
       var acCard = document.getElementById('aliveCard');
       if (ac && isRunning && !isPaused) {
         acCard.className = 'alive-card active';
-        document.getElementById('aliveText').textContent = '🚨 ' + ac.answered + '/' + ac.total + ' answered — ' + ac.seconds_left + 's remaining';
+        document.getElementById('aliveText').innerHTML = '🚨 <strong>' + ac.answered + '/' + ac.total + '</strong> answered — ' + Math.round(ac.seconds_left || 0) + 's remaining<br><span style="font-size:0.82rem;color:var(--muted)">Reply <code>Yes</code>/<code>yeah</code>/<code>si</code>/<code>okay</code>&hellip; or <code>No</code> to leave.</span>';
         document.getElementById('aliveBarWrap').style.display = 'block';
         document.getElementById('aliveBar').style.width = (ac.total > 0 ? (ac.answered/ac.total*100) : 0) + '%';
       } else {
@@ -852,11 +935,33 @@
         }
       }
 
+      // 7b. Live configuration
+      renderConfig(d, isHell2, totalH);
+
       // 8. Footer
       document.getElementById('lastUpdate').textContent = d.ts ? new Date(d.ts * 1000).toLocaleTimeString() : '—';
+      document.getElementById('versionFoot').textContent = 'v' + (d.version || '?');
     }
 
-    function renderMilestoneRoadmap(milestones, elapsedSeconds, status) {
+    function renderConfig(d, isHell2, totalH) {
+      document.getElementById('configMode').textContent = isHell2 ? 'Hell 2 · ' + totalH + 'h' : 'Hell 1 · 160h';
+      document.getElementById('clockLabel').textContent = 'Global Event Clock (' + totalH + 'h)';
+      var h2 = document.getElementById('chipHell2');
+      h2.className = 'chip ' + (isHell2 ? 'hell2' : 'off');
+      h2.textContent = isHell2 ? '🔥 Hell 2 · ' + totalH + 'h' : '🔥 Hell 1 · 160h';
+      document.getElementById('chipDifficulty').textContent = '⚡ Difficulty: ' + (d.difficulty_name || '—') + (d.difficulty_level != null ? ' (L' + d.difficulty_level + ')' : '');
+      var deadEl = document.getElementById('chipDead');
+      deadEl.textContent = '💀 Dead checks: ' + (d.dead_checks_enabled ? 'on' : 'off');
+      deadEl.className = 'chip ' + (d.dead_checks_enabled ? 'on' : 'off');
+      var gambleEl = document.getElementById('chipGamble');
+      gambleEl.textContent = '🎲 Gambling: ' + (d.gamble_enabled ? 'on' : 'off');
+      gambleEl.className = 'chip ' + (d.gamble_enabled ? 'on' : 'off');
+      var aliveEl = document.getElementById('chipAlive');
+      aliveEl.className = 'chip on';
+      aliveEl.textContent = (d.alive_check && (d.status || '').toUpperCase() === 'RUNNING' && !d.paused) ? '🚨 Roll call live' : '🚨 Alive: random';
+    }
+
+    function renderMilestoneRoadmap(milestones, elapsedSeconds, status, isHell2, totalH, remaining) {
       var track = document.getElementById('milestonesTrack');
       var html = '';
       for (var i = 0; i < milestones.length; i++) {
@@ -886,6 +991,41 @@
           '</div>' +
           '<div class="ms-status-label">' + statusLabel + '</div>' +
         '</div>';
+      }
+
+      // Hell 2 has no milestones after 160h — append the final secret reward.
+      if (isHell2) {
+        var last = milestones.length ? milestones[milestones.length - 1] : null;
+        var lastH = last ? last.hours : 160;
+        var secretH = totalH || Math.round((elapsedSeconds / 3600) || 0) || 320;
+        var secretSec = secretH * 3600;
+        // Avoid duplicating a 320h milestone if the backend ever starts sending it.
+        var hasFinal = milestones.some(function(x) { return Number(x.hours) >= secretH; });
+        if (!hasFinal) {
+          var finalReached = elapsedSeconds >= secretSec;
+          var finalCurrent = !finalReached && status === 'RUNNING' && elapsedSeconds >= (lastH * 3600);
+          var finalCls = 'ms-item' + (finalReached ? ' reached' : (finalCurrent ? ' current' : ''));
+          var finalStatus = '';
+          if (finalReached) {
+            finalStatus = '<span class="green">✅ Secret reward unlocked</span>';
+          } else if (finalCurrent) {
+            finalStatus = '<span class="ember">🔥 in ' + fmtShort(Math.max(0, secretSec - elapsedSeconds)) + '</span>';
+          } else {
+            finalStatus = '<span style="color:var(--muted)">🔒 Locked</span>';
+          }
+          html += '<div class="' + finalCls + '">' +
+            '<div class="ms-left">' +
+              '<span class="ms-badge">' + secretH + 'h</span>' +
+              '<div>' +
+                '<div class="ms-title">HELL 2 — The Final Secret Reward</div>' +
+                '<div class="ms-reward">🔒 No milestones after 160h · final secret reward</div>' +
+              '</div>' +
+            '</div>' +
+            '<div class="ms-status-label">' + finalStatus + '</div>' +
+          '</div>';
+        }
+      } else {
+        html += '<p style="font-size:0.78rem;color:var(--muted);margin-top:0.6rem">💡 If the 160h <em>keep on Hell?</em> vote passes, the run continues to <strong>320h</strong> with no more milestones — only one final secret reward.</p>';
       }
       track.innerHTML = html;
     }

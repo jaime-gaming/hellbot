@@ -262,6 +262,10 @@ class HellBot(commands.Bot):
                 "seconds_left": max(0, int(ac.deadline_ts - now)),
             }
 
+        # Difficulty config.
+        from .difficulty import get_difficulty
+        diff = get_difficulty(snap.elapsed, override=getattr(self.engine, "difficulty_override", None))
+
         # Milestones.
         current_ms = snap.current
         upcoming_ms = snap.upcoming
@@ -347,6 +351,11 @@ class HellBot(commands.Bot):
             "leaderboard_total": len(board),
             # --- alive check ---
             "alive_check": alive_info,
+            "continuation": snap.continuation,
+            "difficulty_level": diff.level,
+            "difficulty_name": diff.name,
+            "dead_checks_enabled": diff.dead_checks_enabled,
+            "gamble_enabled": diff.gamble_enabled,
             # --- dev data ---
             "health_errors": health_errors,
             "health_warnings": health_warnings,

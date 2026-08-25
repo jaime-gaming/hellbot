@@ -29,9 +29,15 @@ empties and nobody returns within the grace period, the run is dead — permanen
   at least one valid human, or the start is refused
 * Bots never count · `@clanker` is kicked on sight · AFK still counts
 * **15-second grace period** when the VC empties, with a no-ping warning
-* **Random alive checks** every 1–6 h: reply `Yes` in 5 minutes or get disconnected
+* **Random alive checks** every 1–6 h: reply `Yes` in 5 minutes or get disconnected. They are
+  **unpredictable** — the moment is drawn fresh (uniformly) inside the current difficulty's range,
+  and the next one is never shown to players. Hell Events bend the schedule in real time:
+  **Inferno** pulls the next roll call into a 3–6 minute window, **Golden Hour** postpones it, and
+  **The Culling** triggers one immediately. Saying `No` (or any of its synonyms) is a free exit —
+  you are disconnected, keep all your time, and get a DM when you rejoin telling you that you
+  don't have to answer anything to come back
 * **Random Hell Events** every 30m–3h — good and bad (bonuses, penalties, accelerated checks,
-  hidden info…), announced in the announcement channel **and pinged in the VC text chat**; about
+  hidden info…), announced **only in the VC text chat** with a ping; about
   **1 in 4 is secret**: it says *something* happened and only reveals what when it ends
 * A **personal stat card by DM** for every contestant when the run ends
 * Hosts can post **colored embeds** with `/hell broadcast` (`info`, `warning`, `error`, …) to the
@@ -50,6 +56,12 @@ empties and nobody returns within the grace period, the run is dead — permanen
   outage is credited back to whoever never left the VC
 * **Live log stream** DM'd to the operator: joins, leaves, kicks, milestones, errors
   (`/hell logs tail` shows recent lines in-channel when DMs are off)
+* **Live web dashboard** on `WEB_PORT` (default `8080`, `0` disables): the public page `/` and the
+  operator page `/dev`. Browsers connect however they can: over **WebSocket** (`/ws`) they get the
+  current snapshot **instantly on connect** and a fresh one every 5 s; if WebSockets are blocked
+  (some proxies), the page polls **`/status.json`, which is served live from the bot's current
+  state** — never the stale static file. `/health` reports connected clients and snapshot age.
+  The same pages also work statically on GitHub Pages, falling back to the synced `status.json`
 * **Dangerous commands need the operator's approval**: `/hell stop`, `/hell reset` and resuming a failed run with `/hell resume` only run
   after a one-time code DM'd to the operator is entered with `/hell approve`
 * **`/hell pause` freezes the run** (global + per-user timers) so a bug can be fixed without the
@@ -435,7 +447,7 @@ Difficulties make the challenge harder as the event progresses, expanding at eve
 
 Intervals between events occur randomly between **30 minutes and 3 hours** (scaling more frequently at higher difficulty tiers). All Hell Events persist in SQLite to survive bot restarts.
 
-Every Hell Event announcement is posted **twice**: once in the announcement channel and once in the **VC text chat**, where it pings everyone the event applies to — the people actually sitting in Hell should never miss one.
+Every Hell Event announcement is posted in the **VC text chat only** — never in the announcement channel — pinging everyone the event applies to, so the people actually sitting in Hell never miss one.
 
 **Good events**
 
@@ -484,6 +496,10 @@ You keep all your leaderboard time and can rejoin immediately.
 * Everyone **currently in the VC** is pinged — bots and `@clanker` users are never included.
 * Each has **5 minutes** to reply `Yes` in that channel (case-insensitive by default; set
   `ALIVE_CHECK_STRICT=true` to demand the exact string). Counted answers get a ✅ reaction.
+* Replying **No** — or any of its synonyms (`nope`, `nah`, `never`, `hell no`, `no way`, `nop`,
+  `para nada`, `nunca`, …) — is an **instant but painless exit**: you are disconnected, keep all
+  your leaderboard time, and when you rejoin the VC the bot DMs you
+  *"Psssst, you don't have to do the Alive Check."* so you know coming back needs no answer.
 * Whoever stays silent is **disconnected from the VC**. Their accumulated leaderboard time is
   **not** touched and they may **rejoin immediately** — tracking resumes as normal.
 * A disconnect never fails the event by itself; the run only ends if the VC is left with no valid
@@ -494,7 +510,11 @@ You keep all your leaderboard time and can rejoin immediately.
   answers posted while it was offline; if the 5 minutes expired during the downtime the check is
   **cancelled** — nobody is punished for the bot being away.
 * The next check time is never announced (that would defeat the point); `/hell status` only says
-  that checks happen randomly every 1–6 h.
+  that checks happen randomly every 1–6 h. The moment is drawn uniformly inside the current
+  difficulty's range, so a check can land on **any second of that window** — and Hell Events
+  reshape the schedule **while it is pending**: **Inferno** pulls the next roll call forward into
+  its 3–6 minute window the instant it starts, **Golden Hour** postpones the next roll call, and
+  **The Culling** fires one immediately.
 
 ### Leaderboard
 

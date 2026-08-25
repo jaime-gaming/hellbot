@@ -37,7 +37,7 @@ from .tasks import spawn as _spawn
 from .texts import TEXT
 from .texts import source as texts_source
 from .timeutil import format_hm, format_hms, now_ts
-from .web import broadcast, start_server, stop_server
+from .web import broadcast, set_status_provider, start_server, stop_server
 
 log = logging.getLogger("hell")
 
@@ -78,6 +78,9 @@ class HellBot(commands.Bot):
         self._status_task: Optional[asyncio.Task] = None
         self._web_runner: Optional[aiohttp.web.AppRunner] = None
         self._web_push_task: Optional[asyncio.Task] = None
+        # Serve the bot's LIVE state on /status.json instead of the static
+        # file (which is only rewritten on the 15-minute heartbeat).
+        set_status_provider(self._live_status_payload)
 
     async def setup_hook(self) -> None:
         await self.add_cog(HellCommands(self, self.config, self.engine, self.monitor))
@@ -232,12 +235,26 @@ class HellBot(commands.Bot):
                 log.debug("Web push failed", exc_info=True)
             await asyncio.sleep(5)
 
-    async def _push_web_snapshot(self) -> None:
-        """Build and broadcast the current state to every browser tab."""
-        from .web import client_count
-        if client_count() == 0:
-            return
+    def _live_status_payload(self) -> dict:
+        """A fresh status.json-shaped payload, built from the live engine.
 
+        Registered with the web server so ``/status.json`` always reflects the
+        bot's *current* state — even before the first WebSocket push or when a
+        browser can only poll (e.g. a proxy that does not forward WebSockets).
+        """
+        from .status_writer import get_status
+
+        return get_status().build_payload(
+            engine=self.engine, monitor=self.monitor, stream=self.log_stream, bot=self
+        )
+
+    async def _push_web_snapshot(self) -> None:
+        """Build and broadcast the current state to every browser tab.
+
+        Always built (even with zero connected clients): broadcast() remembers
+        the latest snapshot so a client that connects a second later gets it
+        instantly instead of staring at an empty page.
+        """
         now = now_ts()
         snap = self.engine.snapshot(now=now)
         board = self.engine.leaderboard()

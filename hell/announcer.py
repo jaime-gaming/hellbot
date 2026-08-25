@@ -271,48 +271,33 @@ class Announcer:
         )
 
     async def announce_hell_event_start(self, event: HellEventStarted) -> Optional[discord.Message]:
-        """Broadcast a Hell Event start to the announcement channel AND the VC text chat.
+        """Announce a Hell Event start in the VC text chat ONLY.
 
-        The VC echo pings everyone the event applies to, so the people actually
-        sitting in Hell never miss it — that is where they are looking.
+        The people affected are sitting in the VC — the announcement (with a
+        ping) goes where they are looking, and nowhere else.
         """
         embed = self.embeds.hell_event_start(event)
-        log.info("Announcing Hell Event start: %s", event.record.name)
-        first = await self.send([embed])
-        echoed = await self._echo_hell_event_to_vc([embed], event.eligible_participants)
-        return first or echoed
+        log.info("Announcing Hell Event start: %s (VC only)", event.record.name)
+        return await self._send_hell_event_to_vc([embed], event.eligible_participants)
 
     async def announce_hell_event_end(self, event: HellEventEnded) -> Optional[discord.Message]:
-        """Broadcast a Hell Event end to the announcement channel AND the VC text chat."""
+        """Announce a Hell Event end in the VC text chat ONLY (no ping)."""
         embed = self.embeds.hell_event_end(event)
-        log.info("Announcing Hell Event end: %s", event.record.name)
-        first = await self.send([embed])
-        echoed = await self._echo_hell_event_to_vc([embed])
-        return first or echoed
+        log.info("Announcing Hell Event end: %s (VC only)", event.record.name)
+        return await self._send_hell_event_to_vc([embed])
 
-    async def _echo_hell_event_to_vc(
+    async def _send_hell_event_to_vc(
         self,
         embeds: Sequence[discord.Embed],
         participants: Sequence[Any] = (),
     ) -> Optional[discord.Message]:
-        """Repeat a Hell Event announcement in the VC text chat.
+        """Post a Hell Event announcement in the VC text chat.
 
-        Pings the affected participants (capped like the roll calls) unless the
-        VC chat *is* the announcement channel — then the message was already
-        posted there and a second copy would only be noise.
+        Pings the affected participants (capped like the roll calls) so the
+        event cannot be missed.  If the VC chat is unreachable the message is
+        simply not delivered (logged by :meth:`send`) — hell events never fall
+        back to the announcement channel.
         """
-        try:
-            vc_chan = await self.channel_for("vc")
-        except Exception:  # pragma: no cover - defensive
-            return None
-        if vc_chan is None:
-            return None
-        try:
-            ann_chan = await self.channel()
-        except Exception:  # pragma: no cover - defensive
-            ann_chan = None
-        if ann_chan is not None and getattr(vc_chan, "id", None) == getattr(ann_chan, "id", None):
-            return None  # same channel — nothing to echo
         uids = [p.user_id for p in participants][:MAX_VC_EVENT_PINGS]
         content = " ".join(f"<@{uid}>" for uid in uids) if uids else None
         return await self.send(

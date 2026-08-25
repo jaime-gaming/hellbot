@@ -161,7 +161,7 @@ def test_only_silent_users_are_kicked(alive, store):
 
     assert manager.register_reply(1, "Yes", channel_id=999)
     assert manager.register_reply(2, "yes", channel_id=999)
-    assert not manager.register_reply(3, "nah", channel_id=999)
+    assert not manager.register_reply(3, "maybe", channel_id=999)
 
     result = run(manager.tick(T0 + 1 + 5 * MINUTE, users(1, 2, 3)))
     assert [p.user_id for p in result.responded] == [1, 2]
@@ -535,3 +535,153 @@ def test_a_raising_send_check_never_leaves_a_phantom_check(store, config):
     assert manager.pending is None                     # no phantom check
     assert store.load_alive_check("uid") is None       # DB agrees
     assert store.get_next_alive_check("uid") is not None  # rescheduled
+
+
+# ------------------------------------------------------- No reply synonyms
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "no", "No", "NO", " no ", "no!", "no.",
+        "nope", "nah", "nahh", "nay", "nop", "never", "negative", "false",
+        "hell no", "no way", "not at all", "absolutely not", "definitely not",
+        "of course not", "not today", "i refuse",
+        "nop", "nunca", "jamas", "para nada", "negativo",
+    ],
+)
+def test_no_synonyms_are_recognized(text):
+    from hell.alivecheck import classify_reply
+
+    assert classify_reply(text) == "no"
+
+
+def test_no_synonyms_mark_the_reply_as_declined(alive):
+    manager, io = alive
+    io.present = {1}
+    store_next = manager.store
+    store_next.set_next_alive_check("uid", T0)
+    run(manager.tick(T0 + 1, users(1)))
+
+    # "nah" now counts as a No: declined + kicked + "Alright then" (and with a
+    # single required player the check resolves right away).
+    assert run(manager.process_reply(1, "nah", channel_id=999)) == "no"
+    assert io.kicked == [[1]]
+    assert "Alright then" in io.results
+    assert manager.pending is None
+
+
+def test_yes_still_wins_over_innocent_words(alive):
+    """Words added to the No set must not shadow a clear Yes."""
+    from hell.alivecheck import classify_reply
+
+    assert classify_reply("yes") == "yes"
+    assert classify_reply("yeah") == "yes"
+    assert classify_reply("si") == "yes"
+    assert classify_reply("maybe") is None
+    assert classify_reply("42") is None
+
+
+# ------------------------------------------------- no-kick rejoin DM tracker
+
+
+def test_no_kick_tracker_roundtrip_and_persistence(alive, store, config):
+    manager, _io = alive
+    manager.note_no_kick(7)
+    manager.note_no_kick(8)
+
+    # Not present yet -> nothing to pop.
+    assert manager.pop_no_kick_rejoins({9}) == []
+    # Rejoins are consumed exactly once.
+    assert manager.pop_no_kick_rejoins({7, 9}) == [7]
+    assert manager.pop_no_kick_rejoins({7, 9}) == []
+
+    # Survives a restart (new manager bound to the same event).
+    io2 = FakeIO()
+    reborn = AliveCheckManager(config, store, io2, rng=random.Random(1))
+    reborn.bind("uid", now=T0)
+    assert reborn.pop_no_kick_rejoins({8}) == [8]
+
+
+def test_rejoin_dm_sent_once_with_exact_message(store, config, engine):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from hell.models import ParticipantRef
+    from hell.monitor import VoiceMonitor
+
+    alice = MagicMock()
+    alice.send = AsyncMock()
+    bot = MagicMock()
+    bot.get_user.return_value = alice
+    bot.fetch_user = AsyncMock(return_value=alice)
+
+    announcer = MagicMock()
+    monitor = VoiceMonitor(bot, config, engine, announcer)
+    io = FakeIO()
+    checks = AliveCheckManager(config, store, io, rng=random.Random(1))
+    monitor.alive_checks = checks
+    engine.hell_events.alive_checks = checks
+
+    start(engine, T0, 1)
+    checks.bind(engine.event_uid, now=T0)
+
+    # A roll call starts; Alice answers "no" and is kicked for it.
+    io.present = {1}
+    checks.store.set_next_alive_check(engine.event_uid, T0)
+    run(checks.tick(T0 + 1, users(1)))
+    assert checks.pending is not None
+    assert run(checks.process_reply(1, "no", channel_id=999)) == "no"
+    assert io.kicked == [[1]]
+    assert checks.pop_no_kick_rejoins(set()) == []  # not back yet
+
+    # She rejoins -> DM'd once, with the exact requested wording.
+    run(monitor._dm_no_kick_rejoins([ParticipantRef(1, "Alice")]))
+    alice.send.assert_awaited_once()
+    assert alice.send.await_args.args[0] == "Psssst, you don't have to do the Alive Check."
+
+    # A later tick must not DM her again.
+    run(monitor._dm_no_kick_rejoins([ParticipantRef(1, "Alice")]))
+    alice.send.assert_awaited_once()
+
+
+def test_failed_kick_for_no_does_not_queue_a_rejoin_dm(alive):
+    manager, io = alive
+    io.present = set()  # already left -> the kick removes nobody
+    manager.store.set_next_alive_check("uid", T0)
+    run(manager.tick(T0 + 1, users(1)))
+    assert run(manager.process_reply(1, "no", channel_id=999)) == "no"
+    assert io.kicked == [[]]
+    assert manager.pop_no_kick_rejoins({1}) == []
+
+
+# ------------------------------------------- events affecting the schedule
+
+
+def test_accelerate_next_pulls_a_far_away_check_into_the_window(alive):
+    manager, _io = alive
+    far = T0 + 5 * HOUR
+    manager.store.set_next_alive_check("uid", far)
+    assert manager.next_check_ts() == far
+
+    new_ts = manager.accelerate_next(180.0, 360.0, now=T0)
+    assert new_ts is not None
+    assert T0 + 180.0 <= new_ts <= T0 + 360.0
+    assert manager.next_check_ts() == new_ts
+
+
+def test_accelerate_next_never_pushes_a_due_sooner_check_back(alive):
+    manager, _io = alive
+    soon = T0 + 60.0
+    manager.store.set_next_alive_check("uid", soon)
+    assert manager.accelerate_next(180.0, 360.0, now=T0) == soon
+    assert manager.next_check_ts() == soon
+
+
+def test_accelerate_next_refuses_while_a_check_is_pending(alive):
+    manager, _io = alive
+    io = _io
+    io.present = {1}
+    manager.store.set_next_alive_check("uid", T0)
+    run(manager.tick(T0 + 1, users(1)))
+    assert manager.pending is not None
+    assert manager.accelerate_next(180.0, 360.0, now=T0 + 2) is None

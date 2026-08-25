@@ -473,6 +473,12 @@ class HellEventManager:
             meta["duration_minutes"] = int(duration // 60)
             meta["min_check_seconds"] = mod.inferno_min_check_seconds
             meta["max_check_seconds"] = mod.inferno_max_check_seconds
+            # Pull the already-scheduled roll call into the accelerated window
+            # too — Inferno must bite the moment it starts, not hours later.
+            if self.alive_checks is not None:
+                self.alive_checks.accelerate_next(
+                    mod.inferno_min_check_seconds, mod.inferno_max_check_seconds, now
+                )
             ann_text = say(
                 getattr(
                     TEXT,

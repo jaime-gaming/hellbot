@@ -377,6 +377,7 @@ ALIVE_CHECK_RESULT_KICKED_NOTE = (
 ALIVE_CHECK_RESULT_NOBODY_KICKED = "❌ Disconnected: **nobody** — everyone answered in time."
 ALIVE_CHECK_RESULT_LEFT_EARLY = "↩️ Already out of the VC: {left_early}"
 ALIVE_CHECK_NO_REPLY = "Alright then"
+ALIVE_CHECK_REJOIN_DM = "Psssst, you don't have to do the Alive Check."
 ALIVE_CHECK_CANCELLED = (
     "🚨 **Alive check cancelled** — {reason}. Nobody was disconnected."
 )

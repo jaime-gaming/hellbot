@@ -577,17 +577,18 @@ class _ChanBot:
         self._voice = voice
 
     def get_channel(self, cid):
-        if cid == self._text.id:
-            return self._text
+        # The VC wins when both share an id: that channel *is* the VC chat.
         if cid == self._voice.id:
             return self._voice
+        if cid == self._text.id:
+            return self._text
         return None
 
     async def fetch_channel(self, cid):
         return self.get_channel(cid)
 
 
-def test_hell_event_announcements_are_echoed_to_the_vc(engine, config):
+def test_hell_event_announcements_go_only_to_the_vc(engine, config):
     from tests.test_integration import FakeTextChannel
     from tests.test_monitor import FakeMember, FakeVoiceChannel
 
@@ -606,29 +607,28 @@ def test_hell_event_announcements_are_echoed_to_the_vc(engine, config):
     )
     assert started is not None
 
-    # Start: posted in the announcement channel AND echoed to the VC with pings.
-    assert len(text.sent) == 1
+    # Start: announced in the VC ONLY — never in the announcement channel.
+    assert len(text.sent) == 0
     assert len(voice.sent) == 1
     vc_post = voice.sent[0]
     assert "<@100>" in vc_post["content"] and "<@200>" in vc_post["content"]
     assert vc_post["allowed_mentions"].users is True
-    ann_post = text.sent[0]
-    assert not ann_post.content  # no ping in the announcement channel copy
 
     ended = asyncio.run(engine.hell_events.end_active_event(now + 301.0))
     assert ended is not None
 
-    # End: posted to both places, but without pinging anyone.
-    assert len(text.sent) == 2
+    # End: also VC only, but without pinging anyone.
+    assert len(text.sent) == 0
     assert len(voice.sent) == 2
     assert not voice.sent[1]["content"]
 
 
-def test_hell_event_echo_skipped_when_vc_is_the_announcement_channel(engine, config):
+def test_hell_event_announcement_works_when_vc_is_the_announcement_channel(engine, config):
     from tests.test_integration import FakeTextChannel
     from tests.test_monitor import FakeMember, FakeVoiceChannel
 
-    # The VC text chat is also configured as the announcement channel.
+    # Even with the VC chat configured as the announcement channel, the event
+    # is still announced exactly once (in the VC).
     voice = FakeVoiceChannel([FakeMember(100, "Alice")])
     text = FakeTextChannel(voice.id)
     bot = _ChanBot(text, voice)
@@ -637,7 +637,7 @@ def test_hell_event_echo_skipped_when_vc_is_the_announcement_channel(engine, con
 
     now = now_ts()
     start(engine, now, 100)
-    engine.state.announce_channel_id = voice.id  # announce straight into the VC chat
+    engine.state.announce_channel_id = voice.id
 
     started = asyncio.run(
         engine.hell_events.start_event(
@@ -645,6 +645,31 @@ def test_hell_event_echo_skipped_when_vc_is_the_announcement_channel(engine, con
         )
     )
     assert started is not None
-    # One message total — not the same post twice in the same channel.
-    assert len(text.sent) == 1
-    assert len(voice.sent) == 0
+    assert len(voice.sent) == 1
+    assert len(text.sent) == 0
+
+
+def test_inferno_accelerates_the_already_scheduled_roll_call(engine, config, store):
+    from hell.alivecheck import AliveCheckManager
+
+    checks = AliveCheckManager(config, store, MagicMock(), engine=engine)
+    engine.hell_events.alive_checks = checks
+
+    now = now_ts()
+    start(engine, now, 100)
+    checks.bind(engine.event_uid, now=now)
+
+    # A roll call is scheduled hours away…
+    far_future = now + 4 * HOUR
+    store.set_next_alive_check(engine.event_uid, far_future)
+    assert checks.next_check_ts() == far_future
+
+    # …and Inferno pulls it into the 3-6 minute window the moment it starts.
+    started = asyncio.run(
+        engine.hell_events.start_event(
+            HellEventType.INFERNO, now, [ParticipantRef(100, "Alice")]
+        )
+    )
+    assert started is not None
+    accelerated = checks.next_check_ts()
+    assert now + 180.0 <= accelerated <= now + 360.0

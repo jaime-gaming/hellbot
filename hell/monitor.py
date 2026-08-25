@@ -46,6 +46,7 @@ from .pages_sync import push_docs
 from .security import SuspicionTracker
 from .status_writer import get_status as get_status_writer
 from .tasks import spawn
+from .texts import TEXT
 from .timeutil import format_hm, now_ts
 
 log = logging.getLogger("hell.monitor")
@@ -159,6 +160,36 @@ class VoiceMonitor:
             humans.append(participant_ref(member))
         return humans, clankers
 
+    async def _dm_no_kick_rejoins(self, humans: Sequence[ParticipantRef]) -> None:
+        """DM the players who were kicked for saying No once they rejoin the VC.
+
+        Saying No is a free exit — they can come back whenever they want, and
+        the DM tells them so: "Psssst, you don't have to do the Alive Check."
+        Sent once per kick; a failing DM is only logged, never raised.
+        """
+        if not humans:
+            return
+        rejoined = self.alive_checks.pop_no_kick_rejoins({p.user_id for p in humans})
+        for uid in rejoined:
+            try:
+                user = self.bot.get_user(uid)
+                if user is None:
+                    user = await self.bot.fetch_user(uid)
+                if user is None:
+                    continue
+                await user.send(
+                    str(
+                        getattr(
+                            TEXT,
+                            "ALIVE_CHECK_REJOIN_DM",
+                            "Psssst, you don't have to do the Alive Check.",
+                        )
+                    )
+                )
+                log.info("Sent the rejoin DM to %d (kicked earlier for saying No)", uid)
+            except Exception:
+                log.warning("Could not DM %d after their rejoin", uid, exc_info=True)
+
     def _log_presence_changes(self, humans: Sequence[ParticipantRef]) -> None:
         """Emit a log line whenever somebody joins or leaves the target VC.
 
@@ -252,6 +283,7 @@ class VoiceMonitor:
             return
         humans, clankers = collected
         self._log_presence_changes(humans)
+        await self._dm_no_kick_rejoins(humans)
         if clankers:
             await self.kick_clankers(clankers)
         if self.grace_active:

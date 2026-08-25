@@ -257,3 +257,155 @@ def test_html_files_structure():
     status_data = json.loads(status_json.read_text())
     assert "event_status" in status_data
     assert "last_updated" in status_data
+
+
+# ------------------------------------------------- live web server behaviour
+
+
+@pytest.fixture
+def web_app():
+    """A fresh web app with clean module state (no leftover provider/snapshot)."""
+    from hell import web as hellweb
+
+    hellweb.set_status_provider(None)
+    hellweb._last_snapshot = None
+    hellweb._snapshot_ts = 0.0
+    hellweb.create_app()  # ensure the app builds with clean state
+    yield hellweb
+    hellweb.set_status_provider(None)
+    hellweb._last_snapshot = None
+    hellweb._snapshot_ts = 0.0
+
+
+def test_status_json_serves_live_data_when_provider_registered(web_app):
+    """With the bot running, /status.json must be fresh — not the static file
+    (which is only rewritten on the 15-minute heartbeat)."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    async def run():
+        client = TestClient(TestServer(web_app.create_app()))
+        await client.start_server()
+        try:
+            # No provider: falls back to the static file (GitHub Pages mode).
+            async with client.get("/status.json") as r:
+                assert r.status == 200
+                assert r.headers.get("Cache-Control") == "no-store"
+                static_data = await r.json()
+
+            # Register a live provider (what the bot does at startup).
+            calls = {"n": 0}
+
+            def provider():
+                calls["n"] += 1
+                return {"event_status": "RUNNING", "elapsed_seconds": 42.0, "bot_connected": True}
+
+            web_app.set_status_provider(provider)
+            async with client.get("/status.json") as r:
+                live = await r.json()
+            assert live["event_status"] == "RUNNING"
+            assert live["elapsed_seconds"] == 42.0
+            assert calls["n"] == 1
+            assert static_data != live  # genuinely different data sources
+
+            # A failing provider never breaks the endpoint.
+            def boom():
+                raise RuntimeError("no engine today")
+
+            web_app.set_status_provider(boom)
+            async with client.get("/status.json") as r:
+                assert r.status == 200
+                fallback = await r.json()
+            assert fallback == static_data
+        finally:
+            await client.close()
+
+    asyncio.run(run())
+
+
+def test_websocket_client_receives_last_snapshot_on_connect(web_app):
+    """A newly connected browser renders instantly instead of waiting <=5s."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    async def run():
+        client = TestClient(TestServer(web_app.create_app()))
+        await client.start_server()
+        try:
+            # Nothing pushed yet -> no initial message.
+            ws = await client.ws_connect("/ws")
+            try:
+                await asyncio.wait_for(ws.receive(), timeout=0.2)
+                raise AssertionError("should not have received anything yet")
+            except asyncio.TimeoutError:
+                pass
+            await ws.close()
+
+            # After a broadcast, the NEXT client gets it immediately.
+            await web_app.broadcast({"type": "snapshot", "status": "RUNNING", "elapsed": 7})
+            ws2 = await client.ws_connect("/ws")
+            msg = await asyncio.wait_for(ws2.receive(), timeout=1.0)
+            data = json.loads(msg.data)
+            assert data == {"type": "snapshot", "status": "RUNNING", "elapsed": 7}
+            await ws2.close()
+        finally:
+            await client.close()
+
+    asyncio.run(run())
+
+
+def test_broadcast_remembers_snapshot_without_clients(web_app):
+    """The payload is stored even with zero clients (fresh /status.json, new
+    connections) — broadcast() must not skip it."""
+
+    async def run():
+        assert web_app.client_count() == 0
+        await web_app.broadcast({"type": "snapshot", "status": "IDLE"})
+        assert web_app._last_snapshot == {"type": "snapshot", "status": "IDLE"}
+
+    asyncio.run(run())
+
+
+def test_health_reports_live_status_and_snapshot_age(web_app):
+    from aiohttp.test_utils import TestClient, TestServer
+
+    async def run():
+        client = TestClient(TestServer(web_app.create_app()))
+        await client.start_server()
+        try:
+            async with client.get("/health") as r:
+                data = await r.json()
+            assert data["ok"] is True
+            assert data["live_status"] is False
+            assert data["snapshot_age_seconds"] is None
+
+            web_app.set_status_provider(lambda: {"event_status": "IDLE"})
+            await web_app.broadcast({"type": "snapshot"})
+            async with client.get("/health") as r:
+                data = await r.json()
+            assert data["live_status"] is True
+            assert data["snapshot_age_seconds"] is not None
+        finally:
+            await client.close()
+
+    asyncio.run(run())
+
+
+def test_build_payload_matches_written_file(tmp_path, engine, config, monitor):
+    """The build_payload refactor must keep write()'s output identical."""
+    from hell.status_writer import get_status
+
+    start_ts = 1_700_000_000.0
+    engine.start(
+        now=start_ts, guild_id=1, voice_channel_id=config.voice_channel_id,
+        announce_channel_id=2, started_by=99,
+        initial_participants=[ParticipantRef(1, "Alice")],
+    )
+    path = tmp_path / "status.json"
+    get_status().write(path, engine=engine, monitor=monitor, stream=None, bot=None)
+    written = json.loads(path.read_text())
+
+    payload = get_status().build_payload(engine=engine, monitor=monitor, stream=None, bot=None)
+    # Same keys and same status (timestamps naturally differ between calls).
+    assert set(written) == set(payload)
+    assert written["event_status"] == payload["event_status"] == "RUNNING"
+    assert written["leaderboard_total"] == payload["leaderboard_total"] == 1
+    assert written["voice_channel_id"] == payload["voice_channel_id"] == config.voice_channel_id

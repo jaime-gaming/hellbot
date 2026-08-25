@@ -176,162 +176,169 @@ class StatusFile:
             maxlen=self._warnings.maxlen,
         )
 
-    def write(self, path: str | Path, *, engine=None, monitor=None, stream=None, bot=None) -> None:
-        """Convenience: snapshot and write to a JSON file in one call."""
+    def build_payload(self, *, engine=None, monitor=None, stream=None, bot=None) -> dict[str, Any]:
+        """Build the status.json payload (same schema as the static file).
+
+        Split from :meth:`write` so the live web server can serve a *fresh*
+        payload on every ``/status.json`` request instead of the static file,
+        which is only rewritten on the 15-minute heartbeat.
+        """
         if engine is None:
             self.clear_stale_errors()
-            payload = self.snapshot(bot_connected=False, event_status="IDLE")
-        else:
-            now = time.time()
-            snap = engine.snapshot(now=now)
-            elapsed = engine.elapsed(now=now)
-            sec = monitor.security if (monitor and hasattr(monitor, "security")) else None
-            security_snapshot = sec.snapshot() if sec else {}
-            # Self-healing: clear old errors when the event is running fine
+            return self.snapshot(bot_connected=False, event_status="IDLE")
+        now = time.time()
+        snap = engine.snapshot(now=now)
+        elapsed = engine.elapsed(now=now)
+        sec = monitor.security if (monitor and hasattr(monitor, "security")) else None
+        security_snapshot = sec.snapshot() if sec else {}
+        # Self-healing: clear old errors when the event is running fine
+        if engine.status.is_active:
+            stale = security_snapshot.get("stale_seconds")
+            if stale is None or stale < 300:
+                self.clear_stale_errors()
+
+        # Leaderboard
+        board = engine.leaderboard()
+        lb: list[dict[str, Any]] = []
+        for e in board[:25]:
+            lb.append({
+                "rank": e.rank,
+                "name": e.display_name,
+                "seconds": round(e.seconds, 1),
+                "time": format_hms(e.seconds),
+            })
+
+        # Milestones
+        current_ms = None
+        if snap.current:
+            current_ms = {
+                "hours": snap.current.hours,
+                "title": snap.current.title,
+                "short_reward": snap.current.short_reward or snap.current.reward,
+            }
+
+        upcoming_ms = None
+        if snap.upcoming:
+            upcoming_ms = {
+                "hours": snap.upcoming.hours,
+                "title": snap.upcoming.title,
+                "short_reward": snap.upcoming.short_reward or snap.upcoming.reward,
+                "time_to": round(snap.time_to_next, 1) if snap.time_to_next is not None else None,
+            }
+
+        # Full milestones roadmap list
+        milestone_records_map = {r.hours: r for r in engine.milestone_records()}
+        milestones_list: list[dict[str, Any]] = []
+        for m in MILESTONES:
+            rec = milestone_records_map.get(m.hours)
+            reached = rec is not None or (snap.elapsed >= m.seconds)
+            time_to = max(0.0, m.seconds - snap.elapsed) if not reached else 0.0
+            milestones_list.append({
+                "hours": m.hours,
+                "title": m.title,
+                "reward": m.reward,
+                "short_reward": m.short_reward or m.reward,
+                "blurb": m.blurb,
+                "reached": reached,
+                "reached_ts": rec.reached_ts if rec else None,
+                "members_count": len(rec.members) if rec else 0,
+                "time_to": round(time_to, 1) if (engine.status.is_active and not reached) else None,
+            })
+
+        # Estimated completion timestamp
+        estimated_end_ts: Optional[float] = None
+        if snap.start_ts is not None:
             if engine.status.is_active:
-                stale = security_snapshot.get("stale_seconds")
-                if stale is None or stale < 300:
-                    self.clear_stale_errors()
+                estimated_end_ts = snap.start_ts + snap.total + engine.state.paused_seconds
+            elif snap.end_ts is not None:
+                estimated_end_ts = snap.end_ts
 
-            # Leaderboard
-            board = engine.leaderboard()
-            lb: list[dict[str, Any]] = []
-            for e in board[:25]:
-                lb.append({
-                    "rank": e.rank,
-                    "name": e.display_name,
-                    "seconds": round(e.seconds, 1),
-                    "time": format_hms(e.seconds),
-                })
+        # Alive check
+        alive_info = None
+        alive_pending = False
+        if monitor and hasattr(monitor, "alive_checks") and monitor.alive_checks.pending is not None:
+            ac = monitor.alive_checks.pending
+            alive_pending = True
+            alive_info = {
+                "answered": len(ac.responded),
+                "total": len(ac.required),
+                "seconds_left": max(0, int(ac.deadline_ts - now)),
+            }
 
-            # Milestones
-            current_ms = None
-            if snap.current:
-                current_ms = {
-                    "hours": snap.current.hours,
-                    "title": snap.current.title,
-                    "short_reward": snap.current.short_reward or snap.current.reward,
-                }
+        # Participants count
+        vc_count = snap.participants
+        if monitor and hasattr(monitor, "engine"):
+            vc_count = len(monitor.engine.last_participants)
 
-            upcoming_ms = None
-            if snap.upcoming:
-                upcoming_ms = {
-                    "hours": snap.upcoming.hours,
-                    "title": snap.upcoming.title,
-                    "short_reward": snap.upcoming.short_reward or snap.upcoming.reward,
-                    "time_to": round(snap.time_to_next, 1) if snap.time_to_next is not None else None,
-                }
+        # Health data from bot if available
+        health_errors: list[str] = []
+        health_warnings: list[str] = []
+        health_info: list[str] = []
+        if bot and getattr(bot, "health", None):
+            health_errors = list(bot.health.errors)
+            health_warnings = list(bot.health.warnings)
+            health_info = list(bot.health.info)
 
-            # Full milestones roadmap list
-            milestone_records_map = {r.hours: r for r in engine.milestone_records()}
-            milestones_list: list[dict[str, Any]] = []
-            for m in MILESTONES:
-                rec = milestone_records_map.get(m.hours)
-                reached = rec is not None or (snap.elapsed >= m.seconds)
-                time_to = max(0.0, m.seconds - snap.elapsed) if not reached else 0.0
-                milestones_list.append({
-                    "hours": m.hours,
-                    "title": m.title,
-                    "reward": m.reward,
-                    "short_reward": m.short_reward or m.reward,
-                    "blurb": m.blurb,
-                    "reached": reached,
-                    "reached_ts": rec.reached_ts if rec else None,
-                    "members_count": len(rec.members) if rec else 0,
-                    "time_to": round(time_to, 1) if (engine.status.is_active and not reached) else None,
-                })
+        # Active tasks count
+        from .tasks import active as active_tasks_count
+        task_count = active_tasks_count()
 
-            # Estimated completion timestamp
-            estimated_end_ts: Optional[float] = None
-            if snap.start_ts is not None:
-                if engine.status.is_active:
-                    estimated_end_ts = snap.start_ts + snap.total + engine.state.paused_seconds
-                elif snap.end_ts is not None:
-                    estimated_end_ts = snap.end_ts
+        # Version
+        from . import __version__
 
-            # Alive check
-            alive_info = None
-            alive_pending = False
-            if monitor and hasattr(monitor, "alive_checks") and monitor.alive_checks.pending is not None:
-                ac = monitor.alive_checks.pending
-                alive_pending = True
-                alive_info = {
-                    "answered": len(ac.responded),
-                    "total": len(ac.required),
-                    "seconds_left": max(0, int(ac.deadline_ts - now)),
-                }
+        blind_sec = monitor.blind_seconds if (monitor and hasattr(monitor, "blind_seconds")) else 0.0
+        vc_id = engine.state.voice_channel_id or (monitor.config.voice_channel_id if monitor else None)
+        guild_id = engine.state.guild_id or (monitor.config.guild_id if monitor else None)
 
-            # Participants count
-            vc_count = snap.participants
-            if monitor and hasattr(monitor, "engine"):
-                vc_count = len(monitor.engine.last_participants)
+        from .difficulty import get_difficulty
+        diff = get_difficulty(snap.elapsed, override=getattr(engine, "difficulty_override", None))
 
-            # Health data from bot if available
-            health_errors: list[str] = []
-            health_warnings: list[str] = []
-            health_info: list[str] = []
-            if bot and getattr(bot, "health", None):
-                health_errors = list(bot.health.errors)
-                health_warnings = list(bot.health.warnings)
-                health_info = list(bot.health.info)
+        return self.snapshot(
+            bot_connected=True,
+            event_status=engine.status.value if engine.status else "IDLE",
+            event_elapsed_hours=elapsed / 3600.0 if elapsed else 0.0,
+            elapsed_seconds=snap.elapsed,
+            total_seconds=snap.total,
+            remaining_seconds=snap.remaining,
+            continuation=snap.continuation,
+            fraction=snap.fraction,
+            start_ts=snap.start_ts,
+            end_ts=snap.end_ts,
+            estimated_end_ts=estimated_end_ts,
+            paused=snap.paused,
+            pause_reason=engine.state.pause_reason,
+            end_reason=engine.state.end_reason,
+            difficulty_level=diff.level,
+            difficulty_name=diff.name,
+            dead_checks_enabled=diff.dead_checks_enabled,
+            gamble_enabled=diff.gamble_enabled,
+            participants=vc_count,
+            grace_open=snap.grace_open,
+            grace_seconds_left=snap.grace_seconds_left,
+            grace_total=snap.grace_total,
+            current_milestone=current_ms,
+            upcoming_milestone=upcoming_ms,
+            milestones=milestones_list,
+            leaderboard=lb,
+            leaderboard_total=len(board),
+            alive_check_pending=alive_pending,
+            alive_check=alive_info,
+            rate_limits_5min=security_snapshot.get("rate_limits_5min", 0),
+            monitor_stale_seconds=security_snapshot.get("stale_seconds"),
+            blind_seconds=blind_sec,
+            active_tasks=task_count,
+            voice_channel_id=vc_id,
+            guild_id=guild_id,
+            operator_dm_ok=stream is None or stream.enabled,
+            health_errors=health_errors,
+            health_warnings=health_warnings,
+            health_info=health_info,
+            version=__version__,
+        )
 
-            # Active tasks count
-            from .tasks import active as active_tasks_count
-            task_count = active_tasks_count()
-
-            # Version
-            from . import __version__
-
-            blind_sec = monitor.blind_seconds if (monitor and hasattr(monitor, "blind_seconds")) else 0.0
-            vc_id = engine.state.voice_channel_id or (monitor.config.voice_channel_id if monitor else None)
-            guild_id = engine.state.guild_id or (monitor.config.guild_id if monitor else None)
-
-            from .difficulty import get_difficulty
-            diff = get_difficulty(snap.elapsed, override=getattr(engine, "difficulty_override", None))
-
-            payload = self.snapshot(
-                bot_connected=True,
-                event_status=engine.status.value if engine.status else "IDLE",
-                event_elapsed_hours=elapsed / 3600.0 if elapsed else 0.0,
-                elapsed_seconds=snap.elapsed,
-                total_seconds=snap.total,
-                remaining_seconds=snap.remaining,
-                continuation=snap.continuation,
-                fraction=snap.fraction,
-                start_ts=snap.start_ts,
-                end_ts=snap.end_ts,
-                estimated_end_ts=estimated_end_ts,
-                paused=snap.paused,
-                pause_reason=engine.state.pause_reason,
-                end_reason=engine.state.end_reason,
-                difficulty_level=diff.level,
-                difficulty_name=diff.name,
-                dead_checks_enabled=diff.dead_checks_enabled,
-                gamble_enabled=diff.gamble_enabled,
-                participants=vc_count,
-                grace_open=snap.grace_open,
-                grace_seconds_left=snap.grace_seconds_left,
-                grace_total=snap.grace_total,
-                current_milestone=current_ms,
-                upcoming_milestone=upcoming_ms,
-                milestones=milestones_list,
-                leaderboard=lb,
-                leaderboard_total=len(board),
-                alive_check_pending=alive_pending,
-                alive_check=alive_info,
-                rate_limits_5min=security_snapshot.get("rate_limits_5min", 0),
-                monitor_stale_seconds=security_snapshot.get("stale_seconds"),
-                blind_seconds=blind_sec,
-                active_tasks=task_count,
-                voice_channel_id=vc_id,
-                guild_id=guild_id,
-                operator_dm_ok=stream is None or stream.enabled,
-                health_errors=health_errors,
-                health_warnings=health_warnings,
-                health_info=health_info,
-                version=__version__,
-            )
-
+    def write(self, path: str | Path, *, engine=None, monitor=None, stream=None, bot=None) -> None:
+        """Build the payload and write it to a JSON file in one call."""
+        payload = self.build_payload(engine=engine, monitor=monitor, stream=stream, bot=bot)
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2) + "\n")

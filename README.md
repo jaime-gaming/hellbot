@@ -219,8 +219,8 @@ in the log, and in the launcher's Dashboard.
 | Command | Who | What |
 |---|---|---|
 | `/hell start` | `@gamenight host` | Starts the event: status → `RUNNING`, records the absolute start timestamp, starts the 160 h timer, begins VC monitoring + per-user tracking, posts the start announcement. Rejected if one is already running or the VC is empty (hard requirement). |
-| `/hell status` | everyone | Status, elapsed, remaining, % complete, progress bar, live VC headcount, current + next milestone, and the milestones already reached. |
-| `/hell leaderboard` | everyone | Current (or frozen final) leaderboard: Top 3 on the podium, everyone else below. |
+| `/hell status` | everyone | Status, elapsed, remaining, % complete, progress bar, live VC headcount, current + next milestone, and the milestones already reached. Used **in the VC text chat** it instead replies with a link to the pinned live status card (Discord renders the preview). |
+| `/hell leaderboard` | everyone | Current (or frozen final) leaderboard: Top 3 on the podium, everyone else below. Used **in the VC text chat** it instead replies with a link to the pinned leaderboard — no second auto-updating copy is spawned there. |
 | `/hell alivecheck` | `@gamenight host` | Runs a roll call immediately instead of waiting for the random timer. |
 | `/hell reloadmessages` | `@gamenight host` | Re-read `Announcements.py` so edited wording applies immediately. |
 | `/hell doctor` | `@gamenight host` | Self-check: preflight results, live state, background tasks and the (redacted) configuration. |
@@ -248,7 +248,7 @@ users without 250 notifications — while the `@everyone` ping stays in the mess
 
 ### Server & Direct Message (DM) Commands
 
-- **Server commands:** Run via slash commands (`/hell <command>`) **or** with the `!` prefix directly in server channels (e.g. `!status`, `!leaderboard`, `!gamble 0.5`, `!hell status`).
+- **Server commands:** Run via slash commands (`/hell <command>`) **or** with the `!` prefix directly in server channels (e.g. `!status`, `!leaderboard`, `!gamble 0.5`, `!hell status`). `!status` and `!leaderboard` used in the VC text chat reply with the pinned-card links, exactly like their slash twins.
 - **Direct Message (DM) commands:** The same `!` prefix commands also run in DMs with the bot (e.g. `!status`, `!help`, `!restart`, `!doctor`, `!hell status`). Prefix `!` commands enforce the same host/operator authorization checks everywhere they run.
 
 ---
@@ -274,6 +274,9 @@ cancellation, completion, leaderboard, alive checks, stat cards, command replies
 each block lists the `{placeholders}` it accepts.
 
 * **Edit the text between the quotes**, keep the `{placeholders}` you want, save.
+* `CMD_STATUS_VC_LINK` and `CMD_LEADERBOARD_VC_LINK` (section 12) are the message links the bot
+  posts for `/hell status` and `/hell leaderboard` **in the VC text chat** — paste your own
+  pinned-message links there.
 * Run **`/hell reloadmessages`** (host only) and the new wording is live — no restart, no risk to a
   running 160-hour event.
 * If your edit has a syntax error or a missing name, the bot **keeps the previously loaded text**

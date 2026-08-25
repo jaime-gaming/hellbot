@@ -479,6 +479,17 @@ LOG_ALERT_BODY = (
 #  {vc} {announce_channel} {host_role} {elapsed} {total} {status} {started_at}
 #  {minutes} {check_channel} {previous_status}
 
+# `/hell status` and `/hell leaderboard` (and their `!` twins) reply with these
+# links when they are used in the VC text chat: Discord renders the linked
+# message as a preview, so the pinned live cards are shown without dumping a
+# second copy into the VC.  Point them at the pinned messages of your server.
+CMD_STATUS_VC_LINK = (
+    "https://discord.com/channels/1539201707026939934/1539784904630468699/1541386927113117751"
+)
+CMD_LEADERBOARD_VC_LINK = (
+    "https://discord.com/channels/1539201707026939934/1539784904630468699/1541807282155954247"
+)
+
 CMD_ALREADY_RUNNING = (
     "❌ **Welcome to Hell is already RUNNING** — {elapsed} on the clock. "
     "Use `/hell status`, or `/hell stop` to cancel it first."

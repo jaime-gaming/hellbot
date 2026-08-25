@@ -14,6 +14,7 @@ from hell.announcer import Announcer
 from hell.cog import HellCommands
 from hell.models import EventStatus
 from hell.monitor import VoiceMonitor
+from hell.texts import TEXT
 from hell.timeutil import now_ts
 from tests.conftest import T0, obs, start
 from tests.test_command_flows import (
@@ -29,11 +30,12 @@ from tests.test_monitor import FakeMember, FakeVoiceChannel
 class FakeContext:
     """A fake `discord.ext.commands.Context` standing in for a DM interaction."""
 
-    def __init__(self, bot: commands.Bot, author: FakeAuthor, guild_id: Optional[int] = None):
+    def __init__(self, bot: commands.Bot, author: FakeAuthor, guild_id: Optional[int] = None,
+                 channel_id: int = 999999):
         self.bot = bot
         self.author = author
         self.guild = type("G", (), {"id": guild_id})() if guild_id else None
-        self.channel = type("C", (), {"id": 999999})()
+        self.channel = type("C", (), {"id": channel_id})()
         self.sent: list[dict[str, Any]] = []
         self.invoked_subcommand = None
         self.command = MagicMock()
@@ -140,6 +142,31 @@ def test_dm_leaderboard(wired, engine):
     ctx2 = FakeContext(bot, FakeAuthor(uid=100, name="Contestant"))
     call(cog, "prefix_leaderboard", ctx2)
     assert "🥇" in ctx2.text()
+
+
+def test_prefix_status_and_leaderboard_in_the_vc_chat_link_the_pinned_messages(wired, engine):
+    """`!status` / `!lb` / `!hell status` in the VC text chat link the pinned cards."""
+    cog, bot, _text, voice = wired
+    start(engine, now_ts() - 3600, 1, 2)
+    player = FakeAuthor(uid=100, name="Contestant")
+
+    ctx_st = FakeContext(bot, player, channel_id=voice.id)
+    call(cog, "prefix_status", ctx_st)
+    assert ctx_st.sent == [{"content": TEXT.CMD_STATUS_VC_LINK}]
+
+    ctx_lb = FakeContext(bot, player, channel_id=voice.id)
+    call(cog, "prefix_leaderboard", ctx_lb)
+    assert ctx_lb.sent == [{"content": TEXT.CMD_LEADERBOARD_VC_LINK}]
+
+    # The !hell <subcommand> group routes the same way
+    ctx_grp = FakeContext(bot, player, channel_id=voice.id)
+    call(cog, "prefix_hell_group", ctx_grp, "status")
+    assert ctx_grp.sent == [{"content": TEXT.CMD_STATUS_VC_LINK}]
+
+    # …and outside the VC chat the normal embeds still appear
+    ctx_dm = FakeContext(bot, player)
+    call(cog, "prefix_status", ctx_dm)
+    assert any("embed" in m for m in ctx_dm.sent)
 
 
 def test_dm_milestones(wired, engine):

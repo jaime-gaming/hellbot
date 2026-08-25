@@ -119,6 +119,13 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             embeds[-1].set_footer(text="These rankings are frozen; the event is over.")
         return embeds
 
+    def _in_vc_chat(self, channel_id: Optional[int]) -> bool:
+        """Was a command used in the VC text chat (where the roll calls live)?"""
+        if channel_id is None:
+            return False
+        vc_chat = self.config.alive_check_channel_id or self.config.voice_channel_id
+        return channel_id == vc_chat
+
     def _build_difficulty_embed(self) -> discord.Embed:
         elapsed = self.engine.elapsed() if self.engine.is_running else 0.0
         return self.announcer.embeds.difficulty_info(elapsed, override=self.engine.difficulty_override)
@@ -790,6 +797,11 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
     @app_commands.guild_only()
     async def status(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(thinking=True)
+        if self._in_vc_chat(interaction.channel_id):
+            # In the VC text chat: link the pinned live status card instead of
+            # dumping a copy of it — Discord renders the link preview.
+            await interaction.followup.send(content=TEXT.CMD_STATUS_VC_LINK)
+            return
         count = len(self.engine.last_participants)
         if self.engine.is_running:
             collected = await self.monitor.collect()
@@ -804,6 +816,11 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
     @app_commands.guild_only()
     async def leaderboard(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(thinking=True)
+        if self._in_vc_chat(interaction.channel_id):
+            # In the VC text chat: link the pinned live leaderboard instead of
+            # spawning a second auto-updating copy in the VC.
+            await interaction.followup.send(content=TEXT.CMD_LEADERBOARD_VC_LINK)
+            return
         embeds = self._build_leaderboard_embeds()
         msg = await interaction.followup.send(embeds=embeds, wait=True)
 
@@ -1617,6 +1634,9 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
     # =========================================================================
 
     async def _exec_status(self, ctx: commands.Context) -> None:
+        if self._in_vc_chat(getattr(ctx.channel, "id", None)):
+            await ctx.send(TEXT.CMD_STATUS_VC_LINK)
+            return
         count = len(self.engine.last_participants)
         if self.engine.is_running:
             collected = await self.monitor.collect()
@@ -1626,6 +1646,9 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         await ctx.send(embed=embed)
 
     async def _exec_leaderboard(self, ctx: commands.Context) -> None:
+        if self._in_vc_chat(getattr(ctx.channel, "id", None)):
+            await ctx.send(TEXT.CMD_LEADERBOARD_VC_LINK)
+            return
         embeds = self._build_leaderboard_embeds()
         await ctx.send(embeds=embeds)
 

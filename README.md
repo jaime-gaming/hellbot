@@ -61,7 +61,11 @@ empties and nobody returns within the grace period, the run is dead — permanen
   current snapshot **instantly on connect** and a fresh one every 5 s; if WebSockets are blocked
   (some proxies), the page polls **`/status.json`, which is served live from the bot's current
   state** — never the stale static file. `/health` reports connected clients and snapshot age.
-  The same pages also work statically on GitHub Pages, falling back to the synced `status.json`
+  The same pages also work statically on GitHub Pages — and there they connect to the **real bot**:
+  the page discovers the bot's address via `?server=`, the 🔌 button (saved in the browser) or the
+  `docs/live-server.json` pointer that the bot publishes when `WEB_PUBLIC_URL` is set (needs
+  `GITHUB_PAGES_SYNC` to reach GitHub). CORS is open on the bot's endpoints so cross-origin reads
+  work; only if no live bot answers does the page fall back to the synced static `status.json`
 * **Dangerous commands need the operator's approval**: `/hell stop`, `/hell reset` and resuming a failed run with `/hell resume` only run
   after a one-time code DM'd to the operator is entered with `/hell approve`
 * **`/hell pause` freezes the run** (global + per-user timers) so a bug can be fixed without the

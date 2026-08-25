@@ -42,7 +42,7 @@ from .engine import (
     Observation,
 )
 from .models import EventStatus, ParticipantRef
-from .pages_sync import push_docs
+from .pages_sync import push_docs, write_live_server_file
 from .security import SuspicionTracker
 from .status_writer import get_status as get_status_writer
 from .tasks import spawn
@@ -361,6 +361,16 @@ class VoiceMonitor:
             )
         except Exception:
             log.debug("Could not write status.json", exc_info=True)
+
+        # Publish where the *real* bot is listening so the static GitHub
+        # Pages dashboard can connect to it instead of showing the stale
+        # committed snapshot. Only meaningful while the web server is on.
+        public_url = getattr(self.config, "web_public_url", "")
+        if public_url and getattr(self.config, "web_port", 0) > 0:
+            try:
+                write_live_server_file(".", public_url)
+            except Exception:
+                log.debug("Could not write live-server.json", exc_info=True)
 
         if getattr(self.config, "github_pages_sync", False):
             try:

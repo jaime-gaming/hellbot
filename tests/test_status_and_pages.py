@@ -206,6 +206,95 @@ def test_push_docs_handles_git_missing(tmp_path):
         assert result is False
 
 
+# ------------------------------------------------- live-server discovery file
+
+
+def test_write_live_server_file(tmp_path, isolate_live_server_file):
+    # The autouse fixture redirects writes away from the repo; it yields the
+    # directory the file is really written to.
+    from hell.pages_sync import write_live_server_file
+
+    path = write_live_server_file(tmp_path, "https://hell.example.com/")
+    assert path == isolate_live_server_file / "docs" / "live-server.json"
+    data = json.loads(path.read_text())
+    assert data["url"] == "https://hell.example.com"  # trailing slash stripped
+    assert data["source"] == "hellbot"
+    assert "updated" in data
+
+
+def test_write_live_server_file_empty_url_writes_nothing(tmp_path, isolate_live_server_file):
+    from hell.pages_sync import write_live_server_file
+
+    assert write_live_server_file(tmp_path, "   ") is None
+    assert not (isolate_live_server_file / "docs" / "live-server.json").exists()
+
+
+def test_pages_sync_pushes_the_live_server_pointer():
+    """The pointer must be committed with the rest of docs/ or GitHub Pages
+    never learns where the real bot is listening."""
+    from hell.pages_sync import _DOCS_PATHS
+
+    assert "docs/live-server.json" in _DOCS_PATHS
+
+
+def test_sync_status_publishes_live_server_pointer(engine, config):
+    bot = MagicMock()
+    monitor = VoiceMonitor(bot, config, engine, MagicMock())
+    monitor.config.web_public_url = "https://hell.example.com"
+    monitor.config.web_port = 8080
+
+    with patch("hell.monitor.get_status_writer"), \
+            patch("hell.monitor.write_live_server_file") as wr, \
+            patch("hell.monitor.spawn"):
+        monitor.sync_status()
+
+    wr.assert_called_once_with(".", "https://hell.example.com")
+
+
+def test_sync_status_skips_pointer_when_no_public_url(engine, config):
+    bot = MagicMock()
+    monitor = VoiceMonitor(bot, config, engine, MagicMock())
+    monitor.config.web_public_url = ""
+
+    with patch("hell.monitor.get_status_writer"), \
+            patch("hell.monitor.write_live_server_file") as wr, \
+            patch("hell.monitor.spawn"):
+        monitor.sync_status()
+
+    wr.assert_not_called()
+
+
+def test_sync_status_skips_pointer_when_web_server_disabled(engine, config):
+    bot = MagicMock()
+    monitor = VoiceMonitor(bot, config, engine, MagicMock())
+    monitor.config.web_public_url = "https://hell.example.com"
+    monitor.config.web_port = 0  # dashboard disabled -> the pointer would lie
+
+    with patch("hell.monitor.get_status_writer"), \
+            patch("hell.monitor.write_live_server_file") as wr, \
+            patch("hell.monitor.spawn"):
+        monitor.sync_status()
+
+    wr.assert_not_called()
+
+
+def test_config_reads_web_public_url(monkeypatch):
+    from hell.config import Config
+
+    env = {
+        "DISCORD_TOKEN": "t",
+        "GUILD_ID": "1",
+        "ANNOUNCE_CHANNEL_ID": "2",
+        "GAMENIGHT_HOST_ROLE_ID": "3",
+        "CLANKER_ROLE_ID": "4",
+        "WEB_PUBLIC_URL": " https://hell.example.com ",
+    }
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    cfg = Config.from_env(env_file="/nonexistent/.env")
+    assert cfg.web_public_url == "https://hell.example.com"  # trimmed
+
+
 def test_push_docs_handles_git_commands(tmp_path):
     with patch("shutil.which", return_value="/usr/bin/git"):
         with patch("asyncio.create_subprocess_exec") as mock_exec:
@@ -217,6 +306,71 @@ def test_push_docs_handles_git_commands(tmp_path):
 
             result = asyncio.run(push_docs(tmp_path))
             assert result is False
+
+
+def _make_git_repo(tmp_path):
+    """A real repo with a bare 'remote' and branch tracking configured."""
+    import subprocess
+
+    repo = tmp_path / "repo"
+    remote = tmp_path / "remote.git"
+    repo.mkdir()
+
+    def git(*args, cwd=repo):
+        subprocess.run(["git", *args], cwd=cwd, check=True,
+                       capture_output=True)
+
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True,
+                   capture_output=True)
+    git("init", "-b", "main")
+    git("config", "user.email", "bot@example.com")
+    git("config", "user.name", "HellBot")
+    git("remote", "add", "origin", str(remote))
+    (repo / "docs").mkdir()
+    (repo / "docs" / "index.html").write_text("<html>hi</html>\n")
+    git("add", "docs/index.html")
+    git("commit", "-m", "initial")
+    git("config", "branch.main.remote", "origin")
+    git("config", "branch.main.merge", "refs/heads/main")
+    return repo
+
+
+def test_push_docs_real_repo_without_live_server_file(tmp_path):
+    """No WEB_PUBLIC_URL -> no live-server.json. The push must still work:
+    staging a missing path used to break the whole Pages sync."""
+    repo = _make_git_repo(tmp_path)
+    (repo / "docs" / "status.json").write_text('{"status": "IDLE"}\n')
+
+    assert asyncio.run(push_docs(repo)) is True
+
+    import subprocess
+    log = subprocess.run(["git", "log", "--oneline"], cwd=repo,
+                         check=True, capture_output=True, text=True).stdout
+    assert "update live status" in log
+    # The commit reached the bare remote.
+    remote_log = subprocess.run(
+        ["git", "--git-dir", str(tmp_path / "remote.git"), "log", "--oneline", "main"],
+        check=True, capture_output=True, text=True).stdout
+    assert "update live status" in remote_log
+
+
+def test_push_docs_real_repo_pushes_live_server_pointer(tmp_path):
+    """When the pointer exists it is committed and pushed with the rest."""
+    repo = _make_git_repo(tmp_path)
+    (repo / "docs" / "status.json").write_text('{"status": "RUNNING"}\n')
+    # Written directly: the autouse fixture redirects the helper off-repo.
+    (repo / "docs" / "live-server.json").write_text(
+        json.dumps({"url": "https://hell.example.com", "updated": "x", "source": "hellbot"}) + "\n"
+    )
+
+    assert asyncio.run(push_docs(repo)) is True
+
+    import subprocess
+    shown = subprocess.run(
+        ["git", "show", "--stat", "HEAD"], cwd=repo,
+        check=True, capture_output=True, text=True).stdout
+    assert "docs/live-server.json" in shown
+    assert "docs/status.json" in shown
 
 
 def test_html_files_structure():
@@ -252,6 +406,17 @@ def test_html_files_structure():
     assert "evElapsed" in dev_content
     assert "evVc" in dev_content
     assert "renderFromStatusJson" in dev_content
+
+    # Both pages must carry the live-bot connection layer: they discover the
+    # real bot (live-server.json / saved server / same origin), probe
+    # /health, connect via WebSocket with an HTTP polling fallback, and offer
+    # the manual 🔌 override.
+    for content in (index_content, dev_content):
+        assert "connectFlow" in content
+        assert "connSettingsBtn" in content
+        assert "live-server.json" in content
+        assert "/health" in content or "healthUrlFor" in content
+        assert "hellbot.liveServer" in content  # localStorage override key
 
     # Verify status.json parses as valid JSON
     status_data = json.loads(status_json.read_text())
@@ -316,6 +481,72 @@ def test_status_json_serves_live_data_when_provider_registered(web_app):
                 assert r.status == 200
                 fallback = await r.json()
             assert fallback == static_data
+        finally:
+            await client.close()
+
+    asyncio.run(run())
+
+
+def test_cors_headers_let_other_origins_read_live_data(web_app):
+    """The GitHub Pages site is a different origin than the bot's server.
+    Without CORS headers the browser would refuse to fetch the bot's live
+    ``/status.json`` / ``/health`` — so every response carries them."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    async def run():
+        client = TestClient(TestServer(web_app.create_app()))
+        await client.start_server()
+        try:
+            async with client.get("/status.json") as r:
+                assert r.status == 200
+                assert r.headers["Access-Control-Allow-Origin"] == "*"
+            async with client.get("/health") as r:
+                assert r.status == 200
+                assert r.headers["Access-Control-Allow-Origin"] == "*"
+            async with client.get("/") as r:
+                assert r.status == 200
+                assert r.headers["Access-Control-Allow-Origin"] == "*"
+        finally:
+            await client.close()
+
+    asyncio.run(run())
+
+
+def test_options_preflight_answered_with_cors(web_app):
+    """Cross-origin browsers send an OPTIONS preflight first; the server must
+    answer it (204 + CORS headers) without touching the real handler."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    async def run():
+        client = TestClient(TestServer(web_app.create_app()))
+        await client.start_server()
+        try:
+            for route in ("/status.json", "/health", "/ws", "/"):
+                async with client.options(route) as r:
+                    assert r.status == 204, route
+                    assert r.headers["Access-Control-Allow-Origin"] == "*", route
+                    assert "GET" in r.headers["Access-Control-Allow-Methods"], route
+        finally:
+            await client.close()
+
+    asyncio.run(run())
+
+
+def test_cors_middleware_does_not_break_websocket(web_app):
+    """The WS upgrade response must pass through the middleware untouched."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    async def run():
+        client = TestClient(TestServer(web_app.create_app()))
+        await client.start_server()
+        try:
+            await web_app.broadcast({"type": "snapshot", "status": "IDLE"})
+            # Cross-origin handshake: browsers send an Origin header and the
+            # server must accept it (GitHub Pages -> bot's machine).
+            ws = await client.ws_connect("/ws", origin="https://jaime-gaming.github.io")
+            msg = await asyncio.wait_for(ws.receive(), 1.0)
+            assert json.loads(msg.data)["type"] == "snapshot"
+            await ws.close()
         finally:
             await client.close()
 

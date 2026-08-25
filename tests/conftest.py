@@ -33,6 +33,31 @@ def isolate_status_file(tmp_path_factory):
     StatusFile.write = orig_write
 
 
+@pytest.fixture(autouse=True)
+def isolate_live_server_file(tmp_path_factory):
+    """Prevent tests from writing to the repo's tracked docs/live-server.json.
+
+    Manual save/restore on purpose: depending on ``monkeypatch`` here would
+    move its teardown and break fixtures that rely on their own monkeypatches
+    being undone in a specific order.
+    """
+    temp_docs = tmp_path_factory.mktemp("docs_live_server")
+
+    from hell import monitor as monitor_mod
+    from hell import pages_sync
+
+    orig = pages_sync.write_live_server_file
+
+    def isolated(repo_root=".", url="", *args, **kwargs):
+        return orig(temp_docs, url, *args, **kwargs)
+
+    pages_sync.write_live_server_file = isolated
+    monitor_mod.write_live_server_file = isolated  # imported by reference
+    yield temp_docs
+    pages_sync.write_live_server_file = orig
+    monitor_mod.write_live_server_file = orig
+
+
 def make_config(tmp_path, **overrides) -> Config:
     kwargs = dict(
         token="test",

@@ -144,6 +144,11 @@ class Config:
 
     # --- live web dashboard ---
     web_port: int = 8080
+    # Public URL where this bot's dashboard is reachable (e.g. behind a
+    # reverse proxy or tunnel: "https://hell.example.com"). When set, it is
+    # published to docs/live-server.json so the static GitHub Pages site can
+    # find and connect to the *real* bot live.
+    web_public_url: str = ""
     github_pages_sync: bool = False
 
     @classmethod
@@ -193,6 +198,7 @@ class Config:
             log_dm_ping_cooldown_seconds=_float_env("LOG_DM_PING_COOLDOWN_SECONDS", 300.0),
             log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO",
             web_port=int(os.getenv("WEB_PORT", "8080") or 8080),
+            web_public_url=os.getenv("WEB_PUBLIC_URL", "").strip(),
             github_pages_sync=_bool_env("GITHUB_PAGES_SYNC", False),
         )
 

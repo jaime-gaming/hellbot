@@ -16,6 +16,7 @@
       --red: #e74c3c;
       --orange: #f39c12;
       --ember: #ff5722;
+      --ember-dark: #b83204;
       --blue: #3498db;
       --purple: #9b59b6;
     }
@@ -68,7 +69,33 @@
     }
     .conn-banner.live { display: block; background: rgba(46,204,113,0.12); color: var(--green); border: 1px solid rgba(46,204,113,0.25); }
     .conn-banner.polling { display: block; background: rgba(52,152,219,0.12); color: var(--blue); border: 1px solid rgba(52,152,219,0.25); }
+    .conn-banner.connecting { display: block; background: rgba(255,255,255,0.05); color: var(--muted); border: 1px solid var(--border); }
     .conn-banner.disconnected { display: block; background: rgba(231,76,60,0.12); color: var(--red); border: 1px solid rgba(231,76,60,0.25); }
+
+    .conn-row { display: flex; gap: 0.5rem; align-items: stretch; margin-bottom: 1rem; }
+    .conn-row .conn-banner { flex: 1; margin-bottom: 0; }
+    .conn-settings-btn {
+      background: #0e1017; border: 1px solid var(--border); color: var(--text);
+      border-radius: 0.5rem; padding: 0.3rem 0.75rem; cursor: pointer; font-size: 0.95rem;
+    }
+    .conn-settings-btn:hover { border-color: var(--ember); }
+    .conn-settings {
+      background: var(--card); border: 1px solid var(--border); border-radius: 0.6rem;
+      padding: 1rem 1.1rem; margin-bottom: 1rem; font-size: 0.85rem; color: var(--muted);
+    }
+    .conn-settings-title { font-weight: 700; color: var(--text); margin-bottom: 0.4rem; }
+    .conn-settings p { margin-bottom: 0.6rem; line-height: 1.5; }
+    .conn-settings code { color: #74b9ff; font-size: 0.8rem; }
+    .conn-settings-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .conn-settings-input {
+      flex: 1; min-width: 220px; background: #0d0f17; border: 1px solid var(--border);
+      color: var(--text); padding: 0.5rem 0.85rem; border-radius: 0.5rem; font-size: 0.88rem;
+    }
+    .conn-settings-input:focus { outline: none; border-color: var(--ember); }
+    .btn-primary { background: var(--ember); border: none; color: #fff; font-weight: 700; padding: 0.5rem 1.1rem; border-radius: 0.5rem; cursor: pointer; }
+    .btn-primary:hover { background: var(--ember-dark); }
+    .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--muted); padding: 0.5rem 1rem; border-radius: 0.5rem; cursor: pointer; }
+    .btn-ghost:hover { border-color: var(--red); color: var(--red); }
 
     .grid {
       display: grid;
@@ -201,7 +228,24 @@
 </head>
 <body>
   <div class="container">
-    <div id="connBanner" class="conn-banner">⏳ Connecting&hellip;</div>
+    <div class="conn-row">
+      <div id="connBanner" class="conn-banner">⏳ Connecting&hellip;</div>
+      <button id="connSettingsBtn" class="conn-settings-btn" title="Connect to the real bot" aria-label="Connection settings">🔌</button>
+    </div>
+    <div id="connSettings" class="conn-settings" style="display:none">
+      <div class="conn-settings-title">🔌 Connect to the real bot</div>
+      <p>
+        Paste the address where the HellBot dashboard server is running, e.g.
+        <code>https://hell.example.com</code> or <code>http://192.168.1.50:8080</code>.
+        If this page is served over <strong>https</strong>, the bot address must also be
+        <strong>https</strong> (browsers block mixed content).
+      </p>
+      <div class="conn-settings-row">
+        <input type="text" id="connServerInput" class="conn-settings-input" placeholder="https://your-bot-server:8080" autocomplete="off" spellcheck="false" />
+        <button id="connSaveBtn" class="btn-primary">Connect</button>
+        <button id="connClearBtn" class="btn-ghost">Forget</button>
+      </div>
+    </div>
 
     <header>
       <h1>🔧 Welcome to Hell &mdash; Dev &amp; Diagnostics</h1>
@@ -264,9 +308,211 @@
 
   <script>
   (function() {
-    var ws = null, reconnectTimer = null, pollTimer = null;
     var banner = document.getElementById('connBanner');
     var modeLabel = document.getElementById('modeLabel');
+
+    // ---- Live bot connection layer ---------------------------------------
+    // Same logic as the public dashboard: find the REAL bot (?server= param,
+    // saved server, live-server.json published by the bot, then same origin),
+    // probe /health, connect via WebSocket (HTTP polling fallback). If no
+    // live bot answers, fall back to the static status.json from GitHub.
+    var LS_KEY = 'hellbot.liveServer';
+    var ws = null, pollTimer = null, reconnectTimer = null;
+    var wsConnected = false, liveConnected = false;
+    var endpoints = [], endpointIndex = 0, liveBase = null;
+
+    function normalizeBase(u) {
+      u = (u || '').trim().replace(/\/+$/, '');
+      if (!u) return '';
+      if (!/^https?:\/\//i.test(u)) u = 'http://' + u;
+      return u;
+    }
+    function hostLabel(base) {
+      if (!base) return location.host;
+      try { return new URL(base).host; } catch(e) { return base; }
+    }
+    function wsUrlFor(base) {
+      if (!base) return (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
+      return base.replace(/^http(s?):/i, function(_, s) { return s ? 'wss:' : 'ws:'; }) + '/ws';
+    }
+    function statusUrlFor(base) { return base ? base + '/status.json' : 'status.json'; }
+    function healthUrlFor(base) { return base ? base + '/health' : 'health'; }
+    function setBanner(cls, text) {
+      banner.className = 'conn-banner ' + cls;
+      banner.textContent = text;
+      banner.style.display = 'block';
+    }
+    function stopAll() {
+      if (ws) { var old = ws; ws = null; try { old.onclose = null; old.close(); } catch(e) {} }
+      wsConnected = false;
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    }
+
+    function discoverEndpoints(cb) {
+      var list = [];
+      var param = null;
+      try { param = new URLSearchParams(location.search).get('server'); } catch(e) {}
+      if (param) {
+        var p = normalizeBase(param);
+        if (p) { list.push(p); try { localStorage.setItem(LS_KEY, p); } catch(e) {} }
+      } else {
+        try {
+          var saved = normalizeBase(localStorage.getItem(LS_KEY));
+          if (saved) list.push(saved);
+        } catch(e) {}
+      }
+      fetch('live-server.json', { cache: 'no-store' })
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(d) {
+          if (d && d.url) {
+            var u = normalizeBase(d.url);
+            if (u && list.indexOf(u) < 0) list.push(u);
+          }
+        })
+        .catch(function() {})
+        .then(function() {
+          list.push(''); // same origin is always the last candidate
+          cb(list);
+        });
+    }
+
+    function connectFlow() {
+      liveConnected = false;
+      setBanner('connecting', '⏳ Looking for the real bot…');
+      discoverEndpoints(function(list) {
+        endpoints = list;
+        endpointIndex = 0;
+        tryEndpoint();
+      });
+    }
+
+    function tryEndpoint() {
+      stopAll();
+      if (endpointIndex >= endpoints.length) { startStaticMode(); return; }
+      var base = endpoints[endpointIndex];
+      setBanner('connecting', '⏳ Connecting to the bot at ' + (hostLabel(base) || location.host) + '…');
+      probeHealth(base, function() { tryWebSocket(base); }, function() { endpointIndex++; tryEndpoint(); });
+    }
+
+    function probeHealth(base, ok, fail) {
+      var done = false;
+      var t = setTimeout(function() { if (!done) { done = true; fail(); } }, 4000);
+      fetch(healthUrlFor(base), { cache: 'no-store' })
+        .then(function(r) { return r.ok ? r.json() : Promise.reject(0); })
+        .then(function(d) {
+          if (done) return;
+          done = true; clearTimeout(t);
+          if (d && d.ok) ok(d); else fail();
+        })
+        .catch(function() { if (!done) { done = true; clearTimeout(t); fail(); } });
+    }
+
+    function tryWebSocket(base) {
+      var attempt;
+      try { attempt = new WebSocket(wsUrlFor(base)); } catch(e) { startLivePoll(base); return; }
+      ws = attempt;
+      var opened = false;
+      var guard = setTimeout(function() { if (!opened) { try { attempt.close(); } catch(e) {} } }, 6000);
+      attempt.onopen = function() {
+        opened = true;
+        clearTimeout(guard);
+        if (ws !== attempt) return;
+        wsConnected = true;
+        liveConnected = true;
+        liveBase = base;
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        setBanner('live', '🟢 Live — Connected to the bot at ' + hostLabel(base) + ' (WebSocket)');
+        modeLabel.textContent = 'live (WebSocket · ' + hostLabel(base) + ')';
+      };
+      attempt.onmessage = function(e) {
+        var d; try { d = JSON.parse(e.data); } catch(x) { return; }
+        if (d.type === 'snapshot') render(d);
+      };
+      attempt.onerror = function() { try { attempt.close(); } catch(e) {} };
+      attempt.onclose = function() {
+        clearTimeout(guard);
+        if (ws !== attempt) return;
+        var wasConnected = wsConnected;
+        wsConnected = false;
+        if (wasConnected) {
+          setBanner('connecting', '🟡 Connection to the bot lost — reconnecting…');
+          reconnectTimer = setTimeout(connectFlow, 4000);
+        } else {
+          startLivePoll(base);
+        }
+      };
+    }
+
+    function startLivePoll(base) {
+      stopAll();
+      liveBase = base;
+      var okOnce = false;
+      function poll() {
+        fetch(statusUrlFor(base), { cache: 'no-store' })
+          .then(function(r) { if (!r.ok) throw 0; return r.json(); })
+          .then(function(d) {
+            okOnce = true;
+            liveConnected = true;
+            setBanner('live', '🟢 Live — Connected to the bot at ' + hostLabel(base) + ' (refresh every 5 s)');
+            modeLabel.textContent = 'live (polling · ' + hostLabel(base) + ')';
+            renderFromStatusJson(d);
+          })
+          .catch(function() {
+            if (!okOnce) { endpointIndex++; tryEndpoint(); return; }
+            setBanner('disconnected', '🔴 Lost connection to the bot — retrying…');
+          });
+      }
+      poll();
+      pollTimer = setInterval(poll, 5000);
+    }
+
+    function startStaticMode() {
+      stopAll();
+      liveConnected = false;
+      liveBase = null;
+      modeLabel.textContent = 'static snapshot (GitHub)';
+      pollStatic();
+      pollTimer = setInterval(pollStatic, 15000);
+    }
+
+    function pollStatic() {
+      fetch('status.json', { cache: 'no-store' })
+        .then(function(r) { if (!r.ok) throw 0; return r.json(); })
+        .then(function(d) {
+          renderFromStatusJson(d);
+          var when = d.last_updated || (d.ts ? new Date(d.ts * 1000).toLocaleString() : 'unknown');
+          setBanner('polling', '🟡 No live bot reachable — last synced snapshot (GitHub, ' + when + '). Use 🔌 to point at the real bot.');
+        })
+        .catch(function() {
+          setBanner('disconnected', '🔴 Cannot reach status.json data');
+        });
+    }
+
+    // ---- Connection settings (🔌) ----
+    var settingsBox = document.getElementById('connSettings');
+    var settingsInput = document.getElementById('connServerInput');
+    document.getElementById('connSettingsBtn').addEventListener('click', function() {
+      var open = settingsBox.style.display !== 'none';
+      settingsBox.style.display = open ? 'none' : 'block';
+      if (!open) {
+        try { settingsInput.value = localStorage.getItem(LS_KEY) || ''; } catch(e) { settingsInput.value = ''; }
+        settingsInput.focus();
+      }
+    });
+    document.getElementById('connSaveBtn').addEventListener('click', function() {
+      var u = normalizeBase(settingsInput.value);
+      if (!u) return;
+      try { localStorage.setItem(LS_KEY, u); } catch(e) {}
+      settingsBox.style.display = 'none';
+      connectFlow();
+    });
+    document.getElementById('connClearBtn').addEventListener('click', function() {
+      try { localStorage.removeItem(LS_KEY); } catch(e) {}
+      settingsInput.value = '';
+      settingsBox.style.display = 'none';
+      connectFlow();
+    });
     var logAutoScroll = true;
     var logBox = document.getElementById('logBox');
     var rawLogs = [];
@@ -281,49 +527,6 @@
       return h + 'h ' + (m < 10 ? '0' : '') + m + 'm';
     }
     function esc(t) { var d = document.createElement('div'); d.appendChild(document.createTextNode(t || '')); return d.innerHTML; }
-
-    // ---- WebSocket ----
-    function connectWS() {
-      try {
-        var p = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        ws = new WebSocket(p + '//' + location.host + '/ws');
-      } catch(e) { fallbackToPoll(); return; }
-
-      ws.onopen = function() {
-        stopPolling();
-        banner.className = 'conn-banner live';
-        banner.textContent = '🟢 Live — Connected via WebSocket';
-        banner.style.display = 'block';
-        modeLabel.textContent = 'live (WebSocket)';
-      };
-      ws.onclose = function() { fallbackToPoll(); };
-      ws.onerror = function() { ws.close(); };
-      ws.onmessage = function(e) {
-        var d; try { d = JSON.parse(e.data); } catch(x) { return; }
-        if (d.type === 'snapshot') render(d);
-      };
-    }
-
-    // ---- Polling fallback ----
-    function fallbackToPoll() {
-      banner.className = 'conn-banner polling';
-      banner.textContent = '🔵 Polling — refreshing status every 15s';
-      banner.style.display = 'block';
-      modeLabel.textContent = 'polling (15s)';
-      startPolling();
-    }
-    function startPolling() { stopPolling(); pollNow(); pollTimer = setInterval(pollNow, 15000); }
-    function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
-    function pollNow() {
-      fetch('status.json', { cache: 'no-store' })
-        .then(function(r) { if (!r.ok) throw 0; return r.json(); })
-        .then(function(d) { renderFromStatusJson(d); })
-        .catch(function() {
-          banner.className = 'conn-banner disconnected';
-          banner.textContent = '🔴 Cannot reach status.json data';
-          banner.style.display = 'block';
-        });
-    }
 
     function renderFromStatusJson(d) {
       var elapsed = (d.elapsed_seconds != null) ? d.elapsed_seconds : ((d.event_elapsed_hours || 0) * 3600);
@@ -494,8 +697,8 @@
       alert('Logs copied to clipboard (' + rawLogs.length + ' lines).');
     };
 
-    connectWS();
-    setTimeout(function() { if (!document.querySelector('.conn-banner.live')) fallbackToPoll(); }, 3000);
+    // ---- Start: find the real bot and connect ----
+    connectFlow();
   })();
   </script>
 </body>

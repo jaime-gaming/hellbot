@@ -42,7 +42,7 @@ from .engine import (
     Observation,
 )
 from .models import EventStatus, ParticipantRef
-from .pages_sync import push_docs
+from .pages_sync import push_docs, write_live_server_file
 from .security import SuspicionTracker
 from .status_writer import get_status as get_status_writer
 from .tasks import spawn
@@ -362,6 +362,16 @@ class VoiceMonitor:
         except Exception:
             log.debug("Could not write status.json", exc_info=True)
 
+        # Publish where the *real* bot is listening so the static GitHub
+        # Pages dashboard can connect to it instead of showing the stale
+        # committed snapshot. Only meaningful while the web server is on.
+        public_url = getattr(self.config, "web_public_url", "")
+        if public_url and getattr(self.config, "web_port", 0) > 0:
+            try:
+                write_live_server_file(".", public_url)
+            except Exception:
+                log.debug("Could not write live-server.json", exc_info=True)
+
         if getattr(self.config, "github_pages_sync", False):
             try:
                 spawn(push_docs(), name="pages-sync")
@@ -430,6 +440,7 @@ class VoiceMonitor:
             await self._final_progress(terminal=False)
         elif isinstance(event, MilestoneReached):
             await self.announcer.announce_milestone(event)
+            await self._announce_difficulty_escalation(event)
             self.sync_status()
         elif isinstance(event, EventFailed):
             await self.announcer.announce_failure(event)
@@ -446,6 +457,36 @@ class VoiceMonitor:
             await self._final_progress()
             self.reports.schedule()
             self.sync_status()
+
+    async def _announce_difficulty_escalation(self, event: MilestoneReached) -> None:
+        """Post the difficulty escalation that a milestone just unlocked.
+
+        Difficulty tiers unlock exactly at milestones (32h/64h/96h/128h), but
+        the milestone message only talks about the reward — so without this,
+        dead checks, gambling and the new Hell Events would silently appear.
+        The escalation announcement goes to the announcement channel, right
+        after the milestone itself. Late re-announcements (crash recovery)
+        never re-post it.
+        """
+        if event.late:
+            return
+        try:
+            from .difficulty import get_difficulty
+
+            override = self.engine.difficulty_override
+            before = get_difficulty(max(0.0, event.milestone.seconds - 60.0), override=override)
+            after = get_difficulty(event.milestone.seconds, override=override)
+            if after.level <= before.level:
+                return
+            log.info(
+                "Difficulty escalated to Level %d (%s) at the %dh milestone",
+                after.level,
+                after.name,
+                event.milestone.hours,
+            )
+            await self.announcer.announce_difficulty(after)
+        except Exception:
+            log.exception("Could not announce the difficulty escalation")
 
     async def _final_progress(self, *, terminal: bool = True) -> None:
         self._terminal_rendered = terminal

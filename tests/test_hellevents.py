@@ -148,7 +148,8 @@ def test_inferno_speeds_up_alive_checks(engine, config, store):
     normal_delay = checks.pick_delay(now)
     assert normal_delay >= 3600.0
 
-    # Start Inferno
+    # Start Inferno (unlocks at Difficulty 2)
+    engine.set_difficulty_override(2)
     asyncio.run(engine.hell_events.start_event(HellEventType.INFERNO, now, [ParticipantRef(100, "Alice")]))
     assert engine.hell_events.is_inferno_active(now)
 
@@ -165,7 +166,8 @@ def test_blindness_hides_progress_info(engine, config):
     snap_normal = engine.snapshot(now=now + 10.0)
     assert not snap_normal.blindness_active
 
-    # Start Blindness
+    # Start Blindness (unlocks at Difficulty 1)
+    engine.set_difficulty_override(1)
     asyncio.run(engine.hell_events.start_event(HellEventType.BLINDNESS, now + 10.0, [ParticipantRef(100, "Alice")]))
     assert engine.hell_events.is_blindness_active(now + 15.0)
 
@@ -294,6 +296,7 @@ def test_hellevents_pause_and_resume_shifts_schedule(engine, config):
 def test_time_vortex_halves_user_credit(engine, config):
     now = now_ts()
     start(engine, now, 100)
+    engine.set_difficulty_override(1)  # Time Vortex unlocks at Difficulty 1
 
     participants = [ParticipantRef(100, "Alice")]
     engine.tick(obs(now + 5.0, 100))
@@ -319,6 +322,7 @@ def test_time_vortex_halves_user_credit(engine, config):
 def test_blood_debt_charges_everyone_in_vc(engine, config):
     now = now_ts()
     start(engine, now, 100, 200)
+    engine.set_difficulty_override(3)  # Blood Debt unlocks at Difficulty 3
     engine.tick(obs(now + 5.0, 100, 200))
 
     participants = [ParticipantRef(100, "Alice"), ParticipantRef(200, "Bob")]
@@ -329,7 +333,7 @@ def test_blood_debt_charges_everyone_in_vc(engine, config):
     assert started.record.state is HellEventState.COMPLETED  # instant
     assert set(started.record.affected_users) == {100, 200}
 
-    # Difficulty 0 penalty is 120s: everyone drops from 5s to 0 (clamped)
+    # Difficulty 3 penalty is 255s: everyone drops from 5s to 0 (clamped)
     for uid in (100, 200):
         seconds = next(e.seconds for e in engine.leaderboard() if e.user_id == uid)
         assert seconds == 0.0
@@ -338,6 +342,7 @@ def test_blood_debt_charges_everyone_in_vc(engine, config):
 def test_soul_cache_rewards_one_random_participant(engine, config):
     now = now_ts()
     start(engine, now, 100, 200)
+    engine.set_difficulty_override(2)  # Soul Cache unlocks at Difficulty 2
     engine.tick(obs(now + 5.0, 100, 200))
 
     participants = [ParticipantRef(100, "Alice"), ParticipantRef(200, "Bob")]
@@ -353,8 +358,8 @@ def test_soul_cache_rewards_one_random_participant(engine, config):
     assert started.record.affected_users == [winner_id]
 
     board = {e.user_id: e.seconds for e in engine.leaderboard()}
-    # Winner: 5s of presence + 600s bonus (difficulty 0); loser keeps 5s.
-    assert board[winner_id] == pytest.approx(605.0)
+    # Winner: 5s of presence + 900s bonus (Difficulty 2); loser keeps 5s.
+    assert board[winner_id] == pytest.approx(905.0)
     other = 200 if winner_id == 100 else 100
     assert board[other] == pytest.approx(5.0)
     winner_name = "Alice" if winner_id == 100 else "Bob"
@@ -421,6 +426,7 @@ def test_culling_triggers_an_immediate_roll_call(engine, config, store):
 
     now = now_ts()
     start(engine, now, 100, 200)
+    engine.set_difficulty_override(2)  # The Culling unlocks at Difficulty 2
     checks.bind(engine.event_uid, now=now)
 
     participants = [ParticipantRef(100, "Alice"), ParticipantRef(200, "Bob")]
@@ -445,6 +451,7 @@ def test_culling_is_skipped_when_a_check_is_already_running(engine, config, stor
 
     now = now_ts()
     start(engine, now, 100)
+    engine.set_difficulty_override(2)  # so the skip is really about the pending check
     checks.bind(engine.event_uid, now=now)
     checks.pending = PendingCheck(
         check_id="x", started_ts=now, deadline_ts=now + 300, required={100: "Alice"}
@@ -526,6 +533,7 @@ def test_secret_events_only_apply_to_timed_events(engine, config):
 def test_tick_rolls_secret_events_from_the_timed_pool(engine, config, store):
     now = now_ts()
     start(engine, now, 100)
+    engine.set_difficulty_override(1)  # Blindness only enters the pool at Difficulty 1
     mgr = engine.hell_events
     store.set_next_hell_event(engine.event_uid, now - 1)
 
@@ -657,6 +665,7 @@ def test_inferno_accelerates_the_already_scheduled_roll_call(engine, config, sto
 
     now = now_ts()
     start(engine, now, 100)
+    engine.set_difficulty_override(2)  # Inferno unlocks at Difficulty 2
     checks.bind(engine.event_uid, now=now)
 
     # A roll call is scheduled hours away…
@@ -673,3 +682,302 @@ def test_inferno_accelerates_the_already_scheduled_roll_call(engine, config, sto
     assert started is not None
     accelerated = checks.next_check_ts()
     assert now + 180.0 <= accelerated <= now + 360.0
+
+
+# ========================================================= difficulty unlocks
+
+
+def test_event_unlock_table_covers_every_event_exactly_once():
+    from hell.hellevents import EVENT_UNLOCK_LEVELS
+
+    assert set(EVENT_UNLOCK_LEVELS) == set(HellEventType)
+    assert all(0 <= lvl <= 4 for lvl in EVENT_UNLOCK_LEVELS.values())
+    # Hell Jackpot boosts gambling — which itself only exists from Difficulty 3.
+    assert EVENT_UNLOCK_LEVELS[HellEventType.JACKPOT] == 3
+    # Friendly events are there from the very start.
+    for ev in (HellEventType.DOUBLE_TIME, HellEventType.BLOOD_PACT, HellEventType.GOLDEN_HOUR):
+        assert EVENT_UNLOCK_LEVELS[ev] == 0
+
+
+def test_available_event_pools_grow_with_difficulty():
+    from hell.hellevents import (
+        available_event_names,
+        available_event_types,
+        available_timed_event_types,
+        newly_unlocked_event_names,
+        newly_unlocked_event_types,
+    )
+
+    pools = [available_event_types(lvl) for lvl in range(5)]
+    # Pools only ever grow, and level 4 holds the full catalogue.
+    import itertools
+
+    for lower, higher in itertools.pairwise(pools):
+        assert set(lower) <= set(higher)
+    assert len(pools[0]) == 3
+    assert set(pools[4]) == set(HellEventType)
+
+    # What a tier newly unlocks is exactly the pool growth at that tier.
+    for lvl in range(1, 5):
+        growth = set(pools[lvl]) - set(pools[lvl - 1])
+        assert growth == set(newly_unlocked_event_types(lvl))
+
+    # Level 0 "unlocks" the starter trio; every later tier strictly adds.
+    assert set(newly_unlocked_event_types(0)) == set(pools[0])
+    assert "Hell Jackpot" in newly_unlocked_event_names(3)
+    assert "Blood Debt" in newly_unlocked_event_names(3)
+    assert available_event_names(0)  # display names resolve for the pool
+
+    # Secret candidates are always a subset of the regular pool.
+    for lvl in range(5):
+        assert set(available_timed_event_types(lvl)) <= set(pools[lvl])
+
+
+def test_pick_secret_event_type_respects_difficulty(engine, config, store):
+    mgr = HellEventManager(config, store, engine=engine)
+    # Level 0 only has one timed event — every secret draw must hit it.
+    for _ in range(20):
+        assert mgr.pick_secret_event_type(0) is HellEventType.DOUBLE_TIME
+    # At max difficulty the whole timed pool is reachable.
+    seen = {mgr.pick_secret_event_type(4) for _ in range(200)}
+    from hell.hellevents import TIMED_EVENT_TYPES
+
+    assert seen == set(TIMED_EVENT_TYPES)
+
+
+def test_start_event_refuses_locked_events_and_reschedules(engine, config):
+    now = now_ts()
+    start(engine, now, 100)
+
+    # Difficulty 0: Jackpot is locked (needs Difficulty 3 / Torment).
+    started = asyncio.run(
+        engine.hell_events.start_event(HellEventType.JACKPOT, now, [ParticipantRef(100, "Alice")])
+    )
+    assert started is None
+    assert engine.hell_events.active_event is None
+    # The scheduler moved on instead of retrying the locked event every tick.
+    assert engine.hell_events.next_event_ts() is not None
+
+    # Raise the difficulty and the exact same event fires.
+    engine.set_difficulty_override(3)
+    started = asyncio.run(
+        engine.hell_events.start_event(HellEventType.JACKPOT, now, [ParticipantRef(100, "Alice")])
+    )
+    assert started is not None
+    assert started.record.event_type is HellEventType.JACKPOT
+
+
+def test_random_draws_never_pick_locked_events(engine, config, store):
+    """Run many due ticks at Difficulty 0: only Starter-tier events may fire."""
+    from hell.hellevents import EVENT_UNLOCK_LEVELS
+
+    now = now_ts()
+    start(engine, now, 100)
+    mgr = engine.hell_events
+
+    fired: list[HellEventType] = []
+    for i in range(60):
+        store.set_next_hell_event(engine.event_uid, now + i - 1)  # always due
+        outcomes = asyncio.run(mgr.tick(now + i, [ParticipantRef(100, "Alice")]))
+        for out in outcomes:
+            fired.append(out.record.event_type)
+        # End whatever started so the next tick can fire again.
+        if mgr.active_event is not None:
+            asyncio.run(mgr.end_active_event(now + i + 1))
+
+    assert fired, "the seeded run should have fired some events"
+    for ev in fired:
+        assert EVENT_UNLOCK_LEVELS[ev] == 0, f"{ev} fired below its unlock difficulty"
+
+
+def test_trigger_command_refuses_locked_events_until_their_tier(engine, config):
+    bot = MagicMock()
+    announcer = Announcer(bot, config, engine)
+    announcer.send = AsyncMock(return_value=MagicMock())
+    monitor = VoiceMonitor(bot, config, engine, announcer)
+    cog = HellCommands(bot, config, engine, monitor)
+
+    now = now_ts()
+    start(engine, now, 100)
+    engine.tick(obs(now, 100))
+
+    with patch.object(monitor, "collect", return_value=([ParticipantRef(100, "Alice")], [])):
+        # Difficulty 0 — Blood Debt (Torment, 96h) is locked.
+        ok, msg = asyncio.run(cog._handle_trigger_hell_event("blood_debt"))
+        assert not ok
+        assert "locked" in msg.lower()
+        assert "Difficulty 3" in msg
+        assert engine.hell_events.active_event is None
+
+        # Unlock the tier and the same command succeeds.
+        engine.set_difficulty_override(3)
+        ok, msg = asyncio.run(cog._handle_trigger_hell_event("blood_debt"))
+        assert ok, msg
+        assert engine.hell_events.active_event is None  # instant event
+        assert "Blood Debt" in msg or "BLOOD DEBT" in msg.upper()
+
+
+def test_unknown_event_options_list_only_unlocked_events(engine, config):
+    bot = MagicMock()
+    announcer = Announcer(bot, config, engine)
+    monitor = VoiceMonitor(bot, config, engine, announcer)
+    cog = HellCommands(bot, config, engine, monitor)
+
+    now = now_ts()
+    start(engine, now, 100)
+    engine.tick(obs(now, 100))
+
+    ok, msg = asyncio.run(cog._handle_trigger_hell_event("not_an_event"))
+    assert not ok
+    # At Difficulty 0 the suggestion list must not contain locked events.
+    assert "`jackpot`" not in msg
+    assert "`double_time`" in msg
+
+
+# ==================================================== new events (Task 3)
+
+
+def test_new_event_modifiers_and_scaling():
+    # Overdrive — a milder Double Time.
+    m_od0 = get_event_modifier(HellEventType.OVERDRIVE, difficulty_level=0)
+    assert m_od0.time_multiplier == 1.5
+    assert m_od0.duration_seconds == 300.0
+    assert get_event_modifier(HellEventType.OVERDRIVE, difficulty_level=4).time_multiplier == 1.75
+
+    # Ember Rain — a milder check storm.
+    m_er = get_event_modifier(HellEventType.EMBER_RAIN, difficulty_level=2)
+    assert m_er.duration_seconds == 600.0
+    assert m_er.inferno_min_check_seconds == 480.0
+    assert m_er.inferno_max_check_seconds == 900.0
+
+    # Fortune's Wheel — a milder Jackpot.
+    m_fw3 = get_event_modifier(HellEventType.FORTUNES_WHEEL, difficulty_level=3)
+    assert m_fw3.duration_seconds == 300.0
+    assert m_fw3.gamble_bonus_multiplier == 0.75
+    assert get_event_modifier(HellEventType.FORTUNES_WHEEL, difficulty_level=4).gamble_bonus_multiplier == 1.0
+
+
+def test_new_events_unlock_at_the_right_tiers():
+    from hell.hellevents import EVENT_UNLOCK_LEVELS
+
+    assert EVENT_UNLOCK_LEVELS[HellEventType.OVERDRIVE] == 1
+    assert EVENT_UNLOCK_LEVELS[HellEventType.EMBER_RAIN] == 2
+    assert EVENT_UNLOCK_LEVELS[HellEventType.FORTUNES_WHEEL] == 3
+
+    # The new events are timed, therefore secret-eligible.
+    from hell.hellevents import TIMED_EVENT_TYPES
+
+    for ev in (HellEventType.OVERDRIVE, HellEventType.EMBER_RAIN, HellEventType.FORTUNES_WHEEL):
+        assert ev in TIMED_EVENT_TYPES
+
+
+def test_overdrive_boosts_personal_time(engine, config):
+    now = now_ts()
+    start(engine, now, 100)
+    engine.set_difficulty_override(1)  # Overdrive unlocks at Difficulty 1
+
+    engine.tick(obs(now + 5.0, 100))
+    time_normal = next(e.seconds for e in engine.leaderboard() if e.user_id == 100)
+    assert time_normal == pytest.approx(5.0)
+
+    asyncio.run(
+        engine.hell_events.start_event(
+            HellEventType.OVERDRIVE, now + 5.0, [ParticipantRef(100, "Alice")]
+        )
+    )
+    assert engine.hell_events.get_time_multiplier(now + 6.0) == 1.5
+
+    # 5 seconds at 1.5x -> +7.5 seconds.
+    engine.tick(obs(now + 10.0, 100))
+    time_boosted = next(e.seconds for e in engine.leaderboard() if e.user_id == 100)
+    assert time_boosted == pytest.approx(12.5)
+
+    asyncio.run(engine.hell_events.end_active_event(now + 305.0))
+    assert engine.hell_events.get_time_multiplier(now + 306.0) == 1.0
+
+
+def test_fortunes_wheel_boosts_gambling(engine, config):
+    now = now_ts()
+    start(engine, now, 100)
+    engine.set_difficulty_override(3)  # Fortune's Wheel unlocks at Difficulty 3
+
+    asyncio.run(
+        engine.hell_events.start_event(
+            HellEventType.FORTUNES_WHEEL, now, [ParticipantRef(100, "Alice")]
+        )
+    )
+    assert engine.hell_events.get_gamble_modifier(now) == 0.75
+
+    # Expired event pays no bonus.
+    asyncio.run(engine.hell_events.end_active_event(now + 301.0))
+    assert engine.hell_events.get_gamble_modifier(now + 302.0) == 0.0
+
+
+def test_check_storm_window_covers_both_storms(engine, config):
+    now = now_ts()
+    start(engine, now, 100)
+    mgr = engine.hell_events
+
+    # Nothing active -> normal cadence.
+    assert mgr.check_storm_window(now) is None
+
+    engine.set_difficulty_override(2)  # both storms unlock at Difficulty 2
+    asyncio.run(mgr.start_event(HellEventType.INFERNO, now, [ParticipantRef(100, "Alice")]))
+    assert mgr.check_storm_window(now) == (180.0, 360.0)
+
+    asyncio.run(mgr.end_active_event(now + 601.0))
+    assert mgr.check_storm_window(now + 602.0) is None  # expired -> normal cadence
+
+    asyncio.run(mgr.start_event(HellEventType.EMBER_RAIN, now + 602.0, [ParticipantRef(100, "Alice")]))
+    assert mgr.check_storm_window(now + 603.0) == (480.0, 900.0)
+
+    # Non-storm timed events never compress the cadence.
+    asyncio.run(mgr.end_active_event(now + 1203.0))
+    asyncio.run(mgr.start_event(HellEventType.BLINDNESS, now + 1203.0, [ParticipantRef(100, "Alice")]))
+    assert mgr.check_storm_window(now + 1204.0) is None
+
+
+def test_ember_rain_accelerates_the_scheduled_roll_call(engine, config, store):
+    from hell.alivecheck import AliveCheckManager
+
+    checks = AliveCheckManager(config, store, MagicMock(), engine=engine)
+    engine.hell_events.alive_checks = checks
+
+    now = now_ts()
+    start(engine, now, 100)
+    engine.set_difficulty_override(2)  # Ember Rain unlocks at Difficulty 2
+    checks.bind(engine.event_uid, now=now)
+
+    far_future = now + 4 * HOUR
+    store.set_next_alive_check(engine.event_uid, far_future)
+    assert checks.next_check_ts() == far_future
+
+    started = asyncio.run(
+        engine.hell_events.start_event(
+            HellEventType.EMBER_RAIN, now, [ParticipantRef(100, "Alice")]
+        )
+    )
+    assert started is not None
+    accelerated = checks.next_check_ts()
+    assert now + 480.0 <= accelerated <= now + 900.0
+
+
+def test_ember_rain_delays_stay_in_the_storm_window(engine, config, store):
+    from hell.alivecheck import AliveCheckManager
+
+    checks = AliveCheckManager(config, store, MagicMock(), engine=engine)
+    engine.hell_events.alive_checks = checks
+
+    now = now_ts()
+    start(engine, now, 100)
+    engine.set_difficulty_override(2)
+    checks.bind(engine.event_uid, now=now)
+
+    normal_delay = checks.pick_delay(now)
+    assert normal_delay >= 3600.0
+
+    asyncio.run(
+        engine.hell_events.start_event(HellEventType.EMBER_RAIN, now, [ParticipantRef(100, "Alice")])
+    )
+    storm_delay = checks.pick_delay(now)
+    assert 480.0 <= storm_delay <= 900.0

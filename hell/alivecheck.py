@@ -323,10 +323,12 @@ class AliveCheckManager:
 
     def pick_delay(self, now: Optional[float] = None) -> float:
         """A random delay scaled by current difficulty (1-6h, 1-5h, 1-4h, 1-3h, 1-2h)."""
-        # If Inferno Hell Event is active, checks occur at an accelerated 3–6 minute interval
+        # While a check storm is active (Inferno 3–6 min, Ember Rain 8–15 min)
+        # roll calls follow the storm's window instead of the difficulty cadence.
         if self.engine is not None and getattr(self.engine, "hell_events", None):
-            if self.engine.hell_events.is_inferno_active(now):
-                return self.rng.uniform(180.0, 360.0)
+            window = self.engine.hell_events.check_storm_window(now)
+            if window is not None:
+                return self.rng.uniform(*window)
 
         diff = self.current_difficulty(now)
         min_hours = min(self.config.alive_check_min_hours, diff.min_check_hours)

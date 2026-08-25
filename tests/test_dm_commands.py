@@ -415,6 +415,20 @@ def test_dm_alivecheck(wired, config, engine):
     assert "Alive check posted" in ctx_running.text()
 
 
+def test_prefix_alivecheck_refused_in_guild_channels(wired, config, engine):
+    """The alive check lever is DM-only — a server channel must be refused."""
+    cog, bot, _text, _voice = wired
+    start(engine, now_ts(), 1, 2)
+
+    ctx_guild = FakeContext(
+        bot, FakeAuthor(uid=config.log_dm_user_id), guild_id=123
+    )
+    call(cog, "prefix_alivecheck", ctx_guild)
+
+    assert TEXT.CMD_DM_ONLY in ctx_guild.text()
+    assert cog.monitor.alive_checks.pending is None
+
+
 def test_dm_pause_and_resume(wired, config, engine):
     cog, bot, _text, _voice = wired
     start(engine, now_ts() - 3600, 1)

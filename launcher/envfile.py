@@ -83,6 +83,10 @@ FIELDS: tuple[Field, ...] = (
           help="Comma-separated bot user IDs that must never stay in the VC."),
     Field("WEB_PORT", "Web dashboard port", "Advanced", default="8080",
           help="Port for the live web dashboard (0 to disable)."),
+    Field("WEB_PUBLIC_URL", "Public dashboard URL", "Advanced",
+          help="Public address of this dashboard (e.g. https://hell.example.com). "
+               "Published so the GitHub Pages site can connect to the real bot live. "
+               "Empty = not published."),
     Field("GITHUB_PAGES_SYNC", "Push status to GitHub Pages", "Advanced", default="false",
           help="Auto-commit and push docs/ after each heartbeat so GitHub Pages stays current."),
     Field("LOG_LEVEL", "Log level", "Advanced", default="INFO"),

@@ -18,6 +18,12 @@ Connecting correctly, whichever way the browser reaches us:
   * ``/status.json`` is served LIVE from the bot's current state — the static
     ``docs/status.json`` file (rewritten only every 15-minute heartbeat) is
     now a fallback for when no live provider is registered, e.g. GitHub Pages.
+
+CORS: every response carries ``Access-Control-Allow-Origin: *`` so the static
+GitHub Pages site (a different origin) can connect straight to the *real*
+running bot — fetching live ``/status.json`` / ``/health`` or opening the
+WebSocket. Browsers do not apply CORS to WebSocket handshakes, but the HTTP
+fallbacks would be blocked without these headers.
 """
 
 from __future__ import annotations
@@ -50,6 +56,34 @@ _status_provider: Optional[Callable[[], dict[str, Any]]] = None
 
 
 # ------------------------------------------------------------------ handlers
+
+
+@web.middleware
+async def _cors_middleware(
+    request: web.Request, handler: Callable[..., Any]
+) -> web.StreamResponse:
+    """Allow any origin to read the bot's live data.
+
+    The dashboard pages are usually served by GitHub Pages (a different
+    origin than the machine running the bot). Without these headers the
+    browser would refuse to fetch ``/status.json`` or ``/health`` from the
+    real bot, leaving the static site stuck on the stale committed snapshot.
+    OPTIONS preflights are answered here directly with 204.
+    """
+    if request.method == "OPTIONS":
+        resp: web.StreamResponse = web.Response(status=204)
+    else:
+        resp = await handler(request)
+        if isinstance(resp, web.WebSocketResponse):
+            # The upgrade response is already prepared; headers added now
+            # would never be sent, and browsers don't apply CORS to
+            # WebSocket handshakes anyway.
+            return resp
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    resp.headers["Access-Control-Max-Age"] = "3600"
+    return resp
 
 
 async def _handle_index(request: web.Request) -> web.FileResponse:
@@ -122,7 +156,7 @@ async def _handle_health(request: web.Request) -> web.Response:
 
 
 def create_app() -> web.Application:
-    app = web.Application()
+    app = web.Application(middlewares=[_cors_middleware])
     app.router.add_get("/", _handle_index)
     app.router.add_get("/dev", _handle_dev)
     app.router.add_get("/status.json", _handle_status_json)

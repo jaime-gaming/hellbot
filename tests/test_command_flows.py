@@ -227,6 +227,64 @@ def test_dm_operator_only_check_rules(wired, config):
     assert run(predicate(dm_op)) is True
 
 
+def test_dm_host_only_check_rules(wired, config, host, monkeypatch):
+    cog, bot, _text, _voice = wired
+    predicate = cog.alivecheck.checks[0]
+
+    # In a guild -> DMsClosed: the alive check lever lives in DMs only.
+    guild_interaction = FakeInteraction(bot, _member(host))
+    with pytest.raises(DMsClosed):
+        run(predicate(guild_interaction))
+
+    # In DM, the operator passes without any role lookup.
+    dm_op = FakeInteraction(bot, FakeAuthor(uid=config.log_dm_user_id))
+    dm_op.guild = None
+    assert run(predicate(dm_op)) is True
+
+    class FakeGuild:
+        def __init__(self, members):
+            self._members = {m.id: m for m in members}
+
+        def get_member(self, uid):
+            return self._members.get(uid)
+
+        async def fetch_member(self, uid):
+            member = self._members.get(uid)
+            if member is None:
+                from unittest.mock import MagicMock
+
+                raise discord.NotFound(MagicMock(status=404), "unknown member")
+            return member
+
+    member = _member(host)
+    monkeypatch.setattr(bot, "get_guild", lambda _gid: FakeGuild([member]))
+
+    # In DM, a gamenight host (role resolved via the configured guild) passes.
+    dm_host = FakeInteraction(bot, FakeAuthor(uid=host.id))
+    dm_host.guild = None
+    assert run(predicate(dm_host)) is True
+
+    # In DM, anyone without the host role is rejected.
+    dm_outsider = FakeInteraction(bot, FakeAuthor(uid=9999))
+    dm_outsider.guild = None
+    with pytest.raises(NotAHost):
+        run(predicate(dm_outsider))
+
+    # No guild resolvable at all -> still NotAHost (never a crash).
+    monkeypatch.setattr(bot, "get_guild", lambda _gid: None)
+
+    async def no_guild(_gid):
+        from unittest.mock import MagicMock
+
+        raise discord.HTTPException(MagicMock(status=500), "down")
+
+    monkeypatch.setattr(bot, "fetch_guild", no_guild)
+    stranded = FakeInteraction(bot, _member(host))
+    stranded.guild = None
+    with pytest.raises(NotAHost):
+        run(predicate(stranded))
+
+
 def test_restart_command_exits_with_restart_code(wired, config):
     cog, bot, _text, _voice = wired
     dm_op = FakeInteraction(bot, FakeAuthor(uid=config.log_dm_user_id))

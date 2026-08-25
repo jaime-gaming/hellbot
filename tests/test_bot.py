@@ -198,16 +198,19 @@ async def _noop(*_args, **_kwargs):
 
 
 def test_setup_hook_registers_the_commands_and_syncs(bot, monkeypatch):
-    synced: dict = {}
+    # setup_hook syncs twice: once to the guild (fast, server commands) and
+    # once globally (so DM-only commands like /hell alivecheck appear in DMs).
+    synced_targets: list[object] = []
 
     async def fake_sync(*, guild=None):
-        synced["guild"] = getattr(guild, "id", None)
+        synced_targets.append(getattr(guild, "id", None))
         return [1, 2, 3]
 
     monkeypatch.setattr(bot.tree, "sync", fake_sync)
     run(bot.setup_hook())
 
-    assert synced["guild"] == bot.config.guild_id
+    assert bot.config.guild_id in synced_targets
+    assert None in synced_targets  # the global (DM) sync ran too
     assert bot.get_cog("hell") is not None
 
 

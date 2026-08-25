@@ -832,3 +832,152 @@ def test_unknown_event_options_list_only_unlocked_events(engine, config):
     # At Difficulty 0 the suggestion list must not contain locked events.
     assert "`jackpot`" not in msg
     assert "`double_time`" in msg
+
+
+# ==================================================== new events (Task 3)
+
+
+def test_new_event_modifiers_and_scaling():
+    # Overdrive — a milder Double Time.
+    m_od0 = get_event_modifier(HellEventType.OVERDRIVE, difficulty_level=0)
+    assert m_od0.time_multiplier == 1.5
+    assert m_od0.duration_seconds == 300.0
+    assert get_event_modifier(HellEventType.OVERDRIVE, difficulty_level=4).time_multiplier == 1.75
+
+    # Ember Rain — a milder check storm.
+    m_er = get_event_modifier(HellEventType.EMBER_RAIN, difficulty_level=2)
+    assert m_er.duration_seconds == 600.0
+    assert m_er.inferno_min_check_seconds == 480.0
+    assert m_er.inferno_max_check_seconds == 900.0
+
+    # Fortune's Wheel — a milder Jackpot.
+    m_fw3 = get_event_modifier(HellEventType.FORTUNES_WHEEL, difficulty_level=3)
+    assert m_fw3.duration_seconds == 300.0
+    assert m_fw3.gamble_bonus_multiplier == 0.75
+    assert get_event_modifier(HellEventType.FORTUNES_WHEEL, difficulty_level=4).gamble_bonus_multiplier == 1.0
+
+
+def test_new_events_unlock_at_the_right_tiers():
+    from hell.hellevents import EVENT_UNLOCK_LEVELS
+
+    assert EVENT_UNLOCK_LEVELS[HellEventType.OVERDRIVE] == 1
+    assert EVENT_UNLOCK_LEVELS[HellEventType.EMBER_RAIN] == 2
+    assert EVENT_UNLOCK_LEVELS[HellEventType.FORTUNES_WHEEL] == 3
+
+    # The new events are timed, therefore secret-eligible.
+    from hell.hellevents import TIMED_EVENT_TYPES
+
+    for ev in (HellEventType.OVERDRIVE, HellEventType.EMBER_RAIN, HellEventType.FORTUNES_WHEEL):
+        assert ev in TIMED_EVENT_TYPES
+
+
+def test_overdrive_boosts_personal_time(engine, config):
+    now = now_ts()
+    start(engine, now, 100)
+    engine.set_difficulty_override(1)  # Overdrive unlocks at Difficulty 1
+
+    engine.tick(obs(now + 5.0, 100))
+    time_normal = next(e.seconds for e in engine.leaderboard() if e.user_id == 100)
+    assert time_normal == pytest.approx(5.0)
+
+    asyncio.run(
+        engine.hell_events.start_event(
+            HellEventType.OVERDRIVE, now + 5.0, [ParticipantRef(100, "Alice")]
+        )
+    )
+    assert engine.hell_events.get_time_multiplier(now + 6.0) == 1.5
+
+    # 5 seconds at 1.5x -> +7.5 seconds.
+    engine.tick(obs(now + 10.0, 100))
+    time_boosted = next(e.seconds for e in engine.leaderboard() if e.user_id == 100)
+    assert time_boosted == pytest.approx(12.5)
+
+    asyncio.run(engine.hell_events.end_active_event(now + 305.0))
+    assert engine.hell_events.get_time_multiplier(now + 306.0) == 1.0
+
+
+def test_fortunes_wheel_boosts_gambling(engine, config):
+    now = now_ts()
+    start(engine, now, 100)
+    engine.set_difficulty_override(3)  # Fortune's Wheel unlocks at Difficulty 3
+
+    asyncio.run(
+        engine.hell_events.start_event(
+            HellEventType.FORTUNES_WHEEL, now, [ParticipantRef(100, "Alice")]
+        )
+    )
+    assert engine.hell_events.get_gamble_modifier(now) == 0.75
+
+    # Expired event pays no bonus.
+    asyncio.run(engine.hell_events.end_active_event(now + 301.0))
+    assert engine.hell_events.get_gamble_modifier(now + 302.0) == 0.0
+
+
+def test_check_storm_window_covers_both_storms(engine, config):
+    now = now_ts()
+    start(engine, now, 100)
+    mgr = engine.hell_events
+
+    # Nothing active -> normal cadence.
+    assert mgr.check_storm_window(now) is None
+
+    engine.set_difficulty_override(2)  # both storms unlock at Difficulty 2
+    asyncio.run(mgr.start_event(HellEventType.INFERNO, now, [ParticipantRef(100, "Alice")]))
+    assert mgr.check_storm_window(now) == (180.0, 360.0)
+
+    asyncio.run(mgr.end_active_event(now + 601.0))
+    assert mgr.check_storm_window(now + 602.0) is None  # expired -> normal cadence
+
+    asyncio.run(mgr.start_event(HellEventType.EMBER_RAIN, now + 602.0, [ParticipantRef(100, "Alice")]))
+    assert mgr.check_storm_window(now + 603.0) == (480.0, 900.0)
+
+    # Non-storm timed events never compress the cadence.
+    asyncio.run(mgr.end_active_event(now + 1203.0))
+    asyncio.run(mgr.start_event(HellEventType.BLINDNESS, now + 1203.0, [ParticipantRef(100, "Alice")]))
+    assert mgr.check_storm_window(now + 1204.0) is None
+
+
+def test_ember_rain_accelerates_the_scheduled_roll_call(engine, config, store):
+    from hell.alivecheck import AliveCheckManager
+
+    checks = AliveCheckManager(config, store, MagicMock(), engine=engine)
+    engine.hell_events.alive_checks = checks
+
+    now = now_ts()
+    start(engine, now, 100)
+    engine.set_difficulty_override(2)  # Ember Rain unlocks at Difficulty 2
+    checks.bind(engine.event_uid, now=now)
+
+    far_future = now + 4 * HOUR
+    store.set_next_alive_check(engine.event_uid, far_future)
+    assert checks.next_check_ts() == far_future
+
+    started = asyncio.run(
+        engine.hell_events.start_event(
+            HellEventType.EMBER_RAIN, now, [ParticipantRef(100, "Alice")]
+        )
+    )
+    assert started is not None
+    accelerated = checks.next_check_ts()
+    assert now + 480.0 <= accelerated <= now + 900.0
+
+
+def test_ember_rain_delays_stay_in_the_storm_window(engine, config, store):
+    from hell.alivecheck import AliveCheckManager
+
+    checks = AliveCheckManager(config, store, MagicMock(), engine=engine)
+    engine.hell_events.alive_checks = checks
+
+    now = now_ts()
+    start(engine, now, 100)
+    engine.set_difficulty_override(2)
+    checks.bind(engine.event_uid, now=now)
+
+    normal_delay = checks.pick_delay(now)
+    assert normal_delay >= 3600.0
+
+    asyncio.run(
+        engine.hell_events.start_event(HellEventType.EMBER_RAIN, now, [ParticipantRef(100, "Alice")])
+    )
+    storm_delay = checks.pick_delay(now)
+    assert 480.0 <= storm_delay <= 900.0

@@ -93,6 +93,15 @@ class HellBot(commands.Bot):
             log.info("Synced %d slash command(s) to guild %s", len(synced), self.config.guild_id)
         except discord.HTTPException as exc:
             log.error("Could not sync slash commands: %s", exc)
+        # DM-only commands (/hell restart, /hell alivecheck) are *global*
+        # commands — without syncing the global set they would never show up
+        # in DMs at all. Global sync is slow to propagate (up to an hour), so
+        # guild copies above keep the server responsive in the meantime.
+        try:
+            await self.tree.sync()
+            log.info("Synced global (DM-only) slash commands")
+        except discord.HTTPException as exc:
+            log.error("Could not sync global slash commands: %s", exc)
 
     async def on_ready(self) -> None:
         log.info("Welcome to Hell v%s — logged in as %s (%s)", __version__, self.user,

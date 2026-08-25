@@ -225,7 +225,7 @@ in the log, and in the launcher's Dashboard.
 | `/hell start` | `@gamenight host` | Starts the event: status → `RUNNING`, records the absolute start timestamp, starts the 160 h timer, begins VC monitoring + per-user tracking, posts the start announcement. Rejected if one is already running or the VC is empty (hard requirement). |
 | `/hell status` | everyone | Status, elapsed, remaining, % complete, progress bar, live VC headcount, current + next milestone, and the milestones already reached. Used **in the VC text chat** it instead replies with a link to the pinned live status card (Discord renders the preview). |
 | `/hell leaderboard` | everyone | Current (or frozen final) leaderboard: Top 3 on the podium, everyone else below. Used **in the VC text chat** it instead replies with a link to the pinned leaderboard — no second auto-updating copy is spawned there. |
-| `/hell alivecheck` | `@gamenight host` | Runs a roll call immediately instead of waiting for the random timer. |
+| `/hell alivecheck` | DM only: bot operator or `@gamenight host` | Runs a roll call immediately instead of waiting for the random timer. Usable **only in a DM to the bot**, never in a server channel. |
 | `/hell reloadmessages` | `@gamenight host` | Re-read `Announcements.py` so edited wording applies immediately. |
 | `/hell doctor` | `@gamenight host` | Self-check: preflight results, live state, background tasks and the (redacted) configuration. |
 | `/hell logs` | `@gamenight host` | Control the live log stream: `status`, `on`, `off`, `test`, `flush`, and the minimum severity. |
@@ -459,18 +459,21 @@ Every Hell Event announcement is posted in the **VC text chat only** — never i
 **Good events**
 
 1. **Double Time** (5 minutes): All valid humans in the VC receive **2× personal leaderboard time** while active (2.5× on Difficulty 4). The global 160h clock is not accelerated.
-2. **Blood Pact** (Instant): Everyone currently in the VC at the moment of the event receives an instant personal survival time bonus (**+5 minutes**, scaling up to +10m on Difficulty 4).
-3. **Hell Jackpot** (5 minutes): Temporarily increases gambling win multipliers (+1.0x bonus multiplier).
-4. **Golden Hour** (Instant): Hell looks away — the next roll call is **postponed by 30–50 minutes** (more relief the higher the difficulty). Skipped honestly if a roll call is already running.
-5. **Soul Cache** (Instant): A hidden cache of stolen time surfaces for **one random person** in the VC: **+10 minutes** of personal survival time, scaling up to +20m on Difficulty 4.
+2. **Overdrive** (5 minutes): A milder boost — **1.5× personal leaderboard time** while active (1.75× on Difficulty 4). Unlocks at Difficulty 1.
+3. **Blood Pact** (Instant): Everyone currently in the VC at the moment of the event receives an instant personal survival time bonus (**+5 minutes**, scaling up to +10m on Difficulty 4).
+4. **Hell Jackpot** (5 minutes): Temporarily increases gambling win multipliers (+1.0x bonus multiplier).
+5. **Fortune's Wheel** (5 minutes): A milder gambling boost (+0.75x bonus multiplier, +1.0x on Difficulty 4). Unlocks at Difficulty 3 alongside gambling itself.
+6. **Golden Hour** (Instant): Hell looks away — the next roll call is **postponed by 30–50 minutes** (more relief the higher the difficulty). Skipped honestly if a roll call is already running.
+7. **Soul Cache** (Instant): A hidden cache of stolen time surfaces for **one random person** in the VC: **+10 minutes** of personal survival time, scaling up to +20m on Difficulty 4.
 
 **Bad events**
 
-6. **Inferno** (10 minutes): Alive/Dead checks occur at a significantly accelerated frequency (every 3–6 minutes) while preserving normal response windows.
-7. **Blindness** (10 minutes): Temporarily hides remaining time and upcoming milestone from the progress card (`[HIDDEN BY BLINDNESS]`) while keeping the main elapsed timer and event status visible.
-8. **Time Vortex** (5 minutes): Personal leaderboard time runs at **half speed** for everyone in the VC (a quarter on Difficulty 4). The global clock is not touched.
-9. **Blood Debt** (Instant): The tax collectors of Hell come knocking — everyone in the VC is charged **-2 minutes** of personal survival time (scaling to -5m on Difficulty 4; never below zero).
-10. **The Culling** (Instant): An **immediate roll call** is triggered — reply `Yes` in time or be disconnected from the VC. Skipped if a roll call is already running.
+8. **Inferno** (10 minutes): Alive/Dead checks occur at a significantly accelerated frequency (every 3–6 minutes) while preserving normal response windows.
+9. **Ember Rain** (10 minutes): A milder check storm — roll calls fall every **8–15 minutes** while it lasts. Unlocks at Difficulty 2.
+10. **Blindness** (10 minutes): Temporarily hides remaining time and upcoming milestone from the progress card (`[HIDDEN BY BLINDNESS]`) while keeping the main elapsed timer and event status visible.
+11. **Time Vortex** (5 minutes): Personal leaderboard time runs at **half speed** for everyone in the VC (a quarter on Difficulty 4). The global clock is not touched.
+12. **Blood Debt** (Instant): The tax collectors of Hell come knocking — everyone in the VC is charged **-2 minutes** of personal survival time (scaling to -5m on Difficulty 4; never below zero).
+13. **The Culling** (Instant): An **immediate roll call** is triggered — reply `Yes` in time or be disconnected from the VC. Skipped if a roll call is already running.
 
 **Secret events** 🕯️
 

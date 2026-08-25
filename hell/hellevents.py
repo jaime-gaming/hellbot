@@ -6,23 +6,26 @@ Only one Hell Event may be active at any given time.
 
 Event Types (good):
 1. Double Time — 2x personal leaderboard time for humans in the VC.
-2. Blood Pact — Instant +5m (or difficulty-scaled) bonus to everyone in the VC.
-3. Hell Jackpot — Temporarily boosts gambling win multipliers.
-4. Golden Hour — Instantly postpones the next roll call.
-5. Soul Cache — Instant big bonus, but for ONE random person in the VC.
+2. Overdrive — Milder boost: 1.5x personal leaderboard time.
+3. Blood Pact — Instant +5m (or difficulty-scaled) bonus to everyone in the VC.
+4. Hell Jackpot — Temporarily boosts gambling win multipliers.
+5. Fortune's Wheel — Milder gambling boost while it lasts.
+6. Golden Hour — Instantly postpones the next roll call.
+7. Soul Cache — Instant big bonus, but for ONE random person in the VC.
 
 Event Types (bad):
-6. Inferno — Temporarily increased Alive/Dead check frequency.
-7. Blindness — Temporarily hides remaining time & next milestone on progress cards.
-8. Time Vortex — Personal leaderboard time runs at half (or quarter) speed.
-9. Blood Debt — Instant survival-time penalty for everyone in the VC.
-10. The Culling — Triggers an immediate roll call: reply Yes or be disconnected.
+8. Inferno — Temporarily increased Alive/Dead check frequency.
+9. Ember Rain — Milder check storm: roll calls every 8–15 minutes.
+10. Blindness — Temporarily hides remaining time & next milestone on progress cards.
+11. Time Vortex — Personal leaderboard time runs at half (or quarter) speed.
+12. Blood Debt — Instant survival-time penalty for everyone in the VC.
+13. The Culling — Triggers an immediate roll call: reply Yes or be disconnected.
 
 Difficulty unlocks (:data:`EVENT_UNLOCK_LEVELS`):
   Level 0 (Starter, 0h)      — Double Time, Blood Pact, Golden Hour
-  Level 1 (Heating Up, 32h)  — + Blindness, Time Vortex
-  Level 2 (Inferno, 64h)     — + Inferno, Soul Cache, The Culling
-  Level 3 (Torment, 96h)     — + Hell Jackpot, Blood Debt
+  Level 1 (Heating Up, 32h)  — + Blindness, Time Vortex, Overdrive
+  Level 2 (Inferno, 64h)     — + Inferno, Ember Rain, Soul Cache, The Culling
+  Level 3 (Torment, 96h)     — + Hell Jackpot, Fortune's Wheel, Blood Debt
   Level 4 (Cataclysm, 128h)  — the full pool
 
 An event can only fire (randomly or via `/hell hellevents trigger`) while the
@@ -60,10 +63,13 @@ log = logging.getLogger("hell.hellevents")
 
 class HellEventType(str, Enum):
     DOUBLE_TIME = "double_time"
+    OVERDRIVE = "overdrive"
     BLOOD_PACT = "blood_pact"
     INFERNO = "inferno"
+    EMBER_RAIN = "ember_rain"
     BLINDNESS = "blindness"
     JACKPOT = "jackpot"
+    FORTUNES_WHEEL = "fortunes_wheel"
     TIME_VORTEX = "time_vortex"
     GOLDEN_HOUR = "golden_hour"
     SOUL_CACHE = "soul_cache"
@@ -79,9 +85,12 @@ SECRET_EVENT_CHANCE = 0.25
 # an instant event (Blood Pact, The Culling, …) is obvious the second it fires.
 TIMED_EVENT_TYPES: tuple[HellEventType, ...] = (
     HellEventType.DOUBLE_TIME,
+    HellEventType.OVERDRIVE,
     HellEventType.INFERNO,
+    HellEventType.EMBER_RAIN,
     HellEventType.BLINDNESS,
     HellEventType.JACKPOT,
+    HellEventType.FORTUNES_WHEEL,
     HellEventType.TIME_VORTEX,
 )
 
@@ -102,10 +111,13 @@ EVENT_UNLOCK_LEVELS: dict[HellEventType, int] = {
     HellEventType.GOLDEN_HOUR: 0,
     HellEventType.BLINDNESS: 1,
     HellEventType.TIME_VORTEX: 1,
+    HellEventType.OVERDRIVE: 1,
     HellEventType.INFERNO: 2,
+    HellEventType.EMBER_RAIN: 2,
     HellEventType.SOUL_CACHE: 2,
     HellEventType.CULLING: 2,
     HellEventType.JACKPOT: 3,
+    HellEventType.FORTUNES_WHEEL: 3,
     HellEventType.BLOOD_DEBT: 3,
 }
 
@@ -238,6 +250,15 @@ def get_event_modifier(event_type: HellEventType, difficulty_level: int = 0) -> 
             duration_seconds=300.0,  # 5 minutes
             time_multiplier=mult,
         )
+    elif event_type is HellEventType.OVERDRIVE:
+        # A softer Double Time: +50% (up to +75% on Cataclysm).
+        mult = 1.5 if lvl < 4 else 1.75
+        return HellEventModifier(
+            event_type=event_type,
+            name="Overdrive",
+            duration_seconds=300.0,  # 5 minutes
+            time_multiplier=mult,
+        )
     elif event_type is HellEventType.BLOOD_PACT:
         bonus = 300.0 if lvl < 3 else (480.0 if lvl == 3 else 600.0)  # +5m, +8m, or +10m
         return HellEventModifier(
@@ -254,6 +275,15 @@ def get_event_modifier(event_type: HellEventType, difficulty_level: int = 0) -> 
             inferno_min_check_seconds=180.0,  # 3 minutes
             inferno_max_check_seconds=360.0,  # 6 minutes
         )
+    elif event_type is HellEventType.EMBER_RAIN:
+        # A milder check storm: roll calls every 8–15 minutes for 10 minutes.
+        return HellEventModifier(
+            event_type=event_type,
+            name="Ember Rain",
+            duration_seconds=600.0,  # 10 minutes
+            inferno_min_check_seconds=480.0,  # 8 minutes
+            inferno_max_check_seconds=900.0,  # 15 minutes
+        )
     elif event_type is HellEventType.BLINDNESS:
         return HellEventModifier(
             event_type=event_type,
@@ -265,6 +295,15 @@ def get_event_modifier(event_type: HellEventType, difficulty_level: int = 0) -> 
         return HellEventModifier(
             event_type=event_type,
             name="Hell Jackpot",
+            duration_seconds=300.0,  # 5 minutes
+            gamble_bonus_multiplier=bonus_mult,
+        )
+    elif event_type is HellEventType.FORTUNES_WHEEL:
+        # A softer Jackpot: +0.75x to gambling rewards (+1.0 on Cataclysm).
+        bonus_mult = 0.75 if lvl < 4 else 1.0
+        return HellEventModifier(
+            event_type=event_type,
+            name="Fortune's Wheel",
             duration_seconds=300.0,  # 5 minutes
             gamble_bonus_multiplier=bonus_mult,
         )
@@ -552,6 +591,18 @@ class HellEventManager:
                 duration=int(duration // 60),
                 multiplier=f"{mod.time_multiplier:g}",
             )
+        elif event_type is HellEventType.OVERDRIVE:
+            meta["multiplier"] = mod.time_multiplier
+            meta["duration_minutes"] = int(duration // 60)
+            ann_text = say(
+                getattr(
+                    TEXT,
+                    "HELL_EVENT_OVERDRIVE_START",
+                    "⚡ **HELL EVENT — OVERDRIVE**\n\nFor the next **{duration} minutes**, your personal leaderboard time is being multiplied by **{multiplier}x**.",
+                ),
+                duration=int(duration // 60),
+                multiplier=f"{mod.time_multiplier:g}",
+            )
         elif event_type is HellEventType.BLOOD_PACT:
             state = HellEventState.COMPLETED
             end_ts = now
@@ -589,6 +640,24 @@ class HellEventManager:
                 ),
                 duration=int(duration // 60),
             )
+        elif event_type is HellEventType.EMBER_RAIN:
+            meta["duration_minutes"] = int(duration // 60)
+            meta["min_check_seconds"] = mod.inferno_min_check_seconds
+            meta["max_check_seconds"] = mod.inferno_max_check_seconds
+            # Like Inferno (but milder): pull the scheduled roll call into the
+            # accelerated window so the storm bites right away.
+            if self.alive_checks is not None:
+                self.alive_checks.accelerate_next(
+                    mod.inferno_min_check_seconds, mod.inferno_max_check_seconds, now
+                )
+            ann_text = say(
+                getattr(
+                    TEXT,
+                    "HELL_EVENT_EMBER_RAIN_START",
+                    "🌧️ **HELL EVENT — EMBER RAIN**\n\nBurning embers drift down from above.\nRoll calls will fall every **8–15 minutes** for the next **{duration} minutes**.",
+                ),
+                duration=int(duration // 60),
+            )
         elif event_type is HellEventType.BLINDNESS:
             meta["duration_minutes"] = int(duration // 60)
             ann_text = say(
@@ -607,6 +676,17 @@ class HellEventManager:
                     TEXT,
                     "HELL_EVENT_JACKPOT_START",
                     "🎰 **HELL EVENT — JACKPOT**\n\nFor the next **{duration} minutes**, gambling rewards are increased.",
+                ),
+                duration=int(duration // 60),
+            )
+        elif event_type is HellEventType.FORTUNES_WHEEL:
+            meta["duration_minutes"] = int(duration // 60)
+            meta["bonus_multiplier"] = mod.gamble_bonus_multiplier
+            ann_text = say(
+                getattr(
+                    TEXT,
+                    "HELL_EVENT_FORTUNES_WHEEL_START",
+                    "🎡 **HELL EVENT — FORTUNE'S WHEEL**\n\nThe wheel is spinning in your favour. For the next **{duration} minutes**, gambling rewards are increased.",
                 ),
                 duration=int(duration // 60),
             )
@@ -792,12 +872,28 @@ class HellEventManager:
                     "🔥 **DOUBLE TIME HAS ENDED**\n\nHell is no longer feeling generous.",
                 )
             )
+        elif record.event_type is HellEventType.OVERDRIVE:
+            ann_text = str(
+                getattr(
+                    TEXT,
+                    "HELL_EVENT_OVERDRIVE_END",
+                    "⚡ **OVERDRIVE HAS ENDED**\n\nThe surge fades — time flows normally again.",
+                )
+            )
         elif record.event_type is HellEventType.INFERNO:
             ann_text = str(
                 getattr(
                     TEXT,
                     "HELL_EVENT_INFERNO_END",
                     "🔥 **INFERNO HAS SUBSIDED**\n\nThe heat recedes. Check frequency has returned to normal.",
+                )
+            )
+        elif record.event_type is HellEventType.EMBER_RAIN:
+            ann_text = str(
+                getattr(
+                    TEXT,
+                    "HELL_EVENT_EMBER_RAIN_END",
+                    "🌧️ **EMBER RAIN HAS PASSED**\n\nThe embers die out. Roll call frequency has returned to normal.",
                 )
             )
         elif record.event_type is HellEventType.BLINDNESS:
@@ -814,6 +910,14 @@ class HellEventManager:
                     TEXT,
                     "HELL_EVENT_JACKPOT_END",
                     "🎰 **JACKPOT HAS ENDED**\n\nGambling rewards have returned to normal.",
+                )
+            )
+        elif record.event_type is HellEventType.FORTUNES_WHEEL:
+            ann_text = str(
+                getattr(
+                    TEXT,
+                    "HELL_EVENT_FORTUNES_WHEEL_END",
+                    "🎡 **FORTUNE'S WHEEL HAS STOPPED**\n\nGambling rewards have returned to normal.",
                 )
             )
         elif record.event_type is HellEventType.TIME_VORTEX:
@@ -868,9 +972,11 @@ class HellEventManager:
     # ------------------------------------------------------------- queries
 
     def get_time_multiplier(self, now: Optional[float] = None) -> float:
-        """Return personal leaderboard time multiplier (2.0x during Double Time, 0.5x in a Time Vortex)."""
+        """Return personal leaderboard time multiplier (2.0x during Double Time,
+        1.5x during Overdrive, 0.5x in a Time Vortex)."""
         if self.active_event is not None and self.active_event.event_type in (
             HellEventType.DOUBLE_TIME,
+            HellEventType.OVERDRIVE,
             HellEventType.TIME_VORTEX,
         ):
             cur_now = now if now is not None else now_ts()
@@ -892,9 +998,32 @@ class HellEventManager:
             return cur_now < self.active_event.end_ts
         return False
 
+    def check_storm_window(self, now: Optional[float] = None) -> Optional[tuple[float, float]]:
+        """Accelerated roll-call window while a check storm is active.
+
+        Inferno (3–6 min) and Ember Rain (8–15 min) both compress the roll
+        call cadence; this returns ``(min_seconds, max_seconds)`` for whichever
+        is running, or ``None`` when the normal difficulty cadence applies.
+        """
+        if self.active_event is None or self.active_event.event_type not in (
+            HellEventType.INFERNO,
+            HellEventType.EMBER_RAIN,
+        ):
+            return None
+        cur_now = now if now is not None else now_ts()
+        if cur_now >= self.active_event.end_ts:
+            return None
+        meta = self.active_event.metadata
+        low = float(meta.get("min_check_seconds", 180.0))
+        high = float(meta.get("max_check_seconds", 360.0))
+        return (min(low, high), max(low, high))
+
     def get_gamble_modifier(self, now: Optional[float] = None) -> float:
-        """Return bonus multiplier for gambling if Jackpot is active."""
-        if self.active_event is not None and self.active_event.event_type is HellEventType.JACKPOT:
+        """Return bonus multiplier for gambling while Jackpot or Fortune's Wheel is active."""
+        if self.active_event is not None and self.active_event.event_type in (
+            HellEventType.JACKPOT,
+            HellEventType.FORTUNES_WHEEL,
+        ):
             cur_now = now if now is not None else now_ts()
             if cur_now < self.active_event.end_ts:
                 return float(self.active_event.metadata.get("bonus_multiplier", 1.0))

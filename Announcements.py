@@ -588,6 +588,11 @@ HELL_EVENT_DOUBLE_TIME_START = (
     "For the next **{duration} minutes**, your personal leaderboard time is being multiplied by **{multiplier}x**."
 )
 HELL_EVENT_DOUBLE_TIME_END = "🔥 **DOUBLE TIME HAS ENDED**\n\nHell is no longer feeling generous."
+HELL_EVENT_OVERDRIVE_START = (
+    "⚡ **HELL EVENT — OVERDRIVE**\n\n"
+    "For the next **{duration} minutes**, your personal leaderboard time is being multiplied by **{multiplier}x**."
+)
+HELL_EVENT_OVERDRIVE_END = "⚡ **OVERDRIVE HAS ENDED**\n\nThe surge fades — time flows normally again."
 HELL_EVENT_BLOOD_PACT_START = (
     "🩸 **HELL EVENT — BLOOD PACT**\n\n"
     "Everyone currently in Hell ({count} participants) has been granted **+{bonus}** of personal survival time."
@@ -598,6 +603,14 @@ HELL_EVENT_INFERNO_START = (
     "Alive and Dead Checks will occur more frequently for the next **{duration} minutes**."
 )
 HELL_EVENT_INFERNO_END = "🔥 **INFERNO HAS SUBSIDED**\n\nThe heat recedes. Check frequency has returned to normal."
+HELL_EVENT_EMBER_RAIN_START = (
+    "🌧️ **HELL EVENT — EMBER RAIN**\n\n"
+    "Burning embers drift down from above.\n"
+    "Roll calls will fall every **8–15 minutes** for the next **{duration} minutes**."
+)
+HELL_EVENT_EMBER_RAIN_END = (
+    "🌧️ **EMBER RAIN HAS PASSED**\n\nThe embers die out. Roll call frequency has returned to normal."
+)
 HELL_EVENT_BLINDNESS_START = (
     "👁️ **HELL EVENT — BLINDNESS**\n\n"
     "For the next **{duration} minutes**, Hell will hide your remaining time."
@@ -608,6 +621,11 @@ HELL_EVENT_JACKPOT_START = (
     "For the next **{duration} minutes**, gambling rewards are increased."
 )
 HELL_EVENT_JACKPOT_END = "🎰 **JACKPOT HAS ENDED**\n\nGambling rewards have returned to normal."
+HELL_EVENT_FORTUNES_WHEEL_START = (
+    "🎡 **HELL EVENT — FORTUNE'S WHEEL**\n\n"
+    "The wheel is spinning in your favour. For the next **{duration} minutes**, gambling rewards are increased."
+)
+HELL_EVENT_FORTUNES_WHEEL_END = "🎡 **FORTUNE'S WHEEL HAS STOPPED**\n\nGambling rewards have returned to normal."
 HELL_EVENT_TIME_VORTEX_START = (
     "🌀 **HELL EVENT — TIME VORTEX**\n\n"
     "For the next **{duration} minutes**, your personal leaderboard time is running at **{multiplier}x speed**.\n"

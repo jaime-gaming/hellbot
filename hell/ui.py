@@ -157,3 +157,45 @@ def dm_operator_only():
         return True
 
     return app_commands.check(predicate)
+
+
+def dm_host_only():
+    """Restrict a command to DMs; the operator or a `@gamenight host` may use it.
+
+    Some moderation levers (forcing a roll call) should not sit in a public
+    server channel where anyone can watch the button being pressed — so the
+    command only works in DMs.  In a DM the user has no roles, therefore the
+    host role is verified against the configured guild instead of the
+    interaction context.
+    """
+
+    async def predicate(interaction: discord.Interaction) -> bool:
+        if interaction.guild is not None:
+            raise DMsClosed("This command can only be used in DMs.")
+        config: Config = interaction.client.config  # type: ignore[attr-defined]
+        user = interaction.user
+        if user.id == config.log_dm_user_id:
+            return True  # the operator never needs a role check
+
+        client = interaction.client
+        guild = client.get_guild(config.guild_id)
+        if guild is None:
+            try:
+                guild = await client.fetch_guild(config.guild_id)
+            except discord.HTTPException:
+                guild = None
+        member = guild.get_member(user.id) if guild is not None else None
+        if member is None and guild is not None:
+            try:
+                member = await guild.fetch_member(user.id)
+            except discord.HTTPException:
+                member = None
+        if member is not None and any(
+            r.id == config.gamenight_host_role_id for r in member.roles
+        ):
+            return True
+        raise NotAHost(
+            "Only the bot operator or a `@gamenight host` can run this command."
+        )
+
+    return app_commands.check(predicate)

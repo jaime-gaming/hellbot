@@ -323,3 +323,66 @@ class FakeUser:
 
     async def send(self, **kwargs):
         self.dms.append(kwargs)
+
+
+# ------------------------------------------- difficulty escalation announcements
+
+
+def test_difficulty_escalation_is_announced_with_the_milestone(wired, engine, monkeypatch):
+    """The 32h milestone unlocks Difficulty 1 — the guild must be told in the
+    announcement channel, right after the milestone itself."""
+    monitor, _announcer, text, voice = wired
+    monkeypatch.setattr(monitor, "voice_channel", lambda: voice)
+
+    start(engine, T0, 1, 2)
+    for event in engine.tick(obs(T0 + 32 * HOUR, 1, 2)):
+        run(monitor.dispatch(event))
+
+    body = all_text(text)
+    assert "32 HOURS SURVIVED" in body
+    assert "DIFFICULTY UPDATE" in body
+    assert "Heating Up" in body  # the tier name made it into the post
+
+
+def test_every_unlocking_milestone_announces_its_tier(wired, engine, monkeypatch):
+    monitor, _announcer, text, voice = wired
+    monkeypatch.setattr(monitor, "voice_channel", lambda: voice)
+
+    start(engine, T0, 1, 2)
+    for hours, tier in ((32, "Heating Up"), (64, "Inferno"), (96, "Torment"), (128, "Cataclysm")):
+        for event in engine.tick(obs(T0 + hours * HOUR + 1, 1, 2)):
+            run(monitor.dispatch(event))
+        assert tier in all_text(text), f"the {hours}h escalation to {tier} was never posted"
+
+
+def test_milestone_without_tier_change_posts_no_escalation(wired, engine, monkeypatch):
+    """160h completes the run but changes no tier -> no escalation post."""
+    monitor, _announcer, text, voice = wired
+    monkeypatch.setattr(monitor, "voice_channel", lambda: voice)
+
+    start(engine, T0, 1, 2)
+    events = engine.tick(obs(T0 + 160 * HOUR, 1, 2))
+    milestone_160 = next(
+        e for e in events if isinstance(e, MilestoneReached) and e.milestone.hours == 160
+    )
+    run(monitor.dispatch(milestone_160))
+    assert "DIFFICULTY UPDATE" not in all_text(text)
+
+
+def test_late_milestone_reannouncement_skips_the_escalation(wired, engine, monkeypatch):
+    """Crash recovery re-posts claimed milestones — the escalation already
+    went out before the crash and must not be duplicated."""
+    monitor, _announcer, text, voice = wired
+    monkeypatch.setattr(monitor, "voice_channel", lambda: voice)
+
+    start(engine, T0, 1, 2)
+    run(
+        monitor.dispatch(
+            MilestoneReached(
+                milestone=get_milestone(32), reached_ts=T0, members=list(users(1, 2)), late=True
+            )
+        )
+    )
+    body = all_text(text)
+    assert "32 HOURS SURVIVED" in body       # the milestone itself is re-posted
+    assert "DIFFICULTY UPDATE" not in body   # the escalation is not

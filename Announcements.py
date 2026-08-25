@@ -655,6 +655,10 @@ CMD_HELLEVENTS_TRIGGERED = "⚡ Triggered Hell Event: **{name}**."
 CMD_HELLEVENTS_TRIGGERED_SECRET = (
     "🕯️ Triggered a **secret** Hell Event — its nature stays hidden until it ends."
 )
+CMD_HELLEVENTS_LOCKED = (
+    "🔒 **{name}** is locked — it unlocks at **Difficulty {level} ({tier})**, "
+    "{hours}h into the run. Current difficulty: **{current_level} ({current_name})**."
+)
 
 # Finale System
 FINALE_FINAL_HOUR_TITLE = "👹 THE FINAL HOUR"

@@ -1018,6 +1018,11 @@ class EmbedFactory:
             value=f"**Level {current.level}** — **{current.name}**\n*{current.description}*",
             inline=False,
         )
+        from .hellevents import (
+            available_event_names,
+            newly_unlocked_event_names,
+        )
+
         for lvl in range(5):
             d = DIFFICULTIES[lvl]
             unlocked = "✅ Active" if current.level >= lvl else f"🔒 Unlocks at {d.unlock_hours}h"
@@ -1036,11 +1041,18 @@ class EmbedFactory:
                     f"Lose: **-1.0x** + {d.gamble_loss_mute_seconds // 60}m mute | "
                     f"Limits: max **{d.gamble_max_bet_hours:g}h** bet, max **{d.gamble_hourly_limit}/hour**"
                 )
+            new_events = newly_unlocked_event_names(d.level)
+            events_info = f"{len(available_event_names(d.level))} event(s) in the pool"
+            if d.level == 0 and new_events:
+                events_info += f" — available from start: {', '.join(new_events)}"
+            elif new_events:
+                events_info += f" — 🆕 unlocks: {', '.join(new_events)}"
             embed.add_field(
                 name=f"Level {d.level}: {d.name} — {unlocked}{active_marker}",
                 value=f"• **Alive checks:** every {d.min_check_hours:g}–{d.max_check_hours:g}h\n"
                       f"• **Dead checks:** {dead_info}\n"
-                      f"• **Gambling:** {gamble_info}",
+                      f"• **Gambling:** {gamble_info}\n"
+                      f"• **Hell Events:** {events_info}",
                 inline=False,
             )
         self._brand(embed, timestamp=False)
@@ -1063,6 +1075,15 @@ class EmbedFactory:
                 f"Limits: max **{diff.gamble_max_bet_hours:g}h** bet, max **{diff.gamble_hourly_limit}/hour**"
             )
 
+        from .hellevents import available_event_names, newly_unlocked_event_names
+
+        new_events = newly_unlocked_event_names(diff.level)
+        events_line = (
+            f"• **Hell Events unlocked:** {', '.join(new_events)} 🆕"
+            if new_events
+            else f"• **Hell Events:** all {len(available_event_names(diff.level))} events in the pool"
+        )
+
         embed = discord.Embed(
             title=say(
                 getattr(TEXT, "DIFFICULTY_ANNOUNCE_TITLE", "⚡ DIFFICULTY UPDATE — LEVEL {level} ({name})"),
@@ -1074,7 +1095,8 @@ class EmbedFactory:
                 f"*{diff.description}*\n\n"
                 f"• **Alive checks:** every **{diff.min_check_hours:g}–{diff.max_check_hours:g}h**\n"
                 f"• **Dead checks:** **{dead_info}**\n"
-                f"• **Gambling:** **{gamble_info}**"
+                f"• **Gambling:** **{gamble_info}**\n"
+                f"{events_line}"
             ),
             color=theme_color("RUNNING"),
         )

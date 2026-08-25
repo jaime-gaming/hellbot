@@ -78,3 +78,18 @@ def files_for(embeds: Sequence[discord.Embed]) -> list[discord.File]:
         except OSError as exc:  # pragma: no cover - unreadable file
             log.warning("Could not attach %s: %s", path, exc)
     return files
+
+
+def close_files(files: Iterable[discord.File]) -> None:
+    """Close artwork uploads that were never sent (never raises).
+
+    A ``discord.File`` keeps its handle open until it is uploaded; if the send
+    fails or never happens, closing it here is the difference between a clean
+    retry and a slowly leaking file descriptor (which on Windows also keeps the
+    artwork locked).  Double-closing after a successful upload is harmless.
+    """
+    for file in files:
+        try:
+            file.close()
+        except Exception:  # pragma: no cover - close never breaks the caller
+            pass

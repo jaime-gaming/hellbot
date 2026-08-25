@@ -500,7 +500,7 @@ You keep all your leaderboard time and can rejoin immediately.
 * Each has **5 minutes** to reply `Yes` in that channel (case-insensitive by default; set
   `ALIVE_CHECK_STRICT=true` to demand the exact string). Counted answers get a ✅ reaction.
 * Replying **No** — or any of its synonyms (`nope`, `nah`, `never`, `hell no`, `no way`, `nop`,
-  `para nada`, `nunca`, …) — is an **instant but painless exit**: you are disconnected, keep all
+  `not sure`, `para nada`, `nunca`, …) — is an **instant but painless exit**: you are disconnected, keep all
   your leaderboard time, and when you rejoin the VC the bot DMs you
   *"Psssst, you don't have to do the Alive Check."* so you know coming back needs no answer.
 * Whoever stays silent is **disconnected from the VC**. Their accumulated leaderboard time is

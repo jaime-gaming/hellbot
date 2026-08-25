@@ -61,6 +61,9 @@ NO_REPLIES = frozenset(
         "jamas", "nunca", "negativo",
         "para nada", "claro que no", "por supuesto que no",
         "de ninguna manera", "en absoluto",
+        # negated yes-words — without these, "not sure" would match the
+        # word-level YES check ("sure") and count as alive
+        "not sure", "not really", "not okay", "not ok", "not correct",
     }
 )
 

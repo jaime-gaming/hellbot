@@ -252,7 +252,9 @@ def test_artwork_is_attached_only_when_configured(announcer, engine, monkeypatch
     progress = announcer.build_progress(engine.snapshot(now=T0 + 60, participants=1))
 
     assert progress.thumbnail.url == "attachment://hellbot.png"
-    assert [f.filename for f in assets.files_for([progress])] == ["hellbot.png"]
+    uploads = assets.files_for([progress])
+    assert [f.filename for f in uploads] == ["hellbot.png"]
+    assets.close_files(uploads)  # never sent — close the handles
 
 
 def test_missing_artwork_is_skipped_quietly(monkeypatch):

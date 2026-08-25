@@ -143,12 +143,17 @@ class Announcer:
         try:
             for index in range(0, max(1, len(batch)), MAX_EMBEDS_PER_MESSAGE):
                 slice_ = batch[index : index + MAX_EMBEDS_PER_MESSAGE]
-                msg = await chan.send(
-                    content=(content if index == 0 else None),
-                    embeds=slice_,
-                    files=assets.files_for(slice_),   # local artwork, if any
-                    allowed_mentions=allowed,
-                )
+                files = assets.files_for(slice_)
+                try:
+                    msg = await chan.send(
+                        content=(content if index == 0 else None),
+                        embeds=slice_,
+                        files=files,   # local artwork, if any
+                        allowed_mentions=allowed,
+                    )
+                except discord.HTTPException:
+                    assets.close_files(files)  # never leak artwork handles
+                    raise
                 first = first or msg
             log.info(
                 "Announced: %s%s", titles, " (@everyone)" if mention_everyone else ""
@@ -390,14 +395,16 @@ class Announcer:
         chan = await self.channel()
         if chan is None:
             return
+        files = assets.files_for([embed])
         try:
             # Artwork is uploaded once, with the message; later edits keep it.
             new_msg = await chan.send(
                 embed=embed,
-                files=assets.files_for([embed]),
+                files=files,
                 allowed_mentions=discord.AllowedMentions.none(),
             )
         except discord.HTTPException as exc:
+            assets.close_files(files)  # never leak artwork handles
             log.error("Could not create the progress message: %s", exc)
             return
         self._progress_message = new_msg

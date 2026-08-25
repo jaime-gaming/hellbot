@@ -556,6 +556,17 @@ def test_no_synonyms_are_recognized(text):
     assert classify_reply(text) == "no"
 
 
+@pytest.mark.parametrize(
+    "text",
+    ["not sure", "Not sure.", "not okay", "not ok!", "not correct", "not really"],
+)
+def test_negated_yes_words_do_not_count_as_alive(text):
+    """"not sure" contains the yes-word "sure" — it must not count as a Yes."""
+    from hell.alivecheck import classify_reply
+
+    assert classify_reply(text) == "no"
+
+
 def test_no_synonyms_mark_the_reply_as_declined(alive):
     manager, io = alive
     io.present = {1}

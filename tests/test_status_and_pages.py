@@ -409,3 +409,98 @@ def test_build_payload_matches_written_file(tmp_path, engine, config, monitor):
     assert written["event_status"] == payload["event_status"] == "RUNNING"
     assert written["leaderboard_total"] == payload["leaderboard_total"] == 1
     assert written["voice_channel_id"] == payload["voice_channel_id"] == config.voice_channel_id
+
+
+def test_websocket_payload_matches_what_the_pages_render(config):
+    """The WS payload must keep the exact shape the browser JS renders.
+
+    ``docs/index.html`` only renders WS messages whose ``type`` is
+    ``"snapshot"`` and reads a fixed set of keys; ``renderFromStatusJson``
+    (the polling fallback) reads the status.json keys.  This pins both
+    contracts so neither side can drift silently.
+    """
+    import asyncio
+
+    from hell import web as hellweb
+    from hell.bot import build_bot
+    from tests.conftest import T0, obs, start
+    from tests.test_integration import FakeTextChannel
+    from tests.test_monitor import FakeMember, FakeVoiceChannel
+
+    class _ChanBot:
+        def get_channel(self, cid):
+            return voice if cid == voice.id else text
+
+    text = FakeTextChannel(config.announce_channel_id)
+    voice = FakeVoiceChannel([FakeMember(1, "Alice"), FakeMember(2, "Bob")])
+    bot = build_bot(config)
+    try:
+        bot.get_channel = _ChanBot().get_channel  # type: ignore[method-assign]
+        engine = bot.engine
+        start(engine, T0, 1, 2)
+        for i in range(1, 61):
+            engine.tick(obs(T0 + i, 1, 2))
+
+        asyncio.run(bot._push_web_snapshot())
+        payload = hellweb._last_snapshot
+        assert payload is not None
+
+        # The gate in the pages' onmessage
+        assert payload["type"] == "snapshot"
+        # Keys the pages' render() dereferences directly
+        for key in (
+            "ts", "status", "elapsed", "total", "remaining", "fraction",
+            "participants", "paused", "pause_reason", "end_reason", "start_ts",
+            "end_ts", "estimated_end_ts", "grace_open", "grace_seconds_left",
+            "grace_total", "current_milestone", "upcoming_milestone",
+            "milestones", "leaderboard", "leaderboard_total", "alive_check",
+            "continuation", "difficulty_level", "difficulty_name",
+            "health_errors", "health_warnings", "health_info", "log_tail",
+            "rate_limits_5min", "blind_seconds", "active_tasks",
+            "operator_dm_ok", "version",
+        ):
+            assert key in payload, f"the web pages read {key!r} — missing from the WS payload"
+        assert payload["status"] == "RUNNING"
+        assert payload["participants"] == 2
+        assert payload["leaderboard"] and payload["leaderboard"][0]["time"]
+        assert all(m["hours"] and "title" in m for m in payload["milestones"])
+    finally:
+        bot.store.close()
+        hellweb._last_snapshot = None
+        hellweb._snapshot_ts = 0.0
+
+
+def test_status_json_payload_matches_what_the_pages_normalize(config):
+    """The polling fallback reads these keys via renderFromStatusJson()."""
+    from hell.status_writer import get_status
+    from tests.conftest import T0, obs, start
+    from tests.test_integration import FakeTextChannel
+    from tests.test_monitor import FakeMember, FakeVoiceChannel
+
+    class _ChanBot:
+        def get_channel(self, cid):
+            return voice if cid == voice.id else text
+
+    text = FakeTextChannel(config.announce_channel_id)
+    voice = FakeVoiceChannel([FakeMember(1, "Alice")])
+    from hell.bot import build_bot
+    bot = build_bot(config)
+    try:
+        bot.get_channel = _ChanBot().get_channel  # type: ignore[method-assign]
+        engine = bot.engine
+        start(engine, T0, 1)
+        for i in range(1, 30):
+            engine.tick(obs(T0 + i, 1))
+
+        payload = get_status().build_payload(
+            engine=engine, monitor=bot.monitor, stream=None, bot=bot
+        )
+        for key in (
+            "elapsed_seconds", "total_seconds", "remaining_seconds", "fraction",
+            "status", "event_status", "participants", "leaderboard",
+            "alive_check", "grace_open", "milestones",
+        ):
+            assert key in payload, f"renderFromStatusJson reads {key!r} — missing from status.json"
+        assert payload["status"] == "RUNNING"
+    finally:
+        bot.store.close()

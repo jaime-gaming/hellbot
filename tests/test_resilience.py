@@ -86,6 +86,34 @@ def test_a_rate_limited_send_is_logged(config, engine, caplog):
     assert "Failed to send announcement" in caplog.text
 
 
+def test_a_failed_send_does_not_leak_artwork_handles(config, engine, monkeypatch, caplog):
+    """Artwork files opened for a send that raises must be closed again."""
+    from hell import embeds as embeds_module
+
+    monkeypatch.setattr(embeds_module.TEXT, "PROGRESS_THUMBNAIL", "assets/hellbot.png",
+                        raising=False)
+
+    class GrabbingChannel(FakeTextChannel):
+        def __init__(self):
+            super().__init__()
+            self.grabbed: list = []
+
+        async def send(self, content=None, **kwargs):
+            self.grabbed = list(kwargs.get("files") or [])
+            raise discord.HTTPException(_Resp(429), "slow down")
+
+    channel = GrabbingChannel()
+    announcer = Announcer(BotWith(channel), config, engine)
+    start(engine, T0, 1)
+
+    with caplog.at_level(logging.ERROR, logger="hell.announcer"):
+        assert run(announcer.send([announcer.build_progress(engine.snapshot(now=T0))],
+                                  content="@everyone", mention_everyone=True)) is None
+
+    assert [f.filename for f in channel.grabbed] == ["hellbot.png"]
+    assert all(f.fp.closed for f in channel.grabbed)
+
+
 def test_a_milestone_is_not_marked_announced_when_the_send_fails(config, engine):
     """It must be retried on the next start, not silently lost."""
     announcer = Announcer(BotWith(HostileChannel(discord.Forbidden(_Resp(), "nope"))), config, engine)

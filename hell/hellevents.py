@@ -4,12 +4,26 @@ Hell Events trigger only while the main event is RUNNING (never while IDLE,
 FAILED, COMPLETED, CANCELLED, PAUSED, or during an empty-VC grace period).
 Only one Hell Event may be active at any given time.
 
-Event Types:
+Event Types (good):
 1. Double Time — 2x personal leaderboard time for humans in the VC.
 2. Blood Pact — Instant +5m (or difficulty-scaled) bonus to everyone in the VC.
-3. Inferno — Temporarily increased Alive/Dead check frequency.
-4. Blindness — Temporarily hides remaining time & next milestone on progress cards.
-5. Jackpot — Temporarily boosts gambling win multipliers.
+3. Hell Jackpot — Temporarily boosts gambling win multipliers.
+4. Golden Hour — Instantly postpones the next roll call.
+5. Soul Cache — Instant big bonus, but for ONE random person in the VC.
+
+Event Types (bad):
+6. Inferno — Temporarily increased Alive/Dead check frequency.
+7. Blindness — Temporarily hides remaining time & next milestone on progress cards.
+8. Time Vortex — Personal leaderboard time runs at half (or quarter) speed.
+9. Blood Debt — Instant survival-time penalty for everyone in the VC.
+10. The Culling — Triggers an immediate roll call: reply Yes or be disconnected.
+
+Secret Events:
+Roughly one in four randomly triggered events is SECRET: the announcement only
+says that *something* happened — the event's name, duration and effect stay
+hidden until the event ends and the veil is lifted.  Instant events can never
+be secret (their effect is visible the moment they happen), so secrets are
+drawn from :data:`TIMED_EVENT_TYPES` only.
 """
 
 from __future__ import annotations
@@ -37,6 +51,33 @@ class HellEventType(str, Enum):
     INFERNO = "inferno"
     BLINDNESS = "blindness"
     JACKPOT = "jackpot"
+    TIME_VORTEX = "time_vortex"
+    GOLDEN_HOUR = "golden_hour"
+    SOUL_CACHE = "soul_cache"
+    BLOOD_DEBT = "blood_debt"
+    CULLING = "culling"
+
+
+# Chance that a randomly scheduled event is a SECRET event (announcement says
+# something happened, but not what — revealed only when it ends).
+SECRET_EVENT_CHANCE = 0.25
+
+# Events with a real duration — the only candidates for SECRET events, because
+# an instant event (Blood Pact, The Culling, …) is obvious the second it fires.
+TIMED_EVENT_TYPES: tuple[HellEventType, ...] = (
+    HellEventType.DOUBLE_TIME,
+    HellEventType.INFERNO,
+    HellEventType.BLINDNESS,
+    HellEventType.JACKPOT,
+    HellEventType.TIME_VORTEX,
+)
+
+
+def is_secret_record(record: HellEventRecord | dict) -> bool:
+    """Was this event a secret?  Works for live records and stored rows."""
+    if isinstance(record, dict):
+        return bool(record.get("metadata", {}).get("secret"))
+    return bool(record.metadata.get("secret"))
 
 
 class HellEventState(str, Enum):
@@ -103,6 +144,9 @@ class HellEventModifier:
     gamble_bonus_multiplier: float = 1.0
     inferno_min_check_seconds: float = 180.0
     inferno_max_check_seconds: float = 360.0
+    soul_cache_bonus_seconds: float = 600.0
+    blood_debt_penalty_seconds: float = 120.0
+    golden_hour_postpone_seconds: float = 1800.0
 
 
 def get_event_modifier(event_type: HellEventType, difficulty_level: int = 0) -> HellEventModifier:
@@ -145,6 +189,45 @@ def get_event_modifier(event_type: HellEventType, difficulty_level: int = 0) -> 
             duration_seconds=300.0,  # 5 minutes
             gamble_bonus_multiplier=bonus_mult,
         )
+    elif event_type is HellEventType.TIME_VORTEX:
+        mult = 0.5 if lvl < 4 else 0.25  # half speed — a quarter on Cataclysm
+        return HellEventModifier(
+            event_type=event_type,
+            name="Time Vortex",
+            duration_seconds=300.0,  # 5 minutes
+            time_multiplier=mult,
+        )
+    elif event_type is HellEventType.GOLDEN_HOUR:
+        # The hotter Hell runs, the sweeter the relief: 30m … 50m of delay.
+        postpone = 1800.0 + 300.0 * lvl
+        return HellEventModifier(
+            event_type=event_type,
+            name="Golden Hour",
+            duration_seconds=0.0,  # Instant effect
+            golden_hour_postpone_seconds=postpone,
+        )
+    elif event_type is HellEventType.SOUL_CACHE:
+        bonus = 600.0 + 150.0 * lvl  # +10m … +20m for one lucky soul
+        return HellEventModifier(
+            event_type=event_type,
+            name="Soul Cache",
+            duration_seconds=0.0,  # Instant grant
+            soul_cache_bonus_seconds=bonus,
+        )
+    elif event_type is HellEventType.BLOOD_DEBT:
+        penalty = 120.0 + 45.0 * lvl  # -2m … -5m for everyone in the VC
+        return HellEventModifier(
+            event_type=event_type,
+            name="Blood Debt",
+            duration_seconds=0.0,  # Instant penalty
+            blood_debt_penalty_seconds=penalty,
+        )
+    elif event_type is HellEventType.CULLING:
+        return HellEventModifier(
+            event_type=event_type,
+            name="The Culling",
+            duration_seconds=0.0,  # Instant roll call
+        )
     raise ValueError(f"Unknown hell event type: {event_type}")
 
 
@@ -156,6 +239,7 @@ class HellEventStarted:
     record: HellEventRecord
     announcement_text: str
     eligible_participants: tuple[ParticipantRef, ...] = ()
+    secret: bool = False
 
 
 @dataclass(frozen=True)
@@ -304,8 +388,14 @@ class HellEventManager:
 
         # 2) Check if a new event is due
         if self.is_due(now) and participants:
-            ev_type = self.rng.choice(list(HellEventType))
-            started = await self.start_event(ev_type, now, participants)
+            secret = self.rng.random() < SECRET_EVENT_CHANCE
+            if secret:
+                # Secrets need a duration to stay hidden — instant events give
+                # themselves away the moment they happen.
+                ev_type = self.rng.choice(TIMED_EVENT_TYPES)
+            else:
+                ev_type = self.rng.choice(list(HellEventType))
+            started = await self.start_event(ev_type, now, participants, secret=secret)
             if started is not None:
                 outcomes.append(started)
 
@@ -321,6 +411,7 @@ class HellEventManager:
         *,
         custom_duration: Optional[float] = None,
         custom_meta: Optional[dict] = None,
+        secret: bool = False,
     ) -> Optional[HellEventStarted]:
         if not self._event_uid:
             return None
@@ -336,6 +427,11 @@ class HellEventManager:
         duration = custom_duration if custom_duration is not None else mod.duration_seconds
         event_id = uuid.uuid4().hex
         meta = dict(custom_meta or {})
+        # An instant event is obvious the second it fires — it cannot be secret.
+        if secret and duration <= 0:
+            secret = False
+        if secret:
+            meta["secret"] = True
 
         affected: list[int] = []
         state = HellEventState.ACTIVE
@@ -377,6 +473,12 @@ class HellEventManager:
             meta["duration_minutes"] = int(duration // 60)
             meta["min_check_seconds"] = mod.inferno_min_check_seconds
             meta["max_check_seconds"] = mod.inferno_max_check_seconds
+            # Pull the already-scheduled roll call into the accelerated window
+            # too — Inferno must bite the moment it starts, not hours later.
+            if self.alive_checks is not None:
+                self.alive_checks.accelerate_next(
+                    mod.inferno_min_check_seconds, mod.inferno_max_check_seconds, now
+                )
             ann_text = say(
                 getattr(
                     TEXT,
@@ -406,8 +508,114 @@ class HellEventManager:
                 ),
                 duration=int(duration // 60),
             )
+        elif event_type is HellEventType.TIME_VORTEX:
+            meta["multiplier"] = mod.time_multiplier
+            meta["duration_minutes"] = int(duration // 60)
+            ann_text = say(
+                getattr(
+                    TEXT,
+                    "HELL_EVENT_TIME_VORTEX_START",
+                    "🌀 **HELL EVENT — TIME VORTEX**\n\nFor the next **{duration} minutes**, your personal leaderboard time is running at **{multiplier}x speed**.\nEvery second in Hell now counts for less.",
+                ),
+                duration=int(duration // 60),
+                multiplier=f"{mod.time_multiplier:g}",
+            )
+        elif event_type is HellEventType.GOLDEN_HOUR:
+            postpone_by = mod.golden_hour_postpone_seconds
+            new_due = None
+            if self.alive_checks is not None:
+                new_due = self.alive_checks.postpone_next(postpone_by, now)
+            if new_due is None:
+                # A roll call is pending right now (or checks are off) — there is
+                # nothing to postpone, so the event honestly does not happen.
+                log.info("Golden Hour skipped: no roll call could be postponed")
+                self.schedule_next(now)
+                return None
+            state = HellEventState.COMPLETED
+            end_ts = now
+            meta["postpone_seconds"] = postpone_by
+            affected = [p.user_id for p in participants]
+            ann_text = say(
+                getattr(
+                    TEXT,
+                    "HELL_EVENT_GOLDEN_HOUR_START",
+                    "😇 **HELL EVENT — GOLDEN HOUR**\n\nHell looks away for a moment. Your next roll call has been postponed by **{delay}**.\nBreathe. You have earned it.",
+                ),
+                delay=format_hm(postpone_by),
+            )
+        elif event_type is HellEventType.SOUL_CACHE:
+            if not participants:
+                self.schedule_next(now)
+                return None
+            winner = self.rng.choice(list(participants))
+            bonus = mod.soul_cache_bonus_seconds
+            state = HellEventState.COMPLETED
+            end_ts = now
+            meta["winner_id"] = winner.user_id
+            meta["bonus_seconds"] = bonus
+            affected = [winner.user_id]
+            if self.engine is not None:
+                self.engine.add_user_bonus_seconds(winner.user_id, winner.display_name, bonus, now)
+            ann_text = say(
+                getattr(
+                    TEXT,
+                    "HELL_EVENT_SOUL_CACHE_START",
+                    "💎 **HELL EVENT — SOUL CACHE**\n\nA hidden cache of stolen time has surfaced — and **{who}** found it first.\n**+{bonus}** of personal survival time, on the house.",
+                ),
+                who=winner.display_name,
+                bonus=format_hm(bonus),
+            )
+        elif event_type is HellEventType.BLOOD_DEBT:
+            penalty = mod.blood_debt_penalty_seconds
+            state = HellEventState.COMPLETED
+            end_ts = now
+            meta["penalty_seconds"] = penalty
+            affected = [p.user_id for p in participants]
+            if self.engine is not None:
+                for p in participants:
+                    self.engine.add_user_bonus_seconds(p.user_id, p.display_name, -penalty, now)
+            ann_text = say(
+                getattr(
+                    TEXT,
+                    "HELL_EVENT_BLOOD_DEBT_START",
+                    "📉 **HELL EVENT — BLOOD DEBT**\n\nThe tax collectors of Hell have come knocking. Everyone currently in Hell ({count} participants) has been charged **-{penalty}** of personal survival time.",
+                ),
+                count=len(participants),
+                penalty=format_hm(penalty),
+            )
+        elif event_type is HellEventType.CULLING:
+            check = None
+            if self.alive_checks is not None:
+                check = await self.alive_checks.start(now, participants, force_type="alive")
+            if check is None:
+                # A roll call is already running — the Culling has nothing to add.
+                log.info("Culling skipped: a roll call is already running")
+                self.schedule_next(now)
+                return None
+            state = HellEventState.COMPLETED
+            end_ts = now
+            meta["check_id"] = check.check_id
+            affected = [p.user_id for p in participants]
+            ann_text = say(
+                getattr(
+                    TEXT,
+                    "HELL_EVENT_CULLING_START",
+                    "⚔️ **HELL EVENT — THE CULLING**\n\nHell demands proof of life **right now**.\nAn immediate roll call has been triggered: reply **Yes** in time or be disconnected from the VC.",
+                ),
+            )
         else:
             ann_text = f"⚡ Hell Event {mod.name} has started."
+
+        # Secret events keep their identity hidden: the announcement only says
+        # that *something* happened — the reveal comes when the event ends.
+        if secret:
+            ann_text = str(
+                getattr(
+                    TEXT,
+                    "HELL_EVENT_SECRET_START",
+                    "🕯️ **A SECRET HELL EVENT HAS BEGUN**\n\nSomething has changed deep within Hell…\nWhat exactly? **Nobody knows — yet.**\n\nThe veil lifts when the event ends. Stay alert.",
+                )
+            )
 
         record = HellEventRecord(
             id=event_id,
@@ -438,12 +646,19 @@ class HellEventManager:
             self.active_event = None
             self.schedule_next(now)
 
-        log.info("Hell Event %s (%s) triggered (state %s)", record.name, record.id, record.state.value)
+        log.info(
+            "Hell Event %s (%s) triggered (state %s)%s",
+            record.name,
+            record.id,
+            record.state.value,
+            " [SECRET]" if secret else "",
+        )
 
         event_out = HellEventStarted(
             record=record,
             announcement_text=ann_text,
             eligible_participants=tuple(participants),
+            secret=secret,
         )
 
         # Broadcast announcement
@@ -499,10 +714,35 @@ class HellEventManager:
                     "🎰 **JACKPOT HAS ENDED**\n\nGambling rewards have returned to normal.",
                 )
             )
+        elif record.event_type is HellEventType.TIME_VORTEX:
+            ann_text = str(
+                getattr(
+                    TEXT,
+                    "HELL_EVENT_TIME_VORTEX_END",
+                    "🌀 **TIME VORTEX HAS CLOSED**\n\nTime flows normally again. Every second counts once more.",
+                )
+            )
         else:
             ann_text = f"⚡ Hell Event {record.name} has ended."
 
-        log.info("Hell Event %s (%s) ended", record.name, record.id)
+        # A secret event is only identified once it ends — that is the reveal.
+        if is_secret_record(record):
+            ann_text = say(
+                getattr(
+                    TEXT,
+                    "HELL_EVENT_SECRET_REVEAL",
+                    "🕯️ **THE SECRET EVENT IS REVEALED: {name}**\n\nThe veil lifts — all along, it was **{name}**.\n\n{description}",
+                ),
+                name=record.name,
+                description=ann_text,
+            )
+
+        log.info(
+            "Hell Event %s (%s) ended%s",
+            record.name,
+            record.id,
+            " [secret revealed]" if "secret" in record.metadata else "",
+        )
 
         event_out = HellEventEnded(record=record, announcement_text=ann_text)
 
@@ -526,11 +766,14 @@ class HellEventManager:
     # ------------------------------------------------------------- queries
 
     def get_time_multiplier(self, now: Optional[float] = None) -> float:
-        """Return personal leaderboard time multiplier (e.g. 2.0x during Double Time)."""
-        if self.active_event is not None and self.active_event.event_type is HellEventType.DOUBLE_TIME:
+        """Return personal leaderboard time multiplier (2.0x during Double Time, 0.5x in a Time Vortex)."""
+        if self.active_event is not None and self.active_event.event_type in (
+            HellEventType.DOUBLE_TIME,
+            HellEventType.TIME_VORTEX,
+        ):
             cur_now = now if now is not None else now_ts()
             if cur_now < self.active_event.end_ts:
-                return float(self.active_event.metadata.get("multiplier", 2.0))
+                return float(self.active_event.metadata.get("multiplier", 1.0))
         return 1.0
 
     def is_blindness_active(self, now: Optional[float] = None) -> bool:
@@ -554,6 +797,17 @@ class HellEventManager:
             if cur_now < self.active_event.end_ts:
                 return float(self.active_event.metadata.get("bonus_multiplier", 1.0))
         return 0.0
+
+    def is_secret_active(self, now: Optional[float] = None) -> bool:
+        """Check if the active Hell Event is a SECRET one (identity hidden)."""
+        if self.active_event is None:
+            return False
+        cur_now = now if now is not None else now_ts()
+        return is_secret_record(self.active_event) and cur_now < self.active_event.end_ts
+
+    def pick_secret_event_type(self) -> HellEventType:
+        """A random event type suitable for a SECRET event (must have a duration)."""
+        return self.rng.choice(TIMED_EVENT_TYPES)
 
     def history(self) -> list[dict]:
         if not self._event_uid:

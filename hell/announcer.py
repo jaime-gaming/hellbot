@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Sequence
-from typing import Optional
+from typing import Any, Optional
 
 import discord
 
@@ -58,6 +58,9 @@ from .models import LeaderboardEntry, MilestoneRecord
 from .texts import TEXT
 
 log = logging.getLogger("hell.announcer")
+
+# How many VC participants a Hell Event echo may ping (matches the roll calls).
+MAX_VC_EVENT_PINGS = 60
 
 __all__ = [
     "MAX_CONTENT",
@@ -123,6 +126,7 @@ class Announcer:
         content: Optional[str] = None,
         mention_everyone: bool = False,
         target: str = "announcements",
+        mention_users: bool = False,
     ) -> Optional[discord.Message]:
         """Post one or more embeds, chunked into as many messages as needed."""
         batch = list(embeds)
@@ -132,19 +136,24 @@ class Announcer:
         if chan is None:
             return None
         allowed = discord.AllowedMentions(
-            everyone=mention_everyone, users=False, roles=False, replied_user=False
+            everyone=mention_everyone, users=mention_users, roles=False, replied_user=False
         )
         first: Optional[discord.Message] = None
         titles = ", ".join(e.title for e in batch if e.title) or "message"
         try:
             for index in range(0, max(1, len(batch)), MAX_EMBEDS_PER_MESSAGE):
                 slice_ = batch[index : index + MAX_EMBEDS_PER_MESSAGE]
-                msg = await chan.send(
-                    content=(content if index == 0 else None),
-                    embeds=slice_,
-                    files=assets.files_for(slice_),   # local artwork, if any
-                    allowed_mentions=allowed,
-                )
+                files = assets.files_for(slice_)
+                try:
+                    msg = await chan.send(
+                        content=(content if index == 0 else None),
+                        embeds=slice_,
+                        files=files,   # local artwork, if any
+                        allowed_mentions=allowed,
+                    )
+                except discord.HTTPException:
+                    assets.close_files(files)  # never leak artwork handles
+                    raise
                 first = first or msg
             log.info(
                 "Announced: %s%s", titles, " (@everyone)" if mention_everyone else ""
@@ -267,16 +276,38 @@ class Announcer:
         )
 
     async def announce_hell_event_start(self, event: HellEventStarted) -> Optional[discord.Message]:
-        """Broadcast a Hell Event start announcement to the announcement channel."""
+        """Announce a Hell Event start in the VC text chat ONLY.
+
+        The people affected are sitting in the VC — the announcement (with a
+        ping) goes where they are looking, and nowhere else.
+        """
         embed = self.embeds.hell_event_start(event)
-        log.info("Announcing Hell Event start: %s", event.record.name)
-        return await self.send([embed])
+        log.info("Announcing Hell Event start: %s (VC only)", event.record.name)
+        return await self._send_hell_event_to_vc([embed], event.eligible_participants)
 
     async def announce_hell_event_end(self, event: HellEventEnded) -> Optional[discord.Message]:
-        """Broadcast a Hell Event end announcement to the announcement channel."""
+        """Announce a Hell Event end in the VC text chat ONLY (no ping)."""
         embed = self.embeds.hell_event_end(event)
-        log.info("Announcing Hell Event end: %s", event.record.name)
-        return await self.send([embed])
+        log.info("Announcing Hell Event end: %s (VC only)", event.record.name)
+        return await self._send_hell_event_to_vc([embed])
+
+    async def _send_hell_event_to_vc(
+        self,
+        embeds: Sequence[discord.Embed],
+        participants: Sequence[Any] = (),
+    ) -> Optional[discord.Message]:
+        """Post a Hell Event announcement in the VC text chat.
+
+        Pings the affected participants (capped like the roll calls) so the
+        event cannot be missed.  If the VC chat is unreachable the message is
+        simply not delivered (logged by :meth:`send`) — hell events never fall
+        back to the announcement channel.
+        """
+        uids = [p.user_id for p in participants][:MAX_VC_EVENT_PINGS]
+        content = " ".join(f"<@{uid}>" for uid in uids) if uids else None
+        return await self.send(
+            list(embeds), content=content, target="vc", mention_users=bool(uids)
+        )
 
     async def announce_finale_stage(self, ann: FinaleAnnouncement) -> Optional[discord.Message]:
         """Broadcast a 160-Hour Finale milestone stage to the announcement channel."""
@@ -364,14 +395,16 @@ class Announcer:
         chan = await self.channel()
         if chan is None:
             return
+        files = assets.files_for([embed])
         try:
             # Artwork is uploaded once, with the message; later edits keep it.
             new_msg = await chan.send(
                 embed=embed,
-                files=assets.files_for([embed]),
+                files=files,
                 allowed_mentions=discord.AllowedMentions.none(),
             )
         except discord.HTTPException as exc:
+            assets.close_files(files)  # never leak artwork handles
             log.error("Could not create the progress message: %s", exc)
             return
         self._progress_message = new_msg

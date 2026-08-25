@@ -12,6 +12,10 @@ def _reset():
     logging_setup._configured = False
     for handler in list(logging.getLogger().handlers):
         logging.getLogger().removeHandler(handler)
+        try:
+            handler.close()
+        except Exception:
+            pass  # some handlers have nothing to close
 
 
 def test_logging_writes_to_a_rotating_file(tmp_path):

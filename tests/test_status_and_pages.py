@@ -257,3 +257,250 @@ def test_html_files_structure():
     status_data = json.loads(status_json.read_text())
     assert "event_status" in status_data
     assert "last_updated" in status_data
+
+
+# ------------------------------------------------- live web server behaviour
+
+
+@pytest.fixture
+def web_app():
+    """A fresh web app with clean module state (no leftover provider/snapshot)."""
+    from hell import web as hellweb
+
+    hellweb.set_status_provider(None)
+    hellweb._last_snapshot = None
+    hellweb._snapshot_ts = 0.0
+    hellweb.create_app()  # ensure the app builds with clean state
+    yield hellweb
+    hellweb.set_status_provider(None)
+    hellweb._last_snapshot = None
+    hellweb._snapshot_ts = 0.0
+
+
+def test_status_json_serves_live_data_when_provider_registered(web_app):
+    """With the bot running, /status.json must be fresh — not the static file
+    (which is only rewritten on the 15-minute heartbeat)."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    async def run():
+        client = TestClient(TestServer(web_app.create_app()))
+        await client.start_server()
+        try:
+            # No provider: falls back to the static file (GitHub Pages mode).
+            async with client.get("/status.json") as r:
+                assert r.status == 200
+                assert r.headers.get("Cache-Control") == "no-store"
+                static_data = await r.json()
+
+            # Register a live provider (what the bot does at startup).
+            calls = {"n": 0}
+
+            def provider():
+                calls["n"] += 1
+                return {"event_status": "RUNNING", "elapsed_seconds": 42.0, "bot_connected": True}
+
+            web_app.set_status_provider(provider)
+            async with client.get("/status.json") as r:
+                live = await r.json()
+            assert live["event_status"] == "RUNNING"
+            assert live["elapsed_seconds"] == 42.0
+            assert calls["n"] == 1
+            assert static_data != live  # genuinely different data sources
+
+            # A failing provider never breaks the endpoint.
+            def boom():
+                raise RuntimeError("no engine today")
+
+            web_app.set_status_provider(boom)
+            async with client.get("/status.json") as r:
+                assert r.status == 200
+                fallback = await r.json()
+            assert fallback == static_data
+        finally:
+            await client.close()
+
+    asyncio.run(run())
+
+
+def test_websocket_client_receives_last_snapshot_on_connect(web_app):
+    """A newly connected browser renders instantly instead of waiting <=5s."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    async def run():
+        client = TestClient(TestServer(web_app.create_app()))
+        await client.start_server()
+        try:
+            # Nothing pushed yet -> no initial message.
+            ws = await client.ws_connect("/ws")
+            try:
+                await asyncio.wait_for(ws.receive(), timeout=0.2)
+                raise AssertionError("should not have received anything yet")
+            except asyncio.TimeoutError:
+                pass
+            await ws.close()
+
+            # After a broadcast, the NEXT client gets it immediately.
+            await web_app.broadcast({"type": "snapshot", "status": "RUNNING", "elapsed": 7})
+            ws2 = await client.ws_connect("/ws")
+            msg = await asyncio.wait_for(ws2.receive(), timeout=1.0)
+            data = json.loads(msg.data)
+            assert data == {"type": "snapshot", "status": "RUNNING", "elapsed": 7}
+            await ws2.close()
+        finally:
+            await client.close()
+
+    asyncio.run(run())
+
+
+def test_broadcast_remembers_snapshot_without_clients(web_app):
+    """The payload is stored even with zero clients (fresh /status.json, new
+    connections) — broadcast() must not skip it."""
+
+    async def run():
+        assert web_app.client_count() == 0
+        await web_app.broadcast({"type": "snapshot", "status": "IDLE"})
+        assert web_app._last_snapshot == {"type": "snapshot", "status": "IDLE"}
+
+    asyncio.run(run())
+
+
+def test_health_reports_live_status_and_snapshot_age(web_app):
+    from aiohttp.test_utils import TestClient, TestServer
+
+    async def run():
+        client = TestClient(TestServer(web_app.create_app()))
+        await client.start_server()
+        try:
+            async with client.get("/health") as r:
+                data = await r.json()
+            assert data["ok"] is True
+            assert data["live_status"] is False
+            assert data["snapshot_age_seconds"] is None
+
+            web_app.set_status_provider(lambda: {"event_status": "IDLE"})
+            await web_app.broadcast({"type": "snapshot"})
+            async with client.get("/health") as r:
+                data = await r.json()
+            assert data["live_status"] is True
+            assert data["snapshot_age_seconds"] is not None
+        finally:
+            await client.close()
+
+    asyncio.run(run())
+
+
+def test_build_payload_matches_written_file(tmp_path, engine, config, monitor):
+    """The build_payload refactor must keep write()'s output identical."""
+    from hell.status_writer import get_status
+
+    start_ts = 1_700_000_000.0
+    engine.start(
+        now=start_ts, guild_id=1, voice_channel_id=config.voice_channel_id,
+        announce_channel_id=2, started_by=99,
+        initial_participants=[ParticipantRef(1, "Alice")],
+    )
+    path = tmp_path / "status.json"
+    get_status().write(path, engine=engine, monitor=monitor, stream=None, bot=None)
+    written = json.loads(path.read_text())
+
+    payload = get_status().build_payload(engine=engine, monitor=monitor, stream=None, bot=None)
+    # Same keys and same status (timestamps naturally differ between calls).
+    assert set(written) == set(payload)
+    assert written["event_status"] == payload["event_status"] == "RUNNING"
+    assert written["leaderboard_total"] == payload["leaderboard_total"] == 1
+    assert written["voice_channel_id"] == payload["voice_channel_id"] == config.voice_channel_id
+
+
+def test_websocket_payload_matches_what_the_pages_render(config):
+    """The WS payload must keep the exact shape the browser JS renders.
+
+    ``docs/index.html`` only renders WS messages whose ``type`` is
+    ``"snapshot"`` and reads a fixed set of keys; ``renderFromStatusJson``
+    (the polling fallback) reads the status.json keys.  This pins both
+    contracts so neither side can drift silently.
+    """
+    import asyncio
+
+    from hell import web as hellweb
+    from hell.bot import build_bot
+    from tests.conftest import T0, obs, start
+    from tests.test_integration import FakeTextChannel
+    from tests.test_monitor import FakeMember, FakeVoiceChannel
+
+    class _ChanBot:
+        def get_channel(self, cid):
+            return voice if cid == voice.id else text
+
+    text = FakeTextChannel(config.announce_channel_id)
+    voice = FakeVoiceChannel([FakeMember(1, "Alice"), FakeMember(2, "Bob")])
+    bot = build_bot(config)
+    try:
+        bot.get_channel = _ChanBot().get_channel  # type: ignore[method-assign]
+        engine = bot.engine
+        start(engine, T0, 1, 2)
+        for i in range(1, 61):
+            engine.tick(obs(T0 + i, 1, 2))
+
+        asyncio.run(bot._push_web_snapshot())
+        payload = hellweb._last_snapshot
+        assert payload is not None
+
+        # The gate in the pages' onmessage
+        assert payload["type"] == "snapshot"
+        # Keys the pages' render() dereferences directly
+        for key in (
+            "ts", "status", "elapsed", "total", "remaining", "fraction",
+            "participants", "paused", "pause_reason", "end_reason", "start_ts",
+            "end_ts", "estimated_end_ts", "grace_open", "grace_seconds_left",
+            "grace_total", "current_milestone", "upcoming_milestone",
+            "milestones", "leaderboard", "leaderboard_total", "alive_check",
+            "continuation", "difficulty_level", "difficulty_name",
+            "health_errors", "health_warnings", "health_info", "log_tail",
+            "rate_limits_5min", "blind_seconds", "active_tasks",
+            "operator_dm_ok", "version",
+        ):
+            assert key in payload, f"the web pages read {key!r} — missing from the WS payload"
+        assert payload["status"] == "RUNNING"
+        assert payload["participants"] == 2
+        assert payload["leaderboard"] and payload["leaderboard"][0]["time"]
+        assert all(m["hours"] and "title" in m for m in payload["milestones"])
+    finally:
+        bot.store.close()
+        hellweb._last_snapshot = None
+        hellweb._snapshot_ts = 0.0
+
+
+def test_status_json_payload_matches_what_the_pages_normalize(config):
+    """The polling fallback reads these keys via renderFromStatusJson()."""
+    from hell.status_writer import get_status
+    from tests.conftest import T0, obs, start
+    from tests.test_integration import FakeTextChannel
+    from tests.test_monitor import FakeMember, FakeVoiceChannel
+
+    class _ChanBot:
+        def get_channel(self, cid):
+            return voice if cid == voice.id else text
+
+    text = FakeTextChannel(config.announce_channel_id)
+    voice = FakeVoiceChannel([FakeMember(1, "Alice")])
+    from hell.bot import build_bot
+    bot = build_bot(config)
+    try:
+        bot.get_channel = _ChanBot().get_channel  # type: ignore[method-assign]
+        engine = bot.engine
+        start(engine, T0, 1)
+        for i in range(1, 30):
+            engine.tick(obs(T0 + i, 1))
+
+        payload = get_status().build_payload(
+            engine=engine, monitor=bot.monitor, stream=None, bot=bot
+        )
+        for key in (
+            "elapsed_seconds", "total_seconds", "remaining_seconds", "fraction",
+            "status", "event_status", "participants", "leaderboard",
+            "alive_check", "grace_open", "milestones",
+        ):
+            assert key in payload, f"renderFromStatusJson reads {key!r} — missing from status.json"
+        assert payload["status"] == "RUNNING"
+    finally:
+        bot.store.close()

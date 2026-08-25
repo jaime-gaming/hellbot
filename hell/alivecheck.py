@@ -282,6 +282,26 @@ class AliveCheckManager:
         log.info("Next roll call in %s (at %.0f)", format_hm(delay), when)
         return when
 
+    def postpone_next(self, seconds: float, now: Optional[float] = None) -> Optional[float]:
+        """Push the next scheduled roll call back by ``seconds``.
+
+        Used by the Golden Hour Hell Event.  Returns the new due timestamp, or
+        ``None`` when nothing can be postponed right now: a roll call is already
+        pending, roll calls are disabled, or the manager is not bound to an
+        event.  Never touches a check that is currently running.
+        """
+        if not self._event_uid or not self.enabled or self.pending is not None or seconds <= 0:
+            return None
+        cur_now = now if now is not None else now_ts()
+        current = self.next_check_ts()
+        if current is None:
+            self.schedule_next(cur_now)
+            current = self.next_check_ts() or cur_now
+        new_ts = max(current, cur_now) + seconds
+        self.store.set_next_alive_check(self._event_uid, new_ts)
+        log.info("Next roll call postponed by %s (new due in %.0fs)", format_hm(seconds), new_ts - cur_now)
+        return new_ts
+
     def next_check_ts(self) -> Optional[float]:
         if not self._event_uid:
             return None

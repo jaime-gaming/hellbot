@@ -30,6 +30,9 @@ empties and nobody returns within the grace period, the run is dead — permanen
 * Bots never count · `@clanker` is kicked on sight · AFK still counts
 * **15-second grace period** when the VC empties, with a no-ping warning
 * **Random alive checks** every 1–6 h: reply `Yes` in 5 minutes or get disconnected
+* **Random Hell Events** every 30m–3h — good and bad (bonuses, penalties, accelerated checks,
+  hidden info…), announced in the announcement channel **and pinged in the VC text chat**; about
+  **1 in 4 is secret**: it says *something* happened and only reveals what when it ends
 * A **personal stat card by DM** for every contestant when the run ends
 * Hosts can post **colored embeds** with `/hell broadcast` (`info`, `warning`, `error`, …) to the
   announcement channel or the VC text chat
@@ -233,8 +236,8 @@ users without 250 notifications — while the `@everyone` ping stays in the mess
 
 ### Server & Direct Message (DM) Commands
 
-- **Server commands:** Run exclusively via slash commands (`/hell <command>`).
-- **Direct Message (DM) commands:** Run exclusively in Direct Messages with the `!` prefix (e.g. `!status`, `!leaderboard`, `!mystats`, `!help`, `!restart`, `!doctor`, `!hell status`, etc.). Prefix `!` commands are strictly restricted to DMs and will not run in server channels. DM commands enforce the same host/operator authorization checks.
+- **Server commands:** Run via slash commands (`/hell <command>`) **or** with the `!` prefix directly in server channels (e.g. `!status`, `!leaderboard`, `!gamble 0.5`, `!hell status`).
+- **Direct Message (DM) commands:** The same `!` prefix commands also run in DMs with the bot (e.g. `!status`, `!help`, `!restart`, `!doctor`, `!hell status`). Prefix `!` commands enforce the same host/operator authorization checks everywhere they run.
 
 ---
 
@@ -432,11 +435,27 @@ Difficulties make the challenge harder as the event progresses, expanding at eve
 
 Intervals between events occur randomly between **30 minutes and 3 hours** (scaling more frequently at higher difficulty tiers). All Hell Events persist in SQLite to survive bot restarts.
 
-1. **Double Time** (5 minutes): All valid humans in the VC receive **2× personal leaderboard time** while active. The global 160h clock is not accelerated.
+Every Hell Event announcement is posted **twice**: once in the announcement channel and once in the **VC text chat**, where it pings everyone the event applies to — the people actually sitting in Hell should never miss one.
+
+**Good events**
+
+1. **Double Time** (5 minutes): All valid humans in the VC receive **2× personal leaderboard time** while active (2.5× on Difficulty 4). The global 160h clock is not accelerated.
 2. **Blood Pact** (Instant): Everyone currently in the VC at the moment of the event receives an instant personal survival time bonus (**+5 minutes**, scaling up to +10m on Difficulty 4).
-3. **Inferno** (10 minutes): Alive/Dead checks occur at a significantly accelerated frequency (every 3–6 minutes) while preserving normal response windows.
-4. **Blindness** (10 minutes): Temporarily hides remaining time and upcoming milestone from the progress card (`[HIDDEN BY BLINDNESS]`) while keeping the main elapsed timer and event status visible.
-5. **Hell Jackpot** (5 minutes): Temporarily increases gambling win multipliers (+1.0x bonus multiplier).
+3. **Hell Jackpot** (5 minutes): Temporarily increases gambling win multipliers (+1.0x bonus multiplier).
+4. **Golden Hour** (Instant): Hell looks away — the next roll call is **postponed by 30–50 minutes** (more relief the higher the difficulty). Skipped honestly if a roll call is already running.
+5. **Soul Cache** (Instant): A hidden cache of stolen time surfaces for **one random person** in the VC: **+10 minutes** of personal survival time, scaling up to +20m on Difficulty 4.
+
+**Bad events**
+
+6. **Inferno** (10 minutes): Alive/Dead checks occur at a significantly accelerated frequency (every 3–6 minutes) while preserving normal response windows.
+7. **Blindness** (10 minutes): Temporarily hides remaining time and upcoming milestone from the progress card (`[HIDDEN BY BLINDNESS]`) while keeping the main elapsed timer and event status visible.
+8. **Time Vortex** (5 minutes): Personal leaderboard time runs at **half speed** for everyone in the VC (a quarter on Difficulty 4). The global clock is not touched.
+9. **Blood Debt** (Instant): The tax collectors of Hell come knocking — everyone in the VC is charged **-2 minutes** of personal survival time (scaling to -5m on Difficulty 4; never below zero).
+10. **The Culling** (Instant): An **immediate roll call** is triggered — reply `Yes` in time or be disconnected from the VC. Skipped if a roll call is already running.
+
+**Secret events** 🕯️
+
+Roughly **one in four** randomly scheduled events is a **secret event**: the announcement only says that *something* has changed deep within Hell — the event's name, duration and effect all stay hidden until the event ends and the veil is lifted (`THE SECRET EVENT IS REVEALED: …`). Instant events can never be secret (they are obvious the moment they happen), so secrets are always drawn from the timed ones. While a secret event runs, `/hell hellevents` shows it only as `??? (Secret Event)`. Hosts can force one with `/hell hellevents` → `trigger` → `Secret`.
 
 ### The 160-Hour Finale
 

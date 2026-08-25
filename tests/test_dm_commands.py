@@ -471,19 +471,20 @@ def test_hell_group_subcommand_dispatching(wired, config, engine):
     assert "Unknown subcommand `foobar`" in ctx_unk.text()
 
 
-# ------------------------------------------------------------- DM-only enforcement
+# ----------------------------------------------------- prefix command routing
 
 
-def test_cog_check_enforces_dm_only(wired):
+def test_cog_check_allows_dms_and_guild_channels(wired):
+    """`!` commands must work in the server too, not only in DMs."""
     cog, bot, _text, _voice = wired
     dm_ctx = FakeContext(bot, FakeAuthor(uid=100), guild_id=None)
     guild_ctx = FakeContext(bot, FakeAuthor(uid=100), guild_id=123)
 
     assert run(cog.cog_check(dm_ctx)) is True
-    assert run(cog.cog_check(guild_ctx)) is False
+    assert run(cog.cog_check(guild_ctx)) is True
 
 
-def test_bot_on_message_routes_dms_only(wired, config):
+def test_bot_on_message_routes_prefix_commands_everywhere(wired, config):
     from hell.bot import build_bot
 
     bot = build_bot(config)
@@ -502,14 +503,15 @@ def test_bot_on_message_routes_dms_only(wired, config):
     run(bot.on_message(dm))
     assert calls == ["!status"]
 
-    # Server/guild message -> NOT processed for prefix commands
+    # Server/guild message -> processed for prefix commands too (this used to
+    # be the bug: `!status` in the server silently did nothing)
     guild_msg = MagicMock(spec=discord.Message)
     guild_msg.guild = MagicMock()
     guild_msg.guild.id = 123
     guild_msg.author.bot = False
     guild_msg.content = "!status"
     run(bot.on_message(guild_msg))
-    assert calls == ["!status"]  # length unchanged
+    assert calls == ["!status", "!status"]
 
     # Bot message -> ignored
     bot_msg = MagicMock(spec=discord.Message)
@@ -517,12 +519,76 @@ def test_bot_on_message_routes_dms_only(wired, config):
     bot_msg.author.bot = True
     bot_msg.content = "!status"
     run(bot.on_message(bot_msg))
-    assert len(calls) == 1
+    assert len(calls) == 2
 
     bot.store.close()
 
 
-def test_bot_on_command_error_friendly_dm_feedback(wired, config):
+def test_prefix_commands_actually_run_in_guild_channels(wired, config, monkeypatch):
+    """The real discord.py pipeline: `!status` typed in a server must answer.
+
+    This is the regression test for the bug where `!` commands only ever ran
+    in DMs and silently did nothing in the server.
+    """
+    from discord.ext import commands as dpy
+
+    from hell.bot import build_bot
+
+    bot = build_bot(config)
+    bot._connection.user = MagicMock(id=999)  # pretend we are logged in
+
+    sent: list[dict] = []
+
+    async def fake_ctx_send(self, content=None, **kwargs):
+        sent.append({"content": content, **kwargs})
+        return MagicMock()
+
+    monkeypatch.setattr(dpy.Context, "send", fake_ctx_send)
+
+    from hell.cog import HellCommands
+
+    async def add_cog():
+        await bot.add_cog(HellCommands(bot, config, bot.engine, bot.monitor))
+
+    run(add_cog())
+
+    member = MagicMock(spec=discord.Member)
+    member.id = 42
+    member.bot = False
+    member.roles = []
+    member.display_name = "Host"
+
+    def guild_message(content):
+        msg = MagicMock(spec=discord.Message)
+        msg.guild = MagicMock()
+        msg.guild.id = 1
+        msg.author = member
+        msg.channel = MagicMock()
+        msg.channel.id = 777
+        msg.content = content
+        return msg
+
+    async def drive(content):
+        msg = guild_message(content)
+        ctx = await bot.get_context(msg)
+        assert ctx.valid, f"`{content}` did not resolve to a command in a guild"
+        await bot.invoke(ctx)
+
+    run(drive("!status"))
+    assert len(sent) == 1 and sent[0].get("embed") is not None
+
+    sent.clear()
+    run(drive("!hell status"))
+    assert len(sent) == 1 and sent[0].get("embed") is not None
+
+    sent.clear()
+    run(drive("!help"))
+    assert len(sent) == 1 and sent[0].get("embed") is not None
+
+    bot.store.close()
+
+
+def test_bot_on_command_error_friendly_feedback_everywhere(wired, config):
     from hell.bot import build_bot
 
     bot = build_bot(config)
@@ -533,10 +599,10 @@ def test_bot_on_command_error_friendly_dm_feedback(wired, config):
     run(bot.on_command_error(ctx_dm, commands.CommandNotFound("unknown")))
     assert "Unknown command" in ctx_dm.text()
 
-    # Unknown command in guild -> ignored
+    # Unknown command in guild -> also answered (commands work there now)
     ctx_guild = FakeContext(bot, FakeAuthor(uid=100), guild_id=123)
     run(bot.on_command_error(ctx_guild, commands.CommandNotFound("unknown")))
-    assert len(ctx_guild.sent) == 0
+    assert "Unknown command" in ctx_guild.text()
 
     # Missing arg
     ctx_arg = FakeContext(bot, FakeAuthor(uid=100))

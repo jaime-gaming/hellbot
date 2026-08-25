@@ -391,7 +391,14 @@ class HellBot(commands.Bot):
             await self.monitor.kick_clankers([member])
 
     async def on_message(self, message: discord.Message) -> None:
-        """Handle alive-check answers in guild channels and ! prefix commands strictly in DMs."""
+        """Handle alive-check answers in guild channels and `!` prefix commands everywhere.
+
+        Prefix commands used to be processed in DMs only, which made `!status`,
+        `!help`, … silently do nothing when typed in the server — the one place
+        people actually tried them.  They now run in server channels too; the
+        alive-check replies ("Yes") never start with the prefix, so the two
+        responsibilities never collide.
+        """
         if message.author.bot:
             return
         if message.guild is not None:
@@ -399,13 +406,9 @@ class HellBot(commands.Bot):
                 await self.monitor.handle_message(message)
             except Exception:  # pragma: no cover - never break on a chat message
                 log.exception("Failed to handle a message for the alive check")
-            return
-        # Direct Messages (DMs) only: process ! prefix commands
         await self.process_commands(message)
 
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
-        if ctx.guild is not None:
-            return
         if isinstance(error, commands.CommandNotFound):
             await ctx.send("Unknown command. Type `!help` or `!status` for a list of available commands.")
             return

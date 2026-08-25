@@ -19,7 +19,7 @@ from .embeds import MAX_DESCRIPTION, add_chunked_field
 from .engine import HellEngine, StartError
 from .errorcodes import lookup as _ec_lookup
 from .health import preflight
-from .hellevents import HellEventType
+from .hellevents import HellEventType, is_secret_record
 from .milestones import MILESTONES, TOTAL_SECONDS
 from .models import EventStatus
 from .monitor import VoiceMonitor
@@ -82,8 +82,12 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         return True
 
     async def cog_check(self, ctx: commands.Context) -> bool:
-        """Enforce that prefix commands can ONLY be run in Direct Messages (DMs)."""
-        return ctx.guild is None
+        """`!` prefix commands work everywhere: DMs and server channels alike.
+
+        They used to be DM-only, which made `!status`, `!help`, … silently do
+        nothing when typed in the server — exactly where people tried them.
+        """
+        return True
 
     # =========================================================================
     # Shared Helper Builders
@@ -187,11 +191,23 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         now = now_ts()
         if active is not None and active.is_active:
             left_s = int(active.seconds_left(now))
-            embed.add_field(
-                name=f"🔥 ACTIVE: {active.name}",
-                value=f"• Time remaining: **{left_s // 60}m {left_s % 60}s** (<t:{int(active.end_ts)}:R>)\n• State: `{active.state.value}`",
-                inline=False,
-            )
+            if is_secret_record(active):
+                embed.add_field(
+                    name=str(
+                        getattr(TEXT, "CMD_HELLEVENTS_ACTIVE_SECRET", "🔮 ACTIVE: ??? (Secret Event)")
+                    ),
+                    value=(
+                        f"• Time remaining: **{left_s // 60}m {left_s % 60}s** (<t:{int(active.end_ts)}:R>)\n"
+                        "• Something is happening in Hell — its nature will be revealed when it ends."
+                    ),
+                    inline=False,
+                )
+            else:
+                embed.add_field(
+                    name=f"🔥 ACTIVE: {active.name}",
+                    value=f"• Time remaining: **{left_s // 60}m {left_s % 60}s** (<t:{int(active.end_ts)}:R>)\n• State: `{active.state.value}`",
+                    inline=False,
+                )
         else:
             next_ts = self.engine.hell_events.next_event_ts()
             next_str = f"<t:{int(next_ts)}:R> (<t:{int(next_ts)}:t>)" if next_ts else "Not scheduled"
@@ -202,23 +218,36 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             )
 
         events_desc = (
+            "**Good**\n"
             "1. **Double Time** (5m) — 2x personal leaderboard time for humans in VC.\n"
             "2. **Blood Pact** (Instant) — +5m bonus survival time to everyone in VC.\n"
-            "3. **Inferno** (10m) — Accelerated Alive/Dead checks.\n"
-            "4. **Blindness** (10m) — Hides remaining time & next milestone on progress cards.\n"
-            "5. **Hell Jackpot** (5m) — Boosts gambling reward multipliers."
+            "3. **Hell Jackpot** (5m) — Boosts gambling reward multipliers.\n"
+            "4. **Golden Hour** (Instant) — The next roll call is postponed.\n"
+            "5. **Soul Cache** (Instant) — One lucky soul in the VC finds bonus time.\n"
+            "\n**Bad**\n"
+            "6. **Inferno** (10m) — Accelerated Alive/Dead checks.\n"
+            "7. **Blindness** (10m) — Hides remaining time & next milestone on progress cards.\n"
+            "8. **Time Vortex** (5m) — Personal leaderboard time runs at half speed.\n"
+            "9. **Blood Debt** (Instant) — Everyone in the VC loses survival time.\n"
+            "10. **The Culling** (Instant) — An immediate roll call: say Yes or be disconnected.\n"
+            "\n🕯️ **Secret events** — roughly 1 in 4 events keeps its identity hidden until it ends."
         )
         embed.add_field(name="📜 Event Types", value=events_desc, inline=False)
 
         history = self.engine.hell_events.history()[:5]
         if history:
-            h_lines = [
-                f"• **{h['name']}** — <t:{int(h['start_ts'])}:R> (`{h['state']}`)"
-                for h in history
-            ]
+            h_lines = []
+            for h in history:
+                # An active secret event must not leak its own name here.
+                name = "??? (Secret)" if h.get("state") == "active" and h.get("metadata", {}).get("secret") else h["name"]
+                h_lines.append(
+                    f"• **{name}** — <t:{int(h['start_ts'])}:R> (`{h['state']}`)"
+                )
             embed.add_field(name="🕒 Recent Events", value="\n".join(h_lines), inline=False)
 
-        embed.set_footer(text="Random interval: 30m to 3h · Scales by Difficulty Level")
+        embed.set_footer(
+            text="Random interval: 30m to 3h · Scales by Difficulty Level · ~25% are secret"
+        )
         self.announcer.embeds._brand(embed)
         return embed
 
@@ -233,13 +262,17 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             return False, f"❌ A Hell Event (**{self.engine.hell_events.active_event.name}**) is already active."
 
         clean = event_type_str.strip().lower()
+        secret = clean in ("secret", "mystery", "random_secret", "???")
         matched: Optional[HellEventType] = None
-        for ev in HellEventType:
-            if ev.value == clean or ev.name.lower() == clean or clean in ev.value:
-                matched = ev
-                break
+        if secret:
+            matched = self.engine.hell_events.pick_secret_event_type()
+        else:
+            for ev in HellEventType:
+                if ev.value == clean or ev.name.lower() == clean or clean in ev.value:
+                    matched = ev
+                    break
         if matched is None:
-            opts = ", ".join(f"`{ev.value}`" for ev in HellEventType)
+            opts = ", ".join(f"`{ev.value}`" for ev in HellEventType) + ", `secret`"
             return False, f"❌ Unknown event type `{event_type_str}`. Valid options: {opts}."
 
         collected = await self.monitor.collect()
@@ -248,9 +281,17 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             return False, "❌ Cannot trigger a Hell Event: the VC is empty."
 
         now = now_ts()
-        started = await self.engine.hell_events.start_event(matched, now, participants)
+        started = await self.engine.hell_events.start_event(matched, now, participants, secret=secret)
         if started is None:
             return False, "❌ Failed to trigger Hell Event."
+        if secret and started.secret:
+            return True, str(
+                getattr(
+                    TEXT,
+                    "CMD_HELLEVENTS_TRIGGERED_SECRET",
+                    "🕯️ Triggered a **secret** Hell Event — its nature stays hidden until it ends.",
+                )
+            )
         return True, say(
             getattr(TEXT, "CMD_HELLEVENTS_TRIGGERED", "⚡ Triggered Hell Event: **{name}**."),
             name=started.record.name,
@@ -956,11 +997,17 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             app_commands.Choice(name="trigger (Host only: start a Hell Event)", value="trigger"),
         ],
         event_type=[
+            app_commands.Choice(name="🎲 Secret (random event, hidden until it ends)", value="secret"),
             app_commands.Choice(name="Double Time (2x leaderboard time for 5m)", value="double_time"),
             app_commands.Choice(name="Blood Pact (+5m bonus time to everyone in VC)", value="blood_pact"),
             app_commands.Choice(name="Inferno (Accelerated checks for 10m)", value="inferno"),
             app_commands.Choice(name="Blindness (Hides time left & next milestone for 10m)", value="blindness"),
             app_commands.Choice(name="Hell Jackpot (Boosted gamble rewards for 5m)", value="jackpot"),
+            app_commands.Choice(name="Time Vortex (half leaderboard time for 5m)", value="time_vortex"),
+            app_commands.Choice(name="Golden Hour (next roll call postponed)", value="golden_hour"),
+            app_commands.Choice(name="Soul Cache (big bonus for one random person)", value="soul_cache"),
+            app_commands.Choice(name="Blood Debt (everyone in VC loses time)", value="blood_debt"),
+            app_commands.Choice(name="The Culling (immediate roll call)", value="culling"),
         ],
     )
     @app_commands.guild_only()
@@ -1689,7 +1736,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         embed = discord.Embed(
             title="🔥 Welcome to Hell — Commands",
             description=(
-                "Use `!<command>` in DMs or `/hell <command>` in the server.\n"
+                "Use `!<command>` here in the server, in DMs, or `/hell <command>` anywhere.\n"
                 f"**Voice channel:** <#{self.config.voice_channel_id}>\n"
                 f"**Empty-VC grace period:** {int(self.config.empty_vc_grace_seconds)}s\n"
             ),
@@ -1718,7 +1765,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
                 "`!setdifficulty <0-4|auto>` — Set or override difficulty level",
                 "`!broadcast <info|warning|error|...> <announcements|vc> <message>` — Post a colored embed",
                 "`!announcedifficulty [overview]` — Broadcast difficulty update to announcement channel",
-                "`!triggerhellevent <type>` — Force-trigger a Hell Event immediately",
+                "`!triggerhellevent <type|secret>` — Force-trigger a Hell Event immediately",
                 "`!doctor` — Diagnostic self-check (permissions, state, runtime, config)",
                 "`!logs [status|on|off|test|tail|flush] [level]` — Control live log stream",
                 "`!security` — Anti-cheat and anomaly report",

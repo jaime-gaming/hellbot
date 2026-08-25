@@ -596,9 +596,53 @@ HELL_EVENT_JACKPOT_START = (
     "For the next **{duration} minutes**, gambling rewards are increased."
 )
 HELL_EVENT_JACKPOT_END = "🎰 **JACKPOT HAS ENDED**\n\nGambling rewards have returned to normal."
+HELL_EVENT_TIME_VORTEX_START = (
+    "🌀 **HELL EVENT — TIME VORTEX**\n\n"
+    "For the next **{duration} minutes**, your personal leaderboard time is running at **{multiplier}x speed**.\n"
+    "Every second in Hell now counts for less."
+)
+HELL_EVENT_TIME_VORTEX_END = "🌀 **TIME VORTEX HAS CLOSED**\n\nTime flows normally again. Every second counts once more."
+HELL_EVENT_GOLDEN_HOUR_START = (
+    "😇 **HELL EVENT — GOLDEN HOUR**\n\n"
+    "Hell looks away for a moment. Your next roll call has been postponed by **{delay}**.\n"
+    "Breathe. You have earned it."
+)
+HELL_EVENT_SOUL_CACHE_START = (
+    "💎 **HELL EVENT — SOUL CACHE**\n\n"
+    "A hidden cache of stolen time has surfaced — and **{who}** found it first.\n"
+    "**+{bonus}** of personal survival time, on the house."
+)
+HELL_EVENT_BLOOD_DEBT_START = (
+    "📉 **HELL EVENT — BLOOD DEBT**\n\n"
+    "The tax collectors of Hell have come knocking. Everyone currently in Hell ({count} participants) "
+    "has been charged **-{penalty}** of personal survival time."
+)
+HELL_EVENT_CULLING_START = (
+    "⚔️ **HELL EVENT — THE CULLING**\n\n"
+    "Hell demands proof of life **right now**.\n"
+    "An immediate roll call has been triggered: reply **Yes** in time or be disconnected from the VC."
+)
+HELL_EVENT_SECRET_TITLE = "🕯️ SECRET HELL EVENT — ???"
+HELL_EVENT_SECRET_FOOTER = "Its nature stays hidden until it ends"
+HELL_EVENT_SECRET_START = (
+    "🕯️ **A SECRET HELL EVENT HAS BEGUN**\n\n"
+    "Something has changed deep within Hell…\n"
+    "What exactly? **Nobody knows — yet.**\n\n"
+    "The veil lifts when the event ends. Stay alert."
+)
+HELL_EVENT_SECRET_END_TITLE = "🕯️ SECRET HELL EVENT REVEALED — {name}"
+HELL_EVENT_SECRET_REVEAL = (
+    "🕯️ **THE SECRET EVENT IS REVEALED: {name}**\n\n"
+    "The veil lifts — all along, it was **{name}**.\n\n"
+    "{description}"
+)
 CMD_HELLEVENTS_TITLE = "⚡ HELL EVENTS"
 CMD_HELLEVENTS_STATUS_NONE = "*No Hell Event is currently active.*"
+CMD_HELLEVENTS_ACTIVE_SECRET = "🔮 ACTIVE: ??? (Secret Event)"
 CMD_HELLEVENTS_TRIGGERED = "⚡ Triggered Hell Event: **{name}**."
+CMD_HELLEVENTS_TRIGGERED_SECRET = (
+    "🕯️ Triggered a **secret** Hell Event — its nature stays hidden until it ends."
+)
 
 # Finale System
 FINALE_FINAL_HOUR_TITLE = "👹 THE FINAL HOUR"

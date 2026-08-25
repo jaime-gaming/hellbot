@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Sequence
-from typing import Optional
+from typing import Any, Optional
 
 import discord
 
@@ -58,6 +58,9 @@ from .models import LeaderboardEntry, MilestoneRecord
 from .texts import TEXT
 
 log = logging.getLogger("hell.announcer")
+
+# How many VC participants a Hell Event echo may ping (matches the roll calls).
+MAX_VC_EVENT_PINGS = 60
 
 __all__ = [
     "MAX_CONTENT",
@@ -123,6 +126,7 @@ class Announcer:
         content: Optional[str] = None,
         mention_everyone: bool = False,
         target: str = "announcements",
+        mention_users: bool = False,
     ) -> Optional[discord.Message]:
         """Post one or more embeds, chunked into as many messages as needed."""
         batch = list(embeds)
@@ -132,7 +136,7 @@ class Announcer:
         if chan is None:
             return None
         allowed = discord.AllowedMentions(
-            everyone=mention_everyone, users=False, roles=False, replied_user=False
+            everyone=mention_everyone, users=mention_users, roles=False, replied_user=False
         )
         first: Optional[discord.Message] = None
         titles = ", ".join(e.title for e in batch if e.title) or "message"
@@ -267,16 +271,53 @@ class Announcer:
         )
 
     async def announce_hell_event_start(self, event: HellEventStarted) -> Optional[discord.Message]:
-        """Broadcast a Hell Event start announcement to the announcement channel."""
+        """Broadcast a Hell Event start to the announcement channel AND the VC text chat.
+
+        The VC echo pings everyone the event applies to, so the people actually
+        sitting in Hell never miss it — that is where they are looking.
+        """
         embed = self.embeds.hell_event_start(event)
         log.info("Announcing Hell Event start: %s", event.record.name)
-        return await self.send([embed])
+        first = await self.send([embed])
+        echoed = await self._echo_hell_event_to_vc([embed], event.eligible_participants)
+        return first or echoed
 
     async def announce_hell_event_end(self, event: HellEventEnded) -> Optional[discord.Message]:
-        """Broadcast a Hell Event end announcement to the announcement channel."""
+        """Broadcast a Hell Event end to the announcement channel AND the VC text chat."""
         embed = self.embeds.hell_event_end(event)
         log.info("Announcing Hell Event end: %s", event.record.name)
-        return await self.send([embed])
+        first = await self.send([embed])
+        echoed = await self._echo_hell_event_to_vc([embed])
+        return first or echoed
+
+    async def _echo_hell_event_to_vc(
+        self,
+        embeds: Sequence[discord.Embed],
+        participants: Sequence[Any] = (),
+    ) -> Optional[discord.Message]:
+        """Repeat a Hell Event announcement in the VC text chat.
+
+        Pings the affected participants (capped like the roll calls) unless the
+        VC chat *is* the announcement channel — then the message was already
+        posted there and a second copy would only be noise.
+        """
+        try:
+            vc_chan = await self.channel_for("vc")
+        except Exception:  # pragma: no cover - defensive
+            return None
+        if vc_chan is None:
+            return None
+        try:
+            ann_chan = await self.channel()
+        except Exception:  # pragma: no cover - defensive
+            ann_chan = None
+        if ann_chan is not None and getattr(vc_chan, "id", None) == getattr(ann_chan, "id", None):
+            return None  # same channel — nothing to echo
+        uids = [p.user_id for p in participants][:MAX_VC_EVENT_PINGS]
+        content = " ".join(f"<@{uid}>" for uid in uids) if uids else None
+        return await self.send(
+            list(embeds), content=content, target="vc", mention_users=bool(uids)
+        )
 
     async def announce_finale_stage(self, ann: FinaleAnnouncement) -> Optional[discord.Message]:
         """Broadcast a 160-Hour Finale milestone stage to the announcement channel."""

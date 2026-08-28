@@ -41,7 +41,8 @@ from .engine import (
     MilestoneReached,
     Observation,
 )
-from .models import EventStatus, ParticipantRef
+from .models import EventStatus, MilestoneRecord, ParticipantRef
+from .neterrors import UNREACHABLE, OutageTracker
 from .pages_sync import push_docs, write_live_server_file
 from .security import SuspicionTracker
 from .status_writer import get_status as get_status_writer
@@ -78,10 +79,13 @@ class VoiceMonitor:
         self._lock = asyncio.Lock()  # serialises ticks; no milestone can race
         self._known_presence: dict[int, str] = {}
         self._alive_task: Optional[asyncio.Task] = None
+        self._pending_retry_task: Optional[asyncio.Task] = None
         self._blind_since: Optional[float] = None
         self._blind_logged = False
         self._last_heartbeat = 0.0
+        self._last_pending_scan = 0.0
         self._terminal_rendered = False
+        self._kick_outage = OutageTracker("clanker kicks")
         self._monitor_loop.change_interval(seconds=max(0.25, config.monitor_interval))
         self._progress_loop.change_interval(seconds=max(5.0, config.progress_interval))
 
@@ -251,11 +255,18 @@ class VoiceMonitor:
             self._kick_attempts[member.id] = now
             try:
                 await member.move_to(None, reason="Welcome to Hell: @clanker is not allowed in the VC")
-                log.info("Kicked @clanker %s (%s) from the VC", member.display_name, member.id)
             except discord.Forbidden:
                 log.error("Missing permission to disconnect clanker %s", member.id)
             except discord.HTTPException as exc:
                 log.warning("Failed to disconnect clanker %s: %s", member.id, exc)
+            except UNREACHABLE as exc:
+                # Network outage: the 3s throttle above caps the retry pace,
+                # and the next tick re-reads the VC, so the clanker is picked
+                # up automatically once connectivity returns.
+                self._kick_outage.note_failure(exc)
+            else:
+                self._kick_outage.note_success()
+                log.info("Kicked @clanker %s (%s) from the VC", member.display_name, member.id)
 
     # ----------------------------------------------------------------- loops
 
@@ -309,6 +320,24 @@ class VoiceMonitor:
                 await self.announcer.update_progress(
                     self.engine.snapshot(now=now, participants=len(humans)), force=True
                 )
+
+            # Milestones reached while Discord was unreachable were never
+            # announced (announce_milestone only marks them announced once the
+            # post actually landed). Re-attempt them, throttled, instead of
+            # waiting for the next bot restart.
+            if now - self._last_pending_scan >= 60.0:
+                in_flight = (
+                    self._pending_retry_task is not None
+                    and not self._pending_retry_task.done()
+                )
+                if not in_flight:
+                    self._last_pending_scan = now
+                    pending = self.engine.pending_announcements()
+                    if pending:
+                        self._pending_retry_task = spawn(
+                            self._retry_pending_announcements(pending),
+                            name="pending-announcements",
+                        )
         self._heartbeat(len(humans))
         # Security/anomaly checks (run on every tick, cheap).
         self.security.check_stale()
@@ -402,15 +431,23 @@ class VoiceMonitor:
         state = self.engine.state
         if state.status is EventStatus.IDLE:
             return
-        if state.status.is_terminal:
+        terminal = state.status.is_terminal
+        if terminal:
             # Render the final state exactly once, then stop burning API calls.
             if self._terminal_rendered or state.progress_message_id is None:
                 return
-            self._terminal_rendered = True
         else:
             self._terminal_rendered = False
         count = len(self.engine.last_participants)
-        await self.announcer.update_progress(self.engine.snapshot(participants=count))
+        published = await self.announcer.update_progress(
+            self.engine.snapshot(participants=count)
+        )
+        if terminal:
+            # Only flag success: if Discord is unreachable the final state is
+            # rendered on the first tick after connectivity returns instead
+            # of never being rendered at all.
+            if published:
+                self._terminal_rendered = True
 
     @_progress_loop.before_loop
     async def _before_progress(self) -> None:
@@ -455,6 +492,13 @@ class VoiceMonitor:
             await self._final_progress()
             self.reports.schedule()
             self.sync_status()
+
+    async def _retry_pending_announcements(self, records: Sequence[MilestoneRecord]) -> None:
+        """Re-post milestone announcements that a network outage swallowed."""
+        try:
+            await self.announcer.announce_pending(records)
+        except Exception:  # pragma: no cover - announce_pending is already defensive
+            log.exception("Could not re-announce pending milestone(s)")
 
     async def _announce_difficulty_escalation(self, event: MilestoneReached) -> None:
         """Post the difficulty escalation that a milestone just unlocked.

@@ -54,6 +54,7 @@ from .engine import (
 )
 from .finale import FinaleAnnouncement
 from .models import LeaderboardEntry, MilestoneRecord
+from .neterrors import UNREACHABLE, OutageTracker
 from .texts import TEXT
 
 log = logging.getLogger("hell.announcer")
@@ -88,6 +89,10 @@ class Announcer:
         self.embeds = EmbedFactory(config)
         self._progress_message: Optional[discord.Message] = None
         self._last_progress_payload: Optional[str] = None
+        # One tracker per call path: a network outage logs a single ERROR,
+        # stays quiet while retrying, and announces the recovery once.
+        self._send_outage = OutageTracker("Discord announcements")
+        self._progress_outage = OutageTracker("live progress updates")
 
     # ------------------------------------------------------------- plumbing
 
@@ -147,7 +152,7 @@ class Announcer:
                         files=files,   # local artwork, if any
                         allowed_mentions=allowed,
                     )
-                except discord.HTTPException:
+                except BaseException:
                     assets.close_files(files)  # never leak artwork handles
                     raise
                 first = first or msg
@@ -163,6 +168,13 @@ class Announcer:
             )
         except discord.HTTPException as exc:
             log.error("Failed to send announcement: %s", exc)
+        except UNREACHABLE as exc:
+            # Discord is not answering at all (network outage). Swallow it:
+            # callers that mark state (milestones) keep it *unannounced*, so
+            # the monitor re-posts it when connectivity returns.
+            self._send_outage.note_failure(exc)
+        else:
+            self._send_outage.note_success()
         return first
 
     # -------------------------------------------------------- embed builders
@@ -329,54 +341,74 @@ class Announcer:
 
     # ------------------------------------------------ live progress message
 
-    async def update_progress(self, snap: Snapshot, *, force: bool = False) -> None:
-        """Edit the single live progress message (creating it once if needed)."""
+    async def update_progress(self, snap: Snapshot, *, force: bool = False) -> bool:
+        """Edit the single live progress message (creating it once if needed).
+
+        Returns True when the state is (or now is) published on Discord.
+        Never raises on a Discord connectivity problem: the progress loop
+        calls this every few seconds, and a network outage must degrade the
+        display (one clear log line) instead of flooding the logs.
+        """
         embed = self.build_progress(snap)
         payload = embed_to_text(embed)
         if not force and payload == self._last_progress_payload:
-            return  # nothing changed -> don't waste an API call
+            return True  # nothing changed -> don't waste an API call
 
-        msg = await self._get_progress_message()
-        if msg is not None:
+        try:
+            msg = await self._get_progress_message()
+            if msg is not None:
+                try:
+                    await msg.edit(embed=embed, content=None, allowed_mentions=discord.AllowedMentions.none())
+                    self._last_progress_payload = payload
+                    self._progress_outage.note_success()
+                    log.debug("Progress message updated")
+                    return True
+                except discord.NotFound:
+                    log.warning("Progress message vanished — recreating it")
+                    self._progress_message = None
+                    self.engine.set_progress_message(None, None)
+                except discord.Forbidden:
+                    log.error("Missing permission to edit the progress message")
+                    return False
+                except discord.HTTPException as exc:
+                    log.warning("Progress edit failed (will retry): %s", exc)
+                    return False
+
+            chan = await self.channel()
+            if chan is None:
+                return False
+            files = assets.files_for([embed])
+            new_msg: Optional[discord.Message] = None
             try:
-                await msg.edit(embed=embed, content=None, allowed_mentions=discord.AllowedMentions.none())
-                self._last_progress_payload = payload
-                log.debug("Progress message updated")
-                return
-            except discord.NotFound:
-                log.warning("Progress message vanished — recreating it")
-                self._progress_message = None
-                self.engine.set_progress_message(None, None)
-            except discord.Forbidden:
-                log.error("Missing permission to edit the progress message")
-                return
+                # Artwork is uploaded once, with the message; later edits keep it.
+                new_msg = await chan.send(
+                    embed=embed,
+                    files=files,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
             except discord.HTTPException as exc:
-                log.warning("Progress edit failed (will retry): %s", exc)
-                return
-
-        chan = await self.channel()
-        if chan is None:
-            return
-        files = assets.files_for([embed])
-        try:
-            # Artwork is uploaded once, with the message; later edits keep it.
-            new_msg = await chan.send(
-                embed=embed,
-                files=files,
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
-        except discord.HTTPException as exc:
-            assets.close_files(files)  # never leak artwork handles
-            log.error("Could not create the progress message: %s", exc)
-            return
-        self._progress_message = new_msg
-        self._last_progress_payload = payload
-        self.engine.set_progress_message(new_msg.channel.id, new_msg.id)
-        log.info("Live progress message created (%s) in #%s", new_msg.id, new_msg.channel.id)
-        try:
-            await new_msg.pin(reason="Welcome to Hell live progress")
-        except discord.HTTPException:
-            pass  # pinning is a nicety, never a requirement
+                log.error("Could not create the progress message: %s", exc)
+                return False
+            finally:
+                if new_msg is None:
+                    # Any failure (HTTP error, network outage, cancellation):
+                    # release the upload handles. Success keeps them for the
+                    # already-sent message; double-closing is harmless.
+                    assets.close_files(files)
+            self._progress_message = new_msg
+            self._last_progress_payload = payload
+            self.engine.set_progress_message(new_msg.channel.id, new_msg.id)
+            log.info("Live progress message created (%s) in #%s", new_msg.id, new_msg.channel.id)
+            try:
+                await new_msg.pin(reason="Welcome to Hell live progress")
+            except discord.HTTPException:
+                pass  # pinning is a nicety, never a requirement
+            self._progress_outage.note_success()
+            return True
+        except UNREACHABLE as exc:
+            # Network outage: the edit/create is retried on the next tick.
+            self._progress_outage.note_failure(exc)
+            return False
 
     async def _get_progress_message(self) -> Optional[discord.Message]:
         if self._progress_message is not None:

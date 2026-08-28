@@ -11,6 +11,7 @@ import asyncio
 import logging
 from unittest.mock import MagicMock
 
+import aiohttp
 import discord
 import pytest
 
@@ -582,3 +583,121 @@ def test_last_valid_observed_ts_is_persisted_and_loaded(tmp_path):
     assert loaded.last_valid_observed_ts == T0 + 30
     store.close()
     store2.close()
+
+
+# ----------------------------------------------------- network outage (no answer at all)
+
+
+def _conn_error() -> aiohttp.ClientOSError:
+    """What aiohttp raises when Discord simply does not answer (DNS/egress down).
+
+    ``ClientOSError`` is the connector-level form of the field error
+    (``ClientConnectorError`` wraps it); both are ``aiohttp.ClientError``.
+    """
+    return aiohttp.ClientOSError(101, "Network is unreachable")
+
+
+def test_network_outage_logs_once_then_retries_quietly(config, engine, caplog):
+    """A multi-minute outage must be ONE error, not a traceback per attempt."""
+    announcer = Announcer(BotWith(HostileChannel(_conn_error())), config, engine)
+    start(engine, T0, 1)
+
+    with caplog.at_level(logging.DEBUG, logger="hell.net"):
+        assert run(announcer.send([discord.Embed(title="x")])) is None
+        assert run(announcer.send([discord.Embed(title="x")])) is None
+        assert run(announcer.send([discord.Embed(title="x")])) is None
+
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert "Discord unreachable" in errors[0].message
+    assert "Network is unreachable" in errors[0].message  # the underlying cause is preserved
+    assert "check" in errors[0].message and "internet" in errors[0].message.lower()  # actionable
+
+
+def test_milestone_swallowed_by_an_outage_is_reannounced_when_back(config, engine, caplog):
+    """Outage at the exact milestone second: the announcement must land later,
+    not only after a bot restart."""
+    with caplog.at_level(logging.DEBUG, logger="hell.net"):
+        announcer = Announcer(BotWith(HostileChannel(_conn_error())), config, engine)
+        start(engine, T0, 1)
+        engine.store.claim_milestone(engine.event_uid, 32, T0)
+        run(announcer.announce_milestone(
+            MilestoneReached(milestone=get_milestone(32), reached_ts=T0, members=[])
+        ))
+    # The post failed -> the milestone stays pending (not marked announced).
+    assert [m.hours for m in engine.pending_announcements()] == [32]
+
+    # Connectivity returns: the monitor's throttled re-check re-posts it.
+    healthy = Announcer(BotWith(FakeTextChannel()), config, engine)
+    run(healthy.announce_pending(engine.pending_announcements()))
+    assert engine.pending_announcements() == []
+
+
+def test_update_progress_survives_an_outage_and_recovers(config, engine, caplog):
+    """The exact failure from the field: progress loop + ClientConnectorError.
+    No traceback per tick; returns False while down, True (with a recovery
+    line) when the connection is back."""
+    announcer = Announcer(BotWith(HostileChannel(_conn_error())), config, engine)
+    start(engine, T0, 1)
+
+    with caplog.at_level(logging.DEBUG, logger="hell.net"):
+        assert run(announcer.update_progress(engine.snapshot(now=T0 + 60), force=True)) is False
+        assert run(announcer.update_progress(engine.snapshot(now=T0 + 120), force=True)) is False
+
+    assert sum(r.levelno >= logging.ERROR for r in caplog.records) == 1
+
+    # Same instance, connection back: success + exactly one recovery line.
+    announcer.bot = BotWith(FakeTextChannel())
+    with caplog.at_level(logging.INFO, logger="hell.net"):
+        assert run(announcer.update_progress(engine.snapshot(now=T0 + 180), force=True)) is True
+    assert "reachable again" in caplog.text
+
+
+def test_milestone_missed_during_outage_is_reposted_live_without_restart(
+    config, engine, monkeypatch, caplog
+):
+    """The full path from the field: milestone claimed while Discord is down,
+    outage ends, and the monitor's throttled re-check posts it — no restart."""
+    from hell.timeutil import now_ts
+
+    hostile = HostileChannel(_conn_error())
+    healthy = FakeTextChannel()
+    bot = MonitorBot(hostile)                        # richer fake: is_ready/is_closed
+    monitor = VoiceMonitor(bot, config, engine, Announcer(bot, config, engine))
+    vc = FakeVoiceChannel([FakeMember(1, "Human")])
+    monkeypatch.setattr(monitor, "voice_channel", lambda: vc)
+
+    now = now_ts()
+    monitor._ready_at = now - 1000                    # past the startup grace
+    start(engine, now, 1)
+    engine.store.claim_milestone(engine.event_uid, 32, now)  # announcement lost to the outage
+
+    async def drive():
+        await monitor._tick_once()                  # outage: re-check fires, post fails
+        await asyncio.sleep(0)
+        bot._channel = healthy                      # connectivity restored
+        monitor._last_pending_scan = 0.0
+        await monitor._tick_once()                  # re-check fires again, post lands
+        await asyncio.sleep(0)
+
+    with caplog.at_level(logging.DEBUG, logger="hell.net"):
+        run(drive())
+
+    assert engine.pending_announcements() == []     # announced live, not on restart
+    assert len(healthy.sent) == 1                   # exactly one (late) announcement
+
+
+def test_outage_tracker_recovery_line_resets(config, engine, caplog):
+    """A second, later outage gets its own first-error and recovery line."""
+    from hell.neterrors import OutageTracker
+
+    tracker = OutageTracker("test label")
+    with caplog.at_level(logging.INFO, logger="hell.net"):
+        tracker.note_failure(_conn_error())
+        tracker.note_success()
+        tracker.note_failure(_conn_error())
+        tracker.note_success()
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    recoveries = [r for r in caplog.records if r.levelno == logging.INFO]
+    assert len(errors) == 2
+    assert len(recoveries) == 2

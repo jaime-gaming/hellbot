@@ -735,3 +735,28 @@ def test_status_json_payload_matches_what_the_pages_normalize(config):
         assert payload["status"] == "RUNNING"
     finally:
         bot.store.close()
+
+
+def test_start_server_refuses_an_already_bound_port(config):
+    """EADDRINUSE must not produce a bare traceback: the server is skipped,
+    the runner is cleaned up, and the port works again once it is free."""
+    import asyncio
+    import socket
+
+    from hell import web as hellweb
+
+    async def run():
+        blocker = socket.socket()
+        blocker.bind(("127.0.0.1", 0))
+        port = blocker.getsockname()[1]
+        try:
+            runner = await hellweb.start_server(port)
+            assert runner is None, "port is taken — the server must not start"
+        finally:
+            blocker.close()
+        # Port free again: a normal start succeeds (and must be stopped).
+        runner2 = await hellweb.start_server(port)
+        assert runner2 is not None
+        await hellweb.stop_server(runner2)
+
+    asyncio.run(run())

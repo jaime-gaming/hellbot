@@ -1696,6 +1696,23 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         else:
             log.exception("Command error", exc_info=error)
             message = TEXT.CMD_ERROR
+            # A 4xx from Discord on the *response* itself (not on our data)
+            # usually means the interaction was already answered or has
+            # expired — the classic symptom of a second bot instance running
+            # with the same token. Say so explicitly, with identifiers that
+            # make it greppable in the logs.
+            if isinstance(error, discord.HTTPException):
+                status = getattr(error, "status", None)
+                if status in (400, 403, 404, 405):
+                    log.error(
+                        "Discord rejected the response for /hell %s (HTTP %s): "
+                        "the interaction was probably already answered — is a "
+                        "second copy of the bot running? interaction=%s guild=%s",
+                        interaction.command.name if interaction.command else "?",
+                        status,
+                        getattr(interaction, "id", "?"),
+                        getattr(interaction, "guild_id", "?"),
+                    )
         if isinstance(error, DMsClosed):
             message = TEXT.CMD_DM_ONLY
         elif isinstance(error, NotOperator):

@@ -133,6 +133,18 @@ docker compose up -d      # state lives in the hell-data volume
 
 A systemd unit is in [`deploy/hellbot.service`](deploy/hellbot.service).
 
+**Port 8080 already in use** (`Web dashboard NOT started: port 8080 is already
+in use`): the dashboard binds `WEB_PORT` (default `8080`) inside the container
+and docker-compose publishes the *same* value, so change it in one place:
+`WEB_PORT=8090` in `.env`, then `docker compose up -d` again. If the log says
+the port is in use but nothing else is running, check for a **second bot
+instance** (`docker ps | grep hell` / `ps aux | grep bot`) — only one process
+per `.env` may run; two instances double-credit time and fight over every
+`/hell` command. As a safety net the bot refuses to start a second instance
+against the same database (a `flock` on `<data dir>/hellbot.lock`), so a
+duplicate copy now exits immediately with a clear error instead of running
+amok.
+
 ---
 
 ## The control panel

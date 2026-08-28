@@ -32,6 +32,7 @@ from .health import HealthReport, preflight
 from .logging_setup import setup_logging
 from .logsink import DiscordLogStream
 from .monitor import VoiceMonitor
+from .single_instance import InstanceLock, SingleInstanceError
 from .storage import Store
 from .tasks import spawn as _spawn
 from .texts import TEXT
@@ -65,6 +66,11 @@ class HellBot(commands.Bot):
         super().__init__(command_prefix=commands.when_mentioned_or("!"), intents=intents, help_command=None)
 
         self.config = config
+        # Refuse to run a second live instance against this database (a stale
+        # container or leftover process would double-credit time and steal
+        # interaction responses).  Raises SingleInstanceError if held.
+        self.instance_lock = InstanceLock(config.database_path)
+        self.instance_lock.acquire()
         self.store = Store(config.database_path)
         self.engine = HellEngine(self.store, config)
         self.announcer = Announcer(self, config, self.engine)
@@ -469,6 +475,7 @@ class HellBot(commands.Bot):
         try:
             await super().close()
         finally:
+            self.instance_lock.release()
             self.store.close()
             log.info("Shutdown complete")
 
@@ -520,6 +527,8 @@ def main() -> None:
             "The Server Members intent is not enabled for this application. Enable it at "
             "Developer Portal -> Bot -> Privileged Gateway Intents, then start the bot again.",
         )
+    except SingleInstanceError as exc:
+        _fail(6, str(exc))
     except (aiohttp.ClientConnectorError, OSError) as exc:
         # No internet, DNS failure, blocked egress… a stack trace helps nobody.
         log.error("Could not reach Discord: %s", exc)

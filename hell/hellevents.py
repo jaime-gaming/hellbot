@@ -474,16 +474,8 @@ class HellEventManager:
         return self.store.get_next_hell_event(self._event_uid)
 
     def is_due(self, now: float) -> bool:
-        if self.active_event is not None or not self._event_uid:
-            return False
-        if self.engine is not None:
-            if not self.engine.is_running or self.engine.is_paused or self.engine.grace.is_open:
-                return False
-        due = self.next_event_ts()
-        if due is None:
-            self.schedule_next(now)
-            return False
-        return now >= due
+        """Hell Events have been retired — never auto-trigger."""
+        return False
 
     # ------------------------------------------------------------------ tick
 

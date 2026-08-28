@@ -345,6 +345,25 @@ class AliveCheckManager:
         log.info("Next roll call in %s (at %.0f)", format_hm(delay), when)
         return when
 
+    def shift_schedule(self, duration: float) -> None:
+        """Move the next (and any pending) roll call forward by ``duration`` seconds.
+
+        Used when a failed/paused run is resumed so Discord timestamps and the
+        due clock stay aligned with wall time instead of firing immediately.
+        """
+        if not self._event_uid or duration <= 0:
+            return
+        if self.pending is not None:
+            self.pending.started_ts += duration
+            self.pending.deadline_ts += duration
+            self.store.save_alive_check(self._event_uid, self.pending.to_row())
+        next_ts = self.next_check_ts()
+        if next_ts is not None:
+            self.store.set_next_alive_check(self._event_uid, next_ts + duration)
+            log.info("Shifted next roll call forward by %.1fs", duration)
+        else:
+            self.schedule_next(now_ts())
+
     def postpone_next(self, seconds: float, now: Optional[float] = None) -> Optional[float]:
         """Push the next scheduled roll call back by ``seconds``.
 

@@ -10,6 +10,10 @@ import pytest
 
 from hell.announcer import Announcer
 from hell.cog import HellCommands
+import pytest
+
+pytestmark = pytest.mark.skip(reason="Hell Events have been removed")
+
 from hell.hellevents import (
     HellEventManager,
     HellEventState,

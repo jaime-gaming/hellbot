@@ -315,14 +315,14 @@ def test_gambling_custom_bet_hours(engine, store, config):
     initial_seconds = next(e.seconds for e in engine.leaderboard() if e.user_id == 1)
 
     user = MagicMock(id=1, display_name="Alice", mention="<@1>")
-    # Bet 1.0 hour (3600s) on Diff 3 (1.5x multiplier -> +5400s)
+    # Bet 1.0 hour (3600s) on Diff 3 — max stake pays 2.0x → +7200s
     with patch("random.random", return_value=0.1):
         ok, msg = asyncio.run(cog._perform_gamble(user, hours=1.0))
 
     assert ok
     assert "GAMBLE WON" in msg
     new_seconds = next(e.seconds for e in engine.leaderboard() if e.user_id == 1)
-    assert new_seconds == pytest.approx(initial_seconds + 5400.0)
+    assert new_seconds == pytest.approx(initial_seconds + 7200.0)
 
 
 def test_gambling_exceeds_max_bet_hours(engine, config):
@@ -371,18 +371,22 @@ def test_gambling_hourly_limit_enforced(engine, config):
     # Simulate cooldown passing but still within the 1-hour window
     cog._gamble_cooldowns[1] = 0.0
 
-    # Bet 2 (allowed on Diff 3: max 2/h)
+    # Bet 2 (uses up the fast quota of 2/h)
     with patch("random.random", return_value=0.1):
         ok2, _ = asyncio.run(cog._perform_gamble(user, hours=0.5))
     assert ok2
 
-    cog._gamble_cooldowns[1] = 0.0
-
-    # Bet 3 (should be blocked by hourly limit)
+    # Bet 3 without waiting: overflow timer (15m), not a hard stop
     with patch("random.random", return_value=0.1):
         ok3, msg3 = asyncio.run(cog._perform_gamble(user, hours=0.5))
     assert not ok3
-    assert "hourly" in msg3.lower()
+    assert "separate timer" in msg3.lower() or "fast bets" in msg3.lower()
+
+    # After the overflow timer is treated as elapsed, extra gambles are allowed
+    cog._gamble_cooldowns[1] = 0.0
+    with patch("random.random", return_value=0.1):
+        ok4, _ = asyncio.run(cog._perform_gamble(user, hours=0.5))
+    assert ok4
 
 
 def test_gambling_loss_applies_mute_and_timer_penalty(engine, store, config):
@@ -429,7 +433,8 @@ def test_gambling_requires_minimum_time(engine, config):
     cog = HellCommands(bot, config, engine, monitor)
 
     now = now_ts()
-    start(engine, now - 97 * HOUR, 1)
+    start(engine, now - 97 * HOUR, 1, 2)
+    engine.tick(obs(now, 1, 2))
     # Give user 2 only 100 seconds (less than 900s requirement for 0.25h bet)
     engine.store.add_user_time(engine.event_uid, [(2, "Bob", 100.0, now)])
 
@@ -462,6 +467,119 @@ def test_gambling_cooldown_enforced(engine, config):
     ok2, msg2 = asyncio.run(cog._perform_gamble(user))
     assert not ok2
     assert "wait" in msg2.lower()
+
+
+def test_gambling_requires_voice_presence(engine, config):
+    from hell.announcer import Announcer
+    from hell.cog import HellCommands
+    from hell.monitor import VoiceMonitor
+
+    bot = MagicMock()
+    announcer = Announcer(bot, config, engine)
+    monitor = VoiceMonitor(bot, config, engine, announcer)
+    cog = HellCommands(bot, config, engine, monitor)
+
+    now = now_ts()
+    start(engine, now - 97 * HOUR, 1)
+    engine.tick(obs(now, 1))
+    engine.store.add_user_time(engine.event_uid, [(2, "Bob", 3600.0, now)])
+
+    user = MagicMock(id=2, display_name="Bob", mention="<@2>")
+    ok, msg = asyncio.run(cog._perform_gamble(user))
+    assert not ok
+    assert "voice channel" in msg.lower()
+
+
+def test_gamble_overflow_cooldown_is_separate_from_fast_quota():
+    from hell.difficulty import get_difficulty_by_level
+    from hell.gamble import effective_cooldown
+
+    d3 = get_difficulty_by_level(3)
+    fast, overflow = effective_cooldown(d3, used_this_hour=1)
+    assert not overflow
+    assert fast == d3.gamble_cooldown_seconds
+    slow, overflow = effective_cooldown(d3, used_this_hour=2)
+    assert overflow
+    assert slow == d3.gamble_overflow_cooldown_seconds
+    assert slow > fast
+
+
+def test_parse_bet_hours_accepts_minutes_and_hours():
+    from hell.gamble import parse_bet_hours
+
+    assert parse_bet_hours(None) == 0.25
+    assert parse_bet_hours(1) == 1.0
+    assert parse_bet_hours("15m") == pytest.approx(0.25)
+    assert parse_bet_hours("1h") == 1.0
+    assert parse_bet_hours("0") is None
+    assert parse_bet_hours("nope") is None
+
+
+def test_win_chance_drops_on_bigger_bets():
+    from hell.difficulty import get_difficulty_by_level
+    from hell.gamble import resolve_gamble, win_chance_for_bet
+
+    d3 = get_difficulty_by_level(3)
+    small = win_chance_for_bet(d3, 0.25)
+    big = win_chance_for_bet(d3, 1.0)
+    assert small == pytest.approx(0.40)
+    assert big < small
+    assert big == pytest.approx(0.40 * 0.70)
+
+    jackpot = resolve_gamble(d3, 0.25, roll=0.01)
+    assert jackpot.jackpot and jackpot.multiplier == pytest.approx(2.5)
+    win = resolve_gamble(d3, 0.25, roll=0.10)
+    assert win.won and not win.jackpot and win.multiplier == pytest.approx(1.5)
+    lose = resolve_gamble(d3, 0.25, roll=0.99)
+    assert not lose.won
+    assert lose.mute_seconds == 60
+    max_win = resolve_gamble(d3, 1.0, roll=0.10)
+    assert max_win.won and max_win.multiplier == pytest.approx(2.0)
+    max_lose = resolve_gamble(d3, 1.0, roll=0.99)
+    assert max_lose.mute_seconds == 240
+
+
+def test_gamble_time_clock_skips_rate_limits(engine, config):
+    from hell.announcer import Announcer
+    from hell.cog import HellCommands
+    from hell.monitor import VoiceMonitor
+
+    bot = MagicMock()
+    announcer = Announcer(bot, config, engine)
+    monitor = VoiceMonitor(bot, config, engine, announcer)
+    cog = HellCommands(bot, config, engine, monitor)
+
+    now = now_ts()
+    start(engine, now - 97 * HOUR, 1)
+    engine.tick(obs(now, 1))
+    engine.add_gamble_seconds(1, "Alice", 10 * HOUR)
+
+    user = MagicMock(id=1, display_name="Alice", mention="<@1>")
+    with patch("random.random", return_value=0.1):
+        ok1, _ = asyncio.run(cog._perform_gamble(user, hours=0.25, clock="gamble"))
+        ok2, _ = asyncio.run(cog._perform_gamble(user, hours=0.25, clock="gamble"))
+    assert ok1 and ok2
+
+
+def test_host_can_adjust_real_and_gamble_time(engine, config):
+    from hell.announcer import Announcer
+    from hell.cog import HellCommands
+    from hell.monitor import VoiceMonitor
+
+    bot = MagicMock()
+    announcer = Announcer(bot, config, engine)
+    monitor = VoiceMonitor(bot, config, engine, announcer)
+    cog = HellCommands(bot, config, engine, monitor)
+    now = now_ts()
+    start(engine, now - 97 * HOUR, 1)
+    engine.tick(obs(now, 1))
+    member = MagicMock(id=1, display_name="Alice", mention="<@1>")
+    ok, msg = cog._adjust_member_time(member, "1", "real")
+    assert ok and "Real Timer" in msg
+    ok2, msg2 = cog._adjust_member_time(member, "-0.25", "gamble")
+    assert ok2 and "Gamble Time" in msg2
+    # Everyone starts with 1h of Gamble Time.
+    assert engine.gamble_wallet(1) == pytest.approx(0.75 * HOUR)
 
 
 def test_dead_check_no_double_mute(engine, store, config):

@@ -17,6 +17,18 @@ from . import RESTART_EXIT_CODE, __version__
 from .config import Config
 from .embeds import MAX_DESCRIPTION, MAX_FIELD, add_chunked_field
 from .engine import HellEngine, StartError
+from .gamble import (
+    DEFAULT_BET_HOURS,
+    MIN_BET_HOURS,
+    GambleBook,
+    effective_cooldown,
+    format_mute,
+    format_wait,
+    gamble_time_loss_multiplier,
+    parse_bet_hours,
+    resolve_gamble,
+    snap_bet_hours,
+)
 from .errorcodes import lookup as _ec_lookup
 from .health import preflight
 from .hellevents import (
@@ -83,6 +95,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         self._status_task: Optional[asyncio.Task] = None
         self._gamble_cooldowns: dict[int, float] = {}
         self._gamble_history: dict[int, list[float]] = {}
+        self._gamble_book = GambleBook(engine.store)
         super().__init__()
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -126,7 +139,14 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         alive_line = self.monitor.alive_checks.status_line(now_ts()) if self.engine.is_running else None
         return self.announcer.build_status(snap, alive_line=alive_line)
 
-    def _build_leaderboard_embeds(self) -> list[discord.Embed]:
+    def _build_leaderboard_embeds(self, *, board: str = "real") -> list[discord.Embed]:
+        if board == "gamble":
+            entries = self.engine.gamble_leaderboard()
+            title = "🎰 WELCOME TO HELL — GAMBLE TIME LEADERBOARD"
+            embeds = self.announcer.build_leaderboard_live_embeds(entries, title=title)
+            if embeds:
+                embeds[-1].set_footer(text="Gamble Time only — not VC Real Timer. No rate limits on this clock.")
+            return embeds
         entries = self.engine.leaderboard()
         frozen = self.engine.status.is_terminal
         title = "🏆 WELCOME TO HELL — FINAL LEADERBOARD" if frozen else "🏆 WELCOME TO HELL — LIVE LEADERBOARD"
@@ -364,6 +384,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         if not participants:
             return False, "❌ Cannot trigger a Hell Event: the VC is empty."
 
+        return False, "❌ Hell Events have been removed."
         started = await self.engine.hell_events.start_event(matched, now, participants, secret=secret)
         if started is None:
             return False, "❌ Failed to trigger Hell Event."
@@ -380,20 +401,33 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             name=started.record.name,
         )
 
-    async def _perform_gamble(self, user: Any, hours: Optional[float] = None) -> tuple[bool, str]:
+    async def _perform_gamble(
+        self, user: Any, hours: Optional[float] = None, *, clock: str = "real"
+    ) -> tuple[bool, str]:
         if not self.engine.is_running:
             return False, say(TEXT.CMD_GAMBLE_NOT_RUNNING, status=self.engine.status.value)
         if self.engine.is_paused:
             return False, TEXT.CMD_GAMBLE_PAUSED
+        if self.engine.grace.is_open:
+            return False, str(
+                getattr(
+                    TEXT,
+                    "CMD_GAMBLE_GRACE",
+                    "⚠️ Cannot gamble while the voice channel is empty — get someone back in first.",
+                )
+            )
 
         from .difficulty import get_difficulty
         diff = get_difficulty(self.engine.elapsed(), override=self.engine.difficulty_override)
         if not diff.gamble_enabled:
             return False, say(TEXT.CMD_GAMBLE_LOCKED, level=diff.level, name=diff.name)
 
-        bet_hours = float(hours) if hours is not None else 0.25
-        if bet_hours <= 0:
-            return False, "❌ Bet amount must be positive (e.g. `0.25`, `0.5`, `1.0`)."
+        bet_hours = parse_bet_hours(hours)
+        if bet_hours is None:
+            return False, "❌ Bet amount must be positive (e.g. `0.25`, `15m`, `1h`)."
+        bet_hours = snap_bet_hours(bet_hours)
+        if bet_hours < MIN_BET_HOURS:
+            return False, f"❌ Minimum bet is **{MIN_BET_HOURS * 60:.0f} minutes**."
         if bet_hours > diff.gamble_max_bet_hours:
             return False, say(
                 getattr(TEXT, "CMD_GAMBLE_INVALID_BET", "❌ Bet amount must be positive and at most **{max_hours}h** for Difficulty {level}."),
@@ -402,97 +436,171 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             )
 
         user_id = user.id
-        board = self.engine.leaderboard()
-        user_entry = next((e for e in board if e.user_id == user_id), None)
-        user_time = user_entry.seconds if user_entry else 0.0
-        bet_seconds = bet_hours * 3600.0
+        present_ids = {p.user_id for p in self.engine.last_participants}
+        if user_id not in present_ids:
+            return False, str(
+                getattr(
+                    TEXT,
+                    "CMD_GAMBLE_NOT_IN_VC",
+                    "❌ You must be **in the Hell voice channel** to gamble.",
+                )
+            )
 
-        if user_time < bet_seconds:
+        clock = (clock or "real").strip().lower()
+        if clock in ("gamble", "gambletime", "casino"):
+            clock = "gamble"
+        else:
+            clock = "real"
+
+        bet_seconds = bet_hours * 3600.0
+        loss_mult = gamble_time_loss_multiplier(diff, bet_hours) if clock == "gamble" else 1.0
+        needed = bet_seconds * loss_mult if clock == "gamble" else bet_seconds
+        if clock == "gamble":
+            user_time = self.engine.gamble_wallet(user_id)
+        else:
+            board = self.engine.leaderboard()
+            user_entry = next((e for e in board if e.user_id == user_id), None)
+            user_time = user_entry.seconds if user_entry else 0.0
+
+        # Never let a player stake their entire clock (must keep some time).
+        # Gamble Time also needs enough wallet to pay the heavier loss.
+        if user_time <= needed:
             user_time_str = format_hm(user_time)
             bet_str = format_hm(bet_seconds)
             return False, say(TEXT.CMD_GAMBLE_NO_TIME, user_time=user_time_str, min_time=bet_str)
 
         now = now_ts()
+        event_uid = self.engine.event_uid or ""
 
-        # Hourly gambling frequency limit check
-        history = [t for t in self._gamble_history.get(user_id, []) if now - t < 3600.0]
-        self._gamble_history[user_id] = history
-        if len(history) >= diff.gamble_hourly_limit:
-            oldest = min(history)
-            left_sec = int(3600.0 - (now - oldest))
-            left_str = f"{left_sec // 60}m {left_sec % 60}s" if left_sec >= 60 else f"{left_sec}s"
-            return False, say(
-                getattr(
-                    TEXT,
-                    "CMD_GAMBLE_HOURLY_LIMIT",
-                    "❌ **Hourly gambling limit reached.** You can only gamble **{limit} time(s) per hour**. Next gamble available in **{time_left}**.",
-                ),
-                limit=diff.gamble_hourly_limit,
-                time_left=left_str,
-            )
+        if clock == "real":
+            mem = [t for t in self._gamble_history.get(user_id, []) if now - t < 3600.0]
+            book = self._gamble_book.history(event_uid, user_id, now=now)
+            history = sorted(set(mem + book))
+            self._gamble_history[user_id] = history
 
-        # Cooldown check
-        last_gamble = self._gamble_cooldowns.get(user_id, 0.0)
-        cooldown = diff.gamble_cooldown_seconds
-        if now - last_gamble < cooldown:
-            left_sec = int(cooldown - (now - last_gamble))
-            left_str = f"{left_sec // 60}m {left_sec % 60}s" if left_sec >= 60 else f"{left_sec}s"
-            return False, say(TEXT.CMD_GAMBLE_COOLDOWN, cooldown=left_str)
+            last_gamble = self._gamble_cooldowns.get(user_id)
+            if last_gamble is None:
+                last_gamble = self._gamble_book.last_ts(event_uid, user_id)
+            cooldown, overflow = effective_cooldown(diff, len(history))
+            if now - last_gamble < cooldown:
+                wait = format_wait(cooldown - (now - last_gamble))
+                if overflow:
+                    return False, say(
+                        getattr(
+                            TEXT,
+                            "CMD_GAMBLE_OVERFLOW",
+                            "⏳ **Fast bets used** ({limit} this hour). Extra gambles use a **separate timer** — wait **{cooldown}**.",
+                        ),
+                        limit=diff.gamble_hourly_limit,
+                        cooldown=wait,
+                    )
+                return False, say(TEXT.CMD_GAMBLE_COOLDOWN, cooldown=wait)
 
-        self._gamble_cooldowns[user_id] = now
-        self._gamble_history.setdefault(user_id, []).append(now)
+            self._gamble_cooldowns[user_id] = now
+            self._gamble_history.setdefault(user_id, []).append(now)
+            self._gamble_book.record(event_uid, user_id, now)
 
         import random
-        won = random.random() < diff.gamble_win_chance
+        rolled = resolve_gamble(diff, bet_hours, roll=random.random())
         mention = getattr(user, "mention", f"<@{user_id}>")
         display_name = getattr(user, "display_name", None) or str(user)
         bet_time_str = format_hm(bet_seconds)
+        shown_chance = int(round(rolled.win_chance * 100))
 
-        jackpot_bonus = self.engine.hell_events.get_gamble_modifier(now)
-        win_mult = diff.gamble_win_multiplier + jackpot_bonus
+        clock_label = "Gamble Time" if clock == "gamble" else "Real Timer"
 
-        if won:
-            reward_sec = bet_seconds * win_mult
+        def _credit(delta: float, *, net: float) -> float:
+            if clock == "gamble":
+                return self.engine.add_gamble_seconds(user_id, display_name, delta, net_delta=net)
+            return self.engine.add_user_bonus_seconds(user_id, display_name, delta, now)
+
+        if rolled.won:
+            reward_sec = bet_seconds * rolled.multiplier
             net_gain_sec = reward_sec - bet_seconds
-            new_seconds = self.engine.add_user_bonus_seconds(user_id, display_name, reward_sec, now)
+            new_seconds = _credit(reward_sec, net=reward_sec)
             reward_time = format_hm(reward_sec)
             net_gain = format_hm(net_gain_sec)
             new_time = format_hm(new_seconds)
-            jackpot_note = " 🎰 **(JACKPOT BONUS ACTIVE!)**" if jackpot_bonus > 0 else ""
+            template = TEXT.CMD_GAMBLE_JACKPOT if rolled.jackpot else TEXT.CMD_GAMBLE_WIN
             msg = say(
-                TEXT.CMD_GAMBLE_WIN,
+                template,
                 who=mention,
-                win_chance=int(diff.gamble_win_chance * 100),
+                win_chance=shown_chance,
                 level=diff.level,
                 reward_time=reward_time,
                 bet_time=bet_time_str,
                 net_gain=net_gain,
                 new_time=new_time,
+                multiplier=f"{rolled.multiplier:g}",
             )
-            if jackpot_note:
-                msg += f"\n{jackpot_note}"
-            return True, msg
+            return True, msg + f"\n*Clock:* `{clock_label}`"
         else:
-            penalty_sec = bet_seconds
-            new_seconds = self.engine.add_user_bonus_seconds(user_id, display_name, -penalty_sec, now)
+            penalty_sec = bet_seconds * loss_mult
+            new_seconds = _credit(-penalty_sec, net=-penalty_sec)
             penalty_time = format_hm(penalty_sec)
             new_time = format_hm(new_seconds)
-            mute_sec = diff.gamble_loss_mute_seconds
-            mute_str = f"{mute_sec // 60} minute" if mute_sec >= 60 else f"{mute_sec}s"
-            if hasattr(self.monitor.alive_checks, "io") and hasattr(self.monitor.alive_checks.io, "mute"):
-                try:
-                    await self.monitor.alive_checks.io.mute(user_id, mute_sec, "Welcome to Hell: lost gamble")
-                except Exception:
-                    log.warning("Could not mute user %d after gamble loss", user_id, exc_info=True)
-            return True, say(
-                TEXT.CMD_GAMBLE_LOSE,
-                who=mention,
-                level=diff.level,
-                bet_time=bet_time_str,
-                penalty_time=penalty_time,
-                mute_duration=mute_str,
-                new_time=new_time,
-            )
+            if clock == "real":
+                mute_sec = rolled.mute_seconds
+                mute_str = format_mute(mute_sec)
+                if hasattr(self.monitor.alive_checks, "io") and hasattr(self.monitor.alive_checks.io, "mute"):
+                    try:
+                        await self.monitor.alive_checks.io.mute(user_id, mute_sec, "Welcome to Hell: lost gamble")
+                    except Exception:
+                        log.warning("Could not mute user %d after gamble loss", user_id, exc_info=True)
+                lose_msg = say(
+                    TEXT.CMD_GAMBLE_LOSE,
+                    who=mention,
+                    level=diff.level,
+                    win_chance=shown_chance,
+                    bet_time=bet_time_str,
+                    penalty_time=penalty_time,
+                    mute_duration=mute_str,
+                    new_time=new_time,
+                )
+            else:
+                lose_msg = say(
+                    getattr(
+                        TEXT,
+                        "CMD_GAMBLE_LOSE_WALLET",
+                        "💀 **GAMBLE LOST!** 🎲 {who} rolled a LOSS ({win_chance}% win odds) on Difficulty {level}!\n\n"
+                        "You lost **-{penalty_time}** from Gamble Time (heavier than the stake — no mute).\n"
+                        "*Bet:* `{bet_time}` · *New Gamble Time:* `{new_time}`",
+                    ),
+                    who=mention,
+                    level=diff.level,
+                    win_chance=shown_chance,
+                    bet_time=bet_time_str,
+                    penalty_time=penalty_time,
+                    new_time=new_time,
+                )
+            return True, lose_msg + f"\n*Clock:* `{clock_label}`"
+
+    def _adjust_member_time(self, member: Any, hours_raw: str, clock: str) -> tuple[bool, str]:
+        if not self.engine.event_uid:
+            return False, "❌ No event is loaded."
+        text = str(hours_raw).strip()
+        negative = text.startswith("-")
+        if negative:
+            text = text[1:].strip()
+        parsed = parse_bet_hours(text)
+        if parsed is None:
+            return False, "❌ Amount must look like `1`, `0.5`, `15m`, `-1h`."
+        delta_hours = -parsed if negative else parsed
+        delta_sec = delta_hours * 3600.0
+        uid = member.id
+        name = getattr(member, "display_name", None) or str(member)
+        mention = getattr(member, "mention", f"<@{uid}>")
+        clock = "gamble" if str(clock).lower().startswith("gamble") else "real"
+        if clock == "gamble":
+            new_total = self.engine.add_gamble_seconds(uid, name, delta_sec)
+            label = "Gamble Time"
+        else:
+            new_total = self.engine.add_user_bonus_seconds(uid, name, delta_sec)
+            label = "Real Timer"
+        sign = "+" if delta_sec >= 0 else ""
+        return True, (
+            f"✅ {mention} **{label}** {sign}{format_hm(delta_sec)} → `{format_hm(new_total)}`."
+        )
 
     def _build_milestones_embed(self) -> discord.Embed:
         records = {r.hours: r for r in self.engine.milestone_records()}
@@ -888,20 +996,26 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
 
     # ----------------------------------------------------------- leaderboard
 
-    @app_commands.command(name="leaderboard", description="Show the Welcome to Hell leaderboard (auto-updates every minute).")
+    @app_commands.command(name="leaderboard", description="Show Real Timer or Gamble Time rankings.")
+    @app_commands.describe(board="Real Timer (VC time) or Gamble Time.")
+    @app_commands.choices(
+        board=[
+            app_commands.Choice(name="Real Timer", value="real"),
+            app_commands.Choice(name="Gamble Time", value="gamble"),
+        ],
+    )
     @app_commands.guild_only()
-    async def leaderboard(self, interaction: discord.Interaction) -> None:
+    async def leaderboard(self, interaction: discord.Interaction, board: Optional[app_commands.Choice[str]] = None) -> None:
         await interaction.response.defer(thinking=True)
-        if self._in_vc_chat(interaction.channel_id):
-            # In the VC text chat: link the pinned live leaderboard instead of
-            # spawning a second auto-updating copy in the VC.
+        which = board.value if board is not None else "real"
+        if which != "gamble" and self._in_vc_chat(interaction.channel_id):
             await interaction.followup.send(content=TEXT.CMD_LEADERBOARD_VC_LINK)
             return
-        embeds = self._build_leaderboard_embeds()
+        embeds = self._build_leaderboard_embeds(board=which)
         msg = await interaction.followup.send(embeds=embeds, wait=True)
 
         frozen = self.engine.status.is_terminal
-        if self.engine.is_running and not frozen:
+        if which == "real" and self.engine.is_running and not frozen:
             if self._leaderboard_task is not None and not self._leaderboard_task.done():
                 self._leaderboard_task.cancel()
             self._leaderboard_message = msg
@@ -1113,6 +1227,10 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         action: Optional[app_commands.Choice[str]] = None,
         event_type: Optional[app_commands.Choice[str]] = None,
     ) -> None:
+        await interaction.response.send_message(
+            "❌ Hell Events have been removed.", ephemeral=True
+        )
+        return
         act = action.value if action else "status"
         if act == "trigger":
             if not self._is_host(interaction.user):
@@ -1137,13 +1255,53 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
 
     # -------------------------------------------------------------- gambling
 
-    @app_commands.command(name="gamble", description="Gamble your leaderboard timer (Difficulty 3+): win bonus time or get 1 minute server mute.")
-    @app_commands.describe(hours="Hours of recorded time to bet (e.g. 0.25, 0.5, 1.0). Default: 0.25h (15m).")
+    @app_commands.command(name="gamble", description="Gamble Real Timer (rate limited) or Gamble Time (no rate limits). Difficulty 3+.")
+    @app_commands.describe(
+        hours="Hours to bet (e.g. 0.25, 0.5, 1.0). Default: 0.25h (15m).",
+        clock="Real Timer uses VC time + cooldowns. Gamble Time has no rate limits.",
+    )
+    @app_commands.choices(
+        clock=[
+            app_commands.Choice(name="Real Timer (rate limits)", value="real"),
+            app_commands.Choice(name="Gamble Time (no rate limits)", value="gamble"),
+        ],
+    )
     @app_commands.guild_only()
-    async def gamble(self, interaction: discord.Interaction, hours: Optional[float] = None) -> None:
+    async def gamble(
+        self,
+        interaction: discord.Interaction,
+        hours: Optional[float] = None,
+        clock: Optional[app_commands.Choice[str]] = None,
+    ) -> None:
         await interaction.response.defer(thinking=True)
-        _ok, msg = await self._perform_gamble(interaction.user, hours=hours)
+        which = clock.value if clock is not None else "real"
+        _ok, msg = await self._perform_gamble(interaction.user, hours=hours, clock=which)
         await interaction.followup.send(msg)
+
+    @app_commands.command(name="adjtime", description="Host: add or remove Real Timer or Gamble Time for a member.")
+    @app_commands.describe(
+        member="Who to adjust.",
+        hours="Hours to add (positive) or remove (negative), e.g. 1, -0.5, 15m.",
+        clock="Real Timer (VC leaderboard) or Gamble Time wallet.",
+    )
+    @app_commands.choices(
+        clock=[
+            app_commands.Choice(name="Real Timer", value="real"),
+            app_commands.Choice(name="Gamble Time", value="gamble"),
+        ],
+    )
+    @is_host()
+    @app_commands.guild_only()
+    async def adjtime(
+        self,
+        interaction: discord.Interaction,
+        member: discord.Member,
+        hours: str,
+        clock: Optional[app_commands.Choice[str]] = None,
+    ) -> None:
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        ok, text = self._adjust_member_time(member, hours, clock.value if clock else "real")
+        await interaction.followup.send(text, ephemeral=True)
 
     # ------------------------------------------------------------- log stream
 
@@ -1726,11 +1884,12 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         embed = self._build_status_embed(count)
         await ctx.send(embed=embed)
 
-    async def _exec_leaderboard(self, ctx: commands.Context) -> None:
-        if self._in_vc_chat(getattr(ctx.channel, "id", None)):
+    async def _exec_leaderboard(self, ctx: commands.Context, board: Optional[str] = None) -> None:
+        which = "gamble" if board and str(board).lower().startswith("gamble") else "real"
+        if which != "gamble" and self._in_vc_chat(getattr(ctx.channel, "id", None)):
             await ctx.send(TEXT.CMD_LEADERBOARD_VC_LINK)
             return
-        embeds = self._build_leaderboard_embeds()
+        embeds = self._build_leaderboard_embeds(board=which)
         await ctx.send(embeds=embeds)
 
     async def _exec_milestones(self, ctx: commands.Context) -> None:
@@ -1810,8 +1969,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         await ctx.send(text)
 
     async def _exec_hellevents(self, ctx: commands.Context) -> None:
-        embed = self._build_hellevents_embed()
-        await ctx.send(embed=embed)
+        await ctx.send("❌ Hell Events have been removed.")
 
     async def _exec_triggerhellevent(self, ctx: commands.Context, event_type: Optional[str] = None) -> None:
         if not await self._is_host_or_operator(ctx):
@@ -1825,16 +1983,51 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         await ctx.send(text)
 
     async def _exec_gamble(self, ctx: commands.Context, hours: Optional[str] = None) -> None:
-        bet_h: Optional[float] = None
+        clock = "real"
+        stake = hours
         if hours:
-            clean = hours.strip().lower().rstrip("h")
-            try:
-                bet_h = float(clean)
-            except ValueError:
-                await ctx.send("❌ Bet amount must be a number of hours (e.g. `0.25`, `0.5`, `1.0`).")
+            parts = str(hours).split()
+            if parts and parts[-1].lower() in ("real", "gamble", "gambletime", "casino"):
+                last = parts[-1].lower()
+                clock = "gamble" if last.startswith("gamble") or last == "casino" else "real"
+                stake = " ".join(parts[:-1]) or None
+            if stake is not None and parse_bet_hours(stake) is None:
+                await ctx.send("❌ Bet amount must be a number of hours (e.g. `0.25`, `15m`, `1h`).")
                 return
-        _ok, msg = await self._perform_gamble(ctx.author, hours=bet_h)
+        _ok, msg = await self._perform_gamble(ctx.author, hours=stake, clock=clock)
         await ctx.send(msg)
+
+    async def _exec_adjtime(self, ctx: commands.Context, rest: Optional[str] = None) -> None:
+        if not await self._is_host_or_operator(ctx):
+            await ctx.send(say(TEXT.CMD_NOT_ALLOWED, host_role=f"<@&{self.config.gamenight_host_role_id}>"))
+            return
+        parts = (rest or "").split()
+        if len(parts) < 2:
+            await ctx.send("Usage: `!adjtime @user <hours> [real|gamble]` (negative hours remove time).")
+            return
+        clock = "real"
+        if parts[-1].lower() in ("real", "gamble", "gambletime"):
+            clock = "gamble" if parts[-1].lower().startswith("gamble") else "real"
+            parts = parts[:-1]
+        if len(parts) < 2:
+            await ctx.send("Usage: `!adjtime @user <hours> [real|gamble]`.")
+            return
+        who, amount = parts[0], parts[1]
+        member_id = None
+        m = re.match(r"^<@!?(\d+)>$", who)
+        if m:
+            member_id = int(m.group(1))
+        elif who.isdigit():
+            member_id = int(who)
+        if member_id is None:
+            await ctx.send("❌ Mention a user or pass their ID.")
+            return
+        fake = type("U", (), {})()
+        fake.id = member_id
+        fake.display_name = who
+        fake.mention = f"<@{member_id}>"
+        _ok, text = self._adjust_member_time(fake, amount, clock)
+        await ctx.send(text)
 
     async def _exec_help(self, ctx: commands.Context) -> None:
         embed = discord.Embed(
@@ -1851,13 +2044,12 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             "👥 Public Commands (Everyone)",
             "\n".join([
                 "`!status` (or `!st`) — Show current event status, elapsed time & VC count",
-                "`!leaderboard` (or `!lb`, `!top`) — Show current or final rankings",
+                "`!leaderboard [real|gamble]` — Real Timer or Gamble Time rankings",
                 "`!mystats` (or `!mycard`, `!card`, `!stats`, `!me`) — Your personal stat card",
                 "`!user [@user/id/name]` — Look up anyone's time, rank & milestones",
                 "`!milestones` (or `!ms`) — Milestones, rewards & list of claimants",
                 "`!difficulty` (or `!diff`) — View the 5 difficulty tiers and current level",
-                "`!hellevents` (or `!events`) — View active Hell Event, next scheduled & event rules",
-                "`!gamble [hours]` (or `!bet`) — Gamble your leaderboard timer (Difficulty 3+)",
+                "`!gamble [hours] [real|gamble]` — Bet Real Timer (rate limits) or Gamble Time (none)",
                 "`!errors <code>` — Look up an error code explanation (e.g. `!errors HEL-100`)",
                 "`!help` — Show this command help list",
             ]),
@@ -1866,6 +2058,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             embed,
             say("👑 Host & Operator Commands ({host_role} / Operator)", host_role=f"<@&{self.config.gamenight_host_role_id}>"),
             "\n".join([
+                "`!adjtime @user <hours> [real|gamble]` — Add/remove Real Timer or Gamble Time",
                 "`!setdifficulty <0-4|auto>` — Set or override difficulty level",
                 "`!broadcast <info|warning|error|...> <announcements|vc> <message>` — Post a colored embed",
                 "`!announcedifficulty [overview]` — Broadcast difficulty update to announcement channel",
@@ -2236,7 +2429,9 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         if sub in ("status", "st"):
             await self._exec_status(ctx)
         elif sub in ("leaderboard", "lb", "top"):
-            await self._exec_leaderboard(ctx)
+            await self._exec_leaderboard(ctx, board=rest)
+        elif sub in ("adjtime", "addtime", "settime"):
+            await self._exec_adjtime(ctx, rest=rest)
         elif sub in ("milestones", "ms"):
             await self._exec_milestones(ctx)
         elif sub in ("difficulty", "diff"):
@@ -2303,9 +2498,9 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         await self._exec_status(ctx)
 
     @commands.command(name="leaderboard", aliases=["lb", "top"])
-    async def prefix_leaderboard(self, ctx: commands.Context) -> None:
-        """Show the Welcome to Hell leaderboard."""
-        await self._exec_leaderboard(ctx)
+    async def prefix_leaderboard(self, ctx: commands.Context, *, board: Optional[str] = None) -> None:
+        """Show Real Timer or Gamble Time rankings."""
+        await self._exec_leaderboard(ctx, board=board)
 
     @commands.command(name="milestones", aliases=["ms"])
     async def prefix_milestones(self, ctx: commands.Context) -> None:
@@ -2338,9 +2533,14 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         await self._exec_triggerhellevent(ctx, event_type=event_type)
 
     @commands.command(name="gamble", aliases=["bet"])
-    async def prefix_gamble(self, ctx: commands.Context, hours: Optional[str] = None) -> None:
-        """Gamble your leaderboard timer (Difficulty 3+): win bonus time or get muted."""
+    async def prefix_gamble(self, ctx: commands.Context, *, hours: Optional[str] = None) -> None:
+        """Gamble Real Timer or Gamble Time (Difficulty 3+)."""
         await self._exec_gamble(ctx, hours=hours)
+
+    @commands.command(name="adjtime", aliases=["addtime", "settime"])
+    async def prefix_adjtime(self, ctx: commands.Context, *, rest: Optional[str] = None) -> None:
+        """Host: add or remove Real Timer or Gamble Time."""
+        await self._exec_adjtime(ctx, rest=rest)
 
     @commands.command(name="mystats", aliases=["stats", "me"])
     async def prefix_mystats(self, ctx: commands.Context) -> None:

@@ -488,6 +488,43 @@ def test_resume_failed_run(engine):
     assert board[1] == pytest.approx(101.0)
 
 
+def test_resume_failed_shifts_next_alive_check(engine):
+    from hell.alivecheck import AliveCheckManager
+
+    class _IO:
+        async def send_check(self, *a, **k):
+            return None
+
+        async def send_result(self, *a, **k):
+            return None
+
+        async def kick(self, *a, **k):
+            return []
+
+        async def mute(self, *a, **k):
+            return False
+
+        async def replies_since(self, *a, **k):
+            return set()
+
+    start(engine, T0, 1)
+    checks = AliveCheckManager(engine.config, engine.store, _IO(), engine=engine)
+    checks.bind(engine.event_uid, now=T0)
+    engine._alive_checks = checks
+    due = T0 + 3600
+    engine.store.set_next_alive_check(engine.event_uid, due)
+
+    engine.tick(obs(T0 + 100, 1))
+    engine.tick(obs(T0 + 101))
+    engine.tick(obs(T0 + 101 + GRACE))
+    engine.resume_failed(now=T0 + 500)
+
+    shifted = checks.next_check_ts()
+    assert shifted is not None
+    assert shifted == pytest.approx(due + engine.state.paused_seconds, abs=1.5)
+    assert shifted > T0 + 500
+
+
 def test_resume_failed_when_not_failed_is_refused(engine):
     start(engine, T0, 1)
     with pytest.raises(StartError, match="not failed"):

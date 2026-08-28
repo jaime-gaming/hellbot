@@ -178,6 +178,7 @@ class Snapshot:
     active_hell_event: Optional[Any] = None
     peak_participants: int = 0
     continuation: bool = False
+    paused_seconds: float = 0.0
 
 
 class StartError(RuntimeError):
@@ -209,6 +210,7 @@ class HellEngine:
         self._difficulty_override: Optional[int] = None
         self.hell_events = HellEventManager(config, store, engine=self)
         self.finale = FinaleManager(config, store, engine=self)
+        self._alive_checks: Optional[Any] = None
         if self.state.event_uid:
             self.hell_events.bind(self.state.event_uid)
             self.finale.bind(self.state.event_uid)
@@ -314,12 +316,13 @@ class HellEngine:
             grace_total=self.grace.seconds,
             paused=self.is_paused,
             difficulty=diff.level,
-            blindness_active=self.hell_events.is_blindness_active(now),
+            blindness_active=False,
             is_final_hour=self.finale.is_final_hour(elapsed),
             countdown_seconds=self.finale.countdown_seconds_left(elapsed),
-            active_hell_event=self.hell_events.active_event,
+            active_hell_event=None,
             peak_participants=peak,
             continuation=self.state.continuation,
+            paused_seconds=max(0.0, now - self._effective_now(now)),
         )
 
     def add_user_bonus_seconds(
@@ -346,6 +349,36 @@ class HellEngine:
         new_total = max(0.0, current_seconds + actual_delta)
         log.info("Adjusted time for user %s (%d) by %.1fs (new total %.1fs)", display_name, user_id, actual_delta, new_total)
         return new_total
+
+    def add_gamble_seconds(
+        self,
+        user_id: int,
+        display_name: str,
+        wallet_delta: float,
+        *,
+        net_delta: float = 0.0,
+    ) -> float:
+        """Change Gamble Time wallet. Returns the new wallet balance."""
+        uid = self.state.event_uid
+        if not uid:
+            return 0.0
+        wallet, _net = self.store.adjust_gamble_time(
+            uid, user_id, display_name, wallet_delta=wallet_delta, net_delta=net_delta
+        )
+        return wallet
+
+    def gamble_wallet(self, user_id: int) -> float:
+        uid = self.state.event_uid
+        if not uid:
+            return 0.0
+        return self.store.get_gamble_wallet(uid, user_id)
+
+    def gamble_leaderboard(self) -> list[LeaderboardEntry]:
+        uid = self.state.event_uid
+        if not uid:
+            return []
+        from .leaderboard import build_leaderboard
+        return build_leaderboard(self.store.get_gamble_leaderboard(uid))
 
     # --------------------------------------------------------------- control
 
@@ -390,6 +423,7 @@ class HellEngine:
         self._presence_signature = frozenset(p.user_id for p in participants)
         self.store.replace_presence(uid, participants, now)
         self.store.touch_users(uid, participants, now)
+        self.store.ensure_starting_gamble_time(uid, participants)
         if participants:
             self.store.record_population(uid, len(participants))
         self.hell_events.bind(uid, now=now)
@@ -442,12 +476,22 @@ class HellEngine:
             self.state.grace_started_ts += duration
             self.grace.restore(self.state.grace_started_ts)
         self.hell_events.shift_schedule(duration)
+        self._shift_alive_checks(duration)
         self.store.save_state(self.state)
         log.warning(
             "Event %s resumed after %.1fs paused (total paused %.1fs)",
             self.state.event_uid, duration, self.state.paused_seconds,
         )
         return self.state
+
+    def _shift_alive_checks(self, duration: float) -> None:
+        """Keep roll-call due times in wall-clock sync after a pause or resume-from-fail."""
+        checks = self._alive_checks
+        if checks is None or duration <= 0:
+            return
+        shifter = getattr(checks, "shift_schedule", None)
+        if callable(shifter):
+            shifter(duration)
 
     def notify_alive_check_emptied(self, now: Optional[float] = None) -> None:
         """Record that an Are You Alive? check caused the VC to become empty."""
@@ -474,6 +518,7 @@ class HellEngine:
             fail_duration = max(0.0, now - self.state.end_ts)
             self.state.paused_seconds = max(self.state.paused_seconds, fail_duration)
             self.hell_events.shift_schedule(fail_duration)
+            self._shift_alive_checks(fail_duration)
         self.state.status = EventStatus.RUNNING
         self.state.end_ts = None
         self.state.end_reason = None
@@ -506,6 +551,7 @@ class HellEngine:
             wait_duration = max(0.0, now - self.state.end_ts)
             self.state.paused_seconds = max(self.state.paused_seconds, wait_duration)
             self.hell_events.shift_schedule(wait_duration)
+            self._shift_alive_checks(wait_duration)
         self.state.continuation = True
         self.state.milestones_enabled = False
         self.state.total_seconds = CONTINUATION_TOTAL_SECONDS
@@ -596,7 +642,7 @@ class HellEngine:
         #    Nothing here can affect the global 0 -> 160h timeline.
         previous = self.state.last_tick_ts if self.state.last_tick_ts is not None else timeline.start_ts
         bridge_users, bridge_seconds = self._bridge(previous, effective_now, obs)
-        time_mult = self.hell_events.get_time_multiplier(effective_now)
+        time_mult = 1.0
         self.tracker.credit(
             uid,
             previous_ts=previous,
@@ -617,6 +663,7 @@ class HellEngine:
         if signature != self._presence_signature:
             self._presence_signature = signature
             self.store.replace_presence(uid, obs.participants, obs.now)
+            self.store.ensure_starting_gamble_time(uid, obs.participants)
 
         # 2) Track last-valid-observed timestamp for crash recovery & peak population.
         if obs.count > 0:
@@ -828,6 +875,7 @@ class HellEngine:
         value `elapsed()` will freeze at, so a cancelled/failed/completed run
         reports exactly the time it actually survived, never the pause.
         """
+        previous = self.state.status
         self.state.status = status
         self.state.end_ts = ts_effective
         self.state.end_reason = reason
@@ -842,7 +890,7 @@ class HellEngine:
         log.info(
             "Event %s: %s -> %s after %s (%s)",
             self.state.event_uid,
-            self.state.status.value,
+            previous.value,
             status.value,
             format_hm(self.elapsed()),
             reason,

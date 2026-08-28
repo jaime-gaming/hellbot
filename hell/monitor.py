@@ -69,6 +69,7 @@ class VoiceMonitor:
         self.alive_checks.bind(engine.event_uid)
         self.engine.hell_events.announcer = announcer
         self.engine.hell_events.alive_checks = self.alive_checks
+        self.engine._alive_checks = self.alive_checks
         self.engine.finale.announcer = announcer
         self.reports = FinalReportDM(bot, config, engine, announcer)
         self.continuation = ContinuationManager(bot, config, engine, announcer)
@@ -302,7 +303,6 @@ class VoiceMonitor:
             self._pump_alive_check(now, humans)
             # Hell Events & Finale tick.  Hell 2 continuation has one finish
             # (the secret 320h reward), so the 159-160h finale never repeats.
-            await self.engine.hell_events.tick(now, humans)
             if not self.engine.is_continuation:
                 await self.engine.finale.tick(now, self.engine.elapsed(now), humans)
 

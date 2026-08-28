@@ -25,7 +25,7 @@ from .models import EventState, EventStatus, LeaderboardEntry, MilestoneRecord, 
 
 log = logging.getLogger("hell.storage")
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -157,6 +157,15 @@ CREATE TABLE IF NOT EXISTS continuation_poll (
     result      TEXT
 );
 
+CREATE TABLE IF NOT EXISTS gamble_time (
+    event_uid    TEXT    NOT NULL,
+    user_id      INTEGER NOT NULL,
+    wallet       REAL    NOT NULL DEFAULT 0,
+    net          REAL    NOT NULL DEFAULT 0,
+    display_name TEXT    NOT NULL DEFAULT '',
+    PRIMARY KEY (event_uid, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS continuation_votes (
     event_uid TEXT NOT NULL,
     user_id   INTEGER NOT NULL,
@@ -188,6 +197,13 @@ class Store:
                 (EventStatus.IDLE.value,),
             )
             self._migrate()
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS gamble_time ("
+                "event_uid TEXT NOT NULL, user_id INTEGER NOT NULL, "
+                "wallet REAL NOT NULL DEFAULT 0, net REAL NOT NULL DEFAULT 0, "
+                "display_name TEXT NOT NULL DEFAULT '', "
+                "PRIMARY KEY (event_uid, user_id))"
+            )
             log.info(
                 "Database ready: %s (schema v%d)",
                 self.path if str(self.path) != ":memory:" else "in-memory",
@@ -409,6 +425,77 @@ class Store:
                 """,
                 rows,
             )
+
+    def adjust_gamble_time(
+        self,
+        event_uid: str,
+        user_id: int,
+        display_name: str,
+        *,
+        wallet_delta: float = 0.0,
+        net_delta: float = 0.0,
+    ) -> tuple[float, float]:
+        """Add to the Gamble Time wallet / net profit. Clamps wallet at 0."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT wallet, net FROM gamble_time WHERE event_uid = ? AND user_id = ?",
+                (event_uid, user_id),
+            ).fetchone()
+            wallet = float(row["wallet"]) if row else 0.0
+            net = float(row["net"]) if row else 0.0
+            wallet = max(0.0, wallet + wallet_delta)
+            net = net + net_delta
+            self._conn.execute(
+                """
+                INSERT INTO gamble_time(event_uid, user_id, wallet, net, display_name)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(event_uid, user_id) DO UPDATE SET
+                    wallet = excluded.wallet,
+                    net = excluded.net,
+                    display_name = excluded.display_name
+                """,
+                (event_uid, user_id, wallet, net, display_name),
+            )
+        return wallet, net
+
+    def ensure_starting_gamble_time(
+        self,
+        event_uid: str,
+        users: Iterable[ParticipantRef],
+        *,
+        seconds: float = 3600.0,
+    ) -> None:
+        """Give each new contestant a Gamble Time wallet. Existing rows are left alone."""
+        rows = [(event_uid, u.user_id, float(seconds), 0.0, u.display_name) for u in users]
+        if not rows:
+            return
+        with self._lock:
+            self._conn.executemany(
+                """
+                INSERT INTO gamble_time(event_uid, user_id, wallet, net, display_name)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(event_uid, user_id) DO NOTHING
+                """,
+                rows,
+            )
+
+    def get_gamble_wallet(self, event_uid: str, user_id: int) -> float:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT wallet FROM gamble_time WHERE event_uid = ? AND user_id = ?",
+                (event_uid, user_id),
+            ).fetchone()
+        return float(row["wallet"]) if row else 0.0
+
+    def get_gamble_leaderboard(self, event_uid: str) -> list[tuple[int, str, float]]:
+        """Rows ranked by Gamble Time wallet."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT user_id, display_name, wallet FROM gamble_time "
+                "WHERE event_uid = ? AND wallet > 0 ORDER BY wallet DESC",
+                (event_uid,),
+            ).fetchall()
+        return [(r["user_id"], r["display_name"], r["wallet"]) for r in rows]
 
     def get_user_times(self, event_uid: str) -> list[tuple[int, str, float]]:
         with self._lock:
@@ -937,7 +1024,7 @@ class Store:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 for table in (
-                    "user_time", "milestones", "milestone_members", "presence",
+                    "user_time", "gamble_time", "milestones", "milestone_members", "presence",
                     "final_leaderboard", "alive_check", "alive_check_history", "dm_log",
                     "hell_events", "continuation_votes",
                 ):

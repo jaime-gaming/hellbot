@@ -224,7 +224,7 @@ in the log, and in the launcher's Dashboard.
 |---|---|---|
 | `/hell start` | `@gamenight host` | Starts the event: status → `RUNNING`, records the absolute start timestamp, starts the 160 h timer, begins VC monitoring + per-user tracking, posts the start announcement. Rejected if one is already running or the VC is empty (hard requirement). |
 | `/hell status` | everyone | Status, elapsed, remaining, % complete, progress bar, live VC headcount, current + next milestone, and the milestones already reached. Used **in the VC text chat** it instead replies with a link to the pinned live status card (Discord renders the preview). |
-| `/hell leaderboard` | everyone | Current (or frozen final) leaderboard: Top 3 on the podium, everyone else below. Used **in the VC text chat** it instead replies with a link to the pinned leaderboard — no second auto-updating copy is spawned there. |
+| `/hell leaderboard` | everyone | Real Timer (VC time) or **Gamble Time** wallet rankings (`board:`). Used **in the VC text chat**, Real Timer replies with a link to the pinned leaderboard. |
 | `/hell alivecheck` | DM only: bot operator or `@gamenight host` | Runs a roll call immediately instead of waiting for the random timer. Usable **only in a DM to the bot**, never in a server channel. |
 | `/hell reloadmessages` | `@gamenight host` | Re-read `Announcements.py` so edited wording applies immediately. |
 | `/hell doctor` | `@gamenight host` | Self-check: preflight results, live state, background tasks and the (redacted) configuration. |
@@ -237,7 +237,8 @@ in the log, and in the launcher's Dashboard.
 | `/hell difficulty` | everyone / `@gamenight host` | Show the 5 difficulty tiers and current level; `action: set` (host only, `0`-`4` or `auto`) overrides it; `action: announce` (host only) posts it to the announcement channel. |
 | `/hell broadcast` | `@gamenight host` | Post the host's message as a colored embed — `level: info/warning/error/…`, `target: announcements` or `vc`, no plain text outside the embed. |
 | `/hell hellevents` | everyone / `@gamenight host` | View active Hell Event, rules, or trigger an event (`action: trigger`, `@gamenight host` only). |
-| `/hell gamble` | everyone | Gamble your leaderboard timer (Difficulty 3+): win bonus time or risk losing personal time + 1 minute server mute. Supports optional `[hours]` bet. |
+| `/hell gamble` | everyone | Difficulty 3+: bet **Real Timer** (hourly quota + overflow timer) or **Gamble Time** (no rate limits). Bets snap to 15m chips; you cannot bet all of your time (`gamble_max_bet_hours`). Lose = stake + mute. |
+| `/hell adjtime` | `@gamenight host` | Add or remove hours on a member's **Real Timer** or **Gamble Time** (`hours` may be negative). |
 | `/hell stop` | `@gamenight host` | **Two-step, operator-approved.** The bot DMs a one-time code to the operator's DMs, then the host runs `/hell approve` with it → event marked **CANCELLED** (explicitly *not* FAILED), leaderboard frozen. |
 | `/hell reset` | `@gamenight host` | **Two-step, operator-approved.** The bot DMs a one-time code to the operator's DMs, then the host runs `/hell approve` with it → all event data wiped for a fresh run. |
 | `/hell approve` | `@gamenight host` | Enter the 6-character code DM'd to the operator to confirm the pending `/hell stop`, `/hell reset` or resuming a failed run. Codes expire after 5 minutes and work exactly once; a new request invalidates the previous code. |

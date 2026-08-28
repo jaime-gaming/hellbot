@@ -277,7 +277,7 @@ FAILURE_TITLE = "💀 WELCOME TO HELL — CHALLENGE FAILED"
 FAILURE_DESCRIPTION = (
     "{vc} was **completely empty of valid participants** for the entire grace period, "
     "so nobody came back in time.\n"
-    "The timer has stopped **permanently** and the run cannot resume."
+    "The timer has stopped. A host can resume this run with `/hell resume` (operator approval required)."
 )
 FAILURE_SURVIVED_FIELD = "⏱️ Survived"
 FAILURE_SURVIVED_TEXT = "**{survived}** of 160h"
@@ -705,22 +705,39 @@ CMD_GAMBLE_LOCKED = (
 )
 CMD_GAMBLE_NOT_RUNNING = "❌ No event is currently running (status `{status}`)."
 CMD_GAMBLE_PAUSED = "⏸️ Cannot gamble while the event is paused."
+CMD_GAMBLE_GRACE = "⚠️ Cannot gamble while the voice channel is empty — get someone back in first."
+CMD_GAMBLE_NOT_IN_VC = "❌ You must be **in the Hell voice channel** to gamble."
 CMD_GAMBLE_NO_TIME = "❌ You have **{user_time}** recorded time, but you need at least **{min_time}** to place this bet."
 CMD_GAMBLE_INVALID_BET = "❌ Bet amount must be positive and at most **{max_hours}h** for Difficulty {level}."
 CMD_GAMBLE_HOURLY_LIMIT = (
     "❌ **Hourly gambling limit reached.** You can only gamble **{limit} time(s) per hour**. "
     "Next gamble available in **{time_left}**."
 )
+CMD_GAMBLE_OVERFLOW = (
+    "⏳ **Fast bets used** ({limit} this hour). You can still gamble — extra bets use a "
+    "**separate timer**. Wait **{cooldown}**."
+)
 CMD_GAMBLE_COOLDOWN = "⏳ You must wait **{cooldown}** before gambling again."
 CMD_GAMBLE_WIN = (
-    "🎰 **GAMBLE WON!** 🎲 {who} rolled a WIN ({win_chance}% odds) on Difficulty {level}!\n\n"
+    "🎰 **GAMBLE WON!** 🎲 {who} rolled a WIN ({win_chance}% odds on this bet) on Difficulty {level}!\n\n"
     "**+{reward_time}** has been added to your personal leaderboard timer! 🔥\n"
+    "*Bet:* `{bet_time}` · *Net gain:* `+{net_gain}` · *New leaderboard time:* `{new_time}`\n"
+    "*Bigger bets pay the same multiplier but with worse odds.*"
+)
+CMD_GAMBLE_JACKPOT = (
+    "💎 **JACKPOT!** 🎲 {who} hit a **{multiplier}x** jackpot ({win_chance}% win band) on Difficulty {level}!\n\n"
+    "**+{reward_time}** slammed onto your leaderboard timer! 🔥\n"
     "*Bet:* `{bet_time}` · *Net gain:* `+{net_gain}` · *New leaderboard time:* `{new_time}`"
 )
 CMD_GAMBLE_LOSE = (
-    "💀 **GAMBLE LOST!** 🎲 {who} rolled a LOSS on Difficulty {level}!\n\n"
+    "💀 **GAMBLE LOST!** 🎲 {who} rolled a LOSS ({win_chance}% win odds on this bet) on Difficulty {level}!\n\n"
     "You lost **-{penalty_time}** from your leaderboard timer and have been muted for **{mute_duration}** from the server. 🔇\n"
     "*Bet:* `{bet_time}` · *New leaderboard time:* `{new_time}`"
+)
+CMD_GAMBLE_LOSE_WALLET = (
+    "💀 **GAMBLE LOST!** 🎲 {who} rolled a LOSS ({win_chance}% win odds) on Difficulty {level}!\n\n"
+    "You lost **-{penalty_time}** from Gamble Time (heavier than the stake — **no mute**).\n"
+    "*Bet:* `{bet_time}` · *New Gamble Time:* `{new_time}`"
 )
 
 CMD_MYSTATS_NONE = (

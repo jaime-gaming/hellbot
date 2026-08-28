@@ -335,7 +335,12 @@ class EmbedFactory:
                 next_milestone=snap.upcoming.hours,
                 time_to_next=format_hm(snap.time_to_next),
                 next_relative=(
-                    discord_ts((snap.start_ts or 0) + snap.upcoming.seconds, "R") if running else ""
+                    discord_ts(
+                        (snap.start_ts or 0) + snap.upcoming.seconds + getattr(snap, "paused_seconds", 0.0),
+                        "R",
+                    )
+                    if running
+                    else ""
                 ),
             )
         else:
@@ -408,8 +413,8 @@ class EmbedFactory:
             clanker_role=f"<@&{self.config.clanker_role_id}>",
             started_at=discord_ts(start_ts, "F"),
             started_relative=discord_ts(start_ts, "R"),
-            ends_at=discord_ts(start_ts + snap.total, "F"),
-            ends_relative=discord_ts(start_ts + snap.total, "R"),
+            ends_at=discord_ts(start_ts + snap.total + getattr(snap, "paused_seconds", 0.0), "F"),
+            ends_relative=discord_ts(start_ts + snap.total + getattr(snap, "paused_seconds", 0.0), "R"),
             participant_count=len(participants),
             total_hours=int(snap.total // 3600),
             grace_seconds=int(self.config.empty_vc_grace_seconds),
@@ -1018,11 +1023,6 @@ class EmbedFactory:
             value=f"**Level {current.level}** — **{current.name}**\n*{current.description}*",
             inline=False,
         )
-        from .hellevents import (
-            available_event_names,
-            newly_unlocked_event_names,
-        )
-
         for lvl in range(5):
             d = DIFFICULTIES[lvl]
             unlocked = "✅ Active" if current.level >= lvl else f"🔒 Unlocks at {d.unlock_hours}h"
@@ -1037,22 +1037,18 @@ class EmbedFactory:
             if d.gamble_enabled:
                 gamble_info = (
                     f"Active (`/hell gamble [hours]` / `!gamble [hours]`) — "
-                    f"Win: **+{d.gamble_win_multiplier:g}x** ({int(d.gamble_win_chance * 100)}% odds), "
+                    f"Win: **+{d.gamble_win_multiplier:g}x** "
+                    f"({int(d.gamble_win_chance * 100)}% / **{d.gamble_win_multiplier:g}x** at 15m; bigger bets = worse odds, better payout; rare jackpot **+1x** extra), "
                     f"Lose: **-1.0x** + {d.gamble_loss_mute_seconds // 60}m mute | "
-                    f"Limits: max **{d.gamble_max_bet_hours:g}h** bet, max **{d.gamble_hourly_limit}/hour**"
+                    f"Limits: max **{d.gamble_max_bet_hours:g}h** bet, "
+                    f"**{d.gamble_hourly_limit}** fast bets/hour then a "
+                    f"**{int(d.gamble_overflow_cooldown_seconds // 60)}m** extra timer"
                 )
-            new_events = newly_unlocked_event_names(d.level)
-            events_info = f"{len(available_event_names(d.level))} event(s) in the pool"
-            if d.level == 0 and new_events:
-                events_info += f" — available from start: {', '.join(new_events)}"
-            elif new_events:
-                events_info += f" — 🆕 unlocks: {', '.join(new_events)}"
             embed.add_field(
                 name=f"Level {d.level}: {d.name} — {unlocked}{active_marker}",
                 value=f"• **Alive checks:** every {d.min_check_hours:g}–{d.max_check_hours:g}h\n"
                       f"• **Dead checks:** {dead_info}\n"
-                      f"• **Gambling:** {gamble_info}\n"
-                      f"• **Hell Events:** {events_info}",
+                      f"• **Gambling:** {gamble_info}",
                 inline=False,
             )
         self._brand(embed, timestamp=False)
@@ -1070,19 +1066,13 @@ class EmbedFactory:
         if diff.gamble_enabled:
             gamble_info = (
                 f"Active (`/hell gamble [hours]` / `!gamble [hours]`) — "
-                f"Win: **+{diff.gamble_win_multiplier:g}x** ({int(diff.gamble_win_chance * 100)}% odds), "
+                f"Win: **+{diff.gamble_win_multiplier:g}x** "
+                f"({int(diff.gamble_win_chance * 100)}% / **{diff.gamble_win_multiplier:g}x** at 15m; bigger bets = worse odds, better payout; rare jackpot **+1x** extra), "
                 f"Lose: **-1.0x** + {diff.gamble_loss_mute_seconds // 60}m mute | "
-                f"Limits: max **{diff.gamble_max_bet_hours:g}h** bet, max **{diff.gamble_hourly_limit}/hour**"
+                f"Limits: max **{diff.gamble_max_bet_hours:g}h** bet, "
+                f"**{diff.gamble_hourly_limit}** fast bets/hour then a "
+                f"**{int(diff.gamble_overflow_cooldown_seconds // 60)}m** extra timer"
             )
-
-        from .hellevents import available_event_names, newly_unlocked_event_names
-
-        new_events = newly_unlocked_event_names(diff.level)
-        events_line = (
-            f"• **Hell Events unlocked:** {', '.join(new_events)} 🆕"
-            if new_events
-            else f"• **Hell Events:** all {len(available_event_names(diff.level))} events in the pool"
-        )
 
         embed = discord.Embed(
             title=say(
@@ -1095,8 +1085,7 @@ class EmbedFactory:
                 f"*{diff.description}*\n\n"
                 f"• **Alive checks:** every **{diff.min_check_hours:g}–{diff.max_check_hours:g}h**\n"
                 f"• **Dead checks:** **{dead_info}**\n"
-                f"• **Gambling:** **{gamble_info}**\n"
-                f"{events_line}"
+                f"• **Gambling:** **{gamble_info}**"
             ),
             color=theme_color("RUNNING"),
         )

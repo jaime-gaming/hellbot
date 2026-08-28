@@ -31,7 +31,6 @@ from .engine import (
     Snapshot,
 )
 from .finale import FinaleAnnouncement
-from .hellevents import HellEventEnded, HellEventStarted, is_secret_record
 from .leaderboard import format_entry, format_entry_live, top_n
 from .milestones import MILESTONES
 from .models import EventStatus, LeaderboardEntry, MilestoneRecord, ParticipantRef
@@ -301,14 +300,9 @@ class EmbedFactory:
             value=say(TEXT.PROGRESS_PEOPLE_VALUE, participants=snap.participants),
             inline=True,
         )
-        rem_val = (
-            str(getattr(TEXT, "PROGRESS_REMAINING_BLIND", "👁️ *[HIDDEN BY BLINDNESS]*"))
-            if snap.blindness_active and snap.status is EventStatus.RUNNING
-            else say(TEXT.PROGRESS_REMAINING_VALUE, remaining=format_hm(snap.remaining))
-        )
         embed.add_field(
             name=TEXT.PROGRESS_REMAINING_FIELD,
-            value=rem_val,
+            value=say(TEXT.PROGRESS_REMAINING_VALUE, remaining=format_hm(snap.remaining)),
             inline=True,
         )
 
@@ -324,8 +318,6 @@ class EmbedFactory:
 
         if snap.continuation:
             nxt = str(getattr(TEXT, "PROGRESS_NEXT_CONTINUATION", "🔒 Final secret reward at 320h"))
-        elif snap.blindness_active and snap.status is EventStatus.RUNNING:
-            nxt = str(getattr(TEXT, "PROGRESS_NEXT_BLIND", "👁️ *[HIDDEN BY BLINDNESS]*"))
         elif snap.upcoming and snap.time_to_next is not None:
             # While paused the live countdown tag is meaningless (the clock is
             # frozen), so fall back to the static "in X" rendering.
@@ -774,83 +766,6 @@ class EmbedFactory:
         )
         embed.set_footer(text=getattr(TEXT, "CONTINUATION_RESUME_FOOTER", "320h · no milestones · secret reward"))
         self._brand(embed, thumbnail=getattr(TEXT, "PROGRESS_THUMBNAIL", ""))
-        return embed
-
-    def hell_event_start(self, event: HellEventStarted) -> discord.Embed:
-        rec = event.record
-        secret = bool(getattr(event, "secret", False)) or is_secret_record(rec)
-        if secret:
-            # Say that *something* happened — but never what.
-            embed = discord.Embed(
-                title=str(
-                    getattr(TEXT, "HELL_EVENT_SECRET_TITLE", "🕯️ SECRET HELL EVENT — ???")
-                ),
-                description=event.announcement_text,
-                color=theme_color("RUNNING"),
-            )
-            embed.set_footer(
-                text=str(
-                    getattr(
-                        TEXT,
-                        "HELL_EVENT_SECRET_FOOTER",
-                        "Its nature stays hidden until it ends",
-                    )
-                )
-            )
-            self._brand(embed, timestamp=True)
-            return embed
-
-        embed = discord.Embed(
-            title=say(
-                getattr(TEXT, "HELL_EVENT_TITLE", "⚡ HELL EVENT — {name}"),
-                name=rec.name.upper(),
-            ),
-            description=event.announcement_text,
-            color=theme_color("RUNNING"),
-        )
-        if rec.end_ts > rec.start_ts:
-            embed.add_field(
-                name="⏳ Duration",
-                value=f"**{int((rec.end_ts - rec.start_ts) // 60)} minutes** (ends <t:{int(rec.end_ts)}:R>)",
-                inline=True,
-            )
-        if event.eligible_participants:
-            add_chunked_field(
-                embed,
-                f"👥 Eligible ({len(event.eligible_participants)})",
-                format_members(event.eligible_participants),
-            )
-        embed.set_footer(text="Hell Event active · Dynamic survival modifiers applied")
-        self._brand(embed, timestamp=True)
-        return embed
-
-    def hell_event_end(self, event: HellEventEnded) -> discord.Embed:
-        rec = event.record
-        if is_secret_record(rec):
-            # The veil lifts: this is the moment a secret event is identified.
-            embed = discord.Embed(
-                title=say(
-                    getattr(
-                        TEXT,
-                        "HELL_EVENT_SECRET_END_TITLE",
-                        "🕯️ SECRET HELL EVENT REVEALED — {name}",
-                    ),
-                    name=rec.name.upper(),
-                ),
-                description=event.announcement_text,
-                color=theme_color("RUNNING"),
-            )
-            embed.set_footer(text="The secret is out · Modifiers returned to normal · Keep surviving")
-            self._brand(embed, timestamp=True)
-            return embed
-
-        embed = discord.Embed(
-            title=f"⚡ HELL EVENT CONCLUDED — {rec.name.upper()}",
-            description=event.announcement_text,
-            color=theme_color("RUNNING"),
-        )
-        embed.set_footer(text="Modifiers returned to normal · Keep surviving")
-        self._brand(embed, timestamp=True)
         return embed
 
     def finale_stage(self, ann: FinaleAnnouncement) -> discord.Embed:

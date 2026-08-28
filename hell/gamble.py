@@ -24,6 +24,7 @@ JACKPOT_SHARE = 0.08
 JACKPOT_EXTRA = 1.0
 _HIST_KEY = "gamble_hist:{event}:{user}"
 _CD_KEY = "gamble_cd:{event}:{user}"
+_STATS_KEY = "gamble_stats:{event}:{user}"
 
 # "0.25", "1h", "15m", "30min", "90s"
 _BET_RE = re.compile(
@@ -131,6 +132,60 @@ class GambleRoll:
     mute_seconds: int
 
 
+@dataclass
+class GambleStats:
+    """A player's gambling record for one event (both clocks, all bets)."""
+
+    bets: int = 0
+    wins: int = 0
+    losses: int = 0
+    jackpots: int = 0
+    staked_seconds: float = 0.0
+    won_seconds: float = 0.0
+    lost_seconds: float = 0.0
+
+    @property
+    def net_seconds(self) -> float:
+        return self.won_seconds - self.lost_seconds
+
+    @property
+    def win_rate(self) -> float:
+        if self.bets == 0:
+            return 0.0
+        return self.wins / self.bets
+
+    def to_dict(self) -> dict:
+        return {
+            "bets": self.bets,
+            "wins": self.wins,
+            "losses": self.losses,
+            "jackpots": self.jackpots,
+            "staked": self.staked_seconds,
+            "won": self.won_seconds,
+            "lost": self.lost_seconds,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Optional[dict]) -> GambleStats:
+        data = data or {}
+
+        def _num(key: str) -> float:
+            try:
+                return float(data.get(key, 0.0) or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        return cls(
+            bets=int(_num("bets")),
+            wins=int(_num("wins")),
+            losses=int(_num("losses")),
+            jackpots=int(_num("jackpots")),
+            staked_seconds=_num("staked"),
+            won_seconds=_num("won"),
+            lost_seconds=_num("lost"),
+        )
+
+
 def resolve_gamble(diff: object, bet_hours: float, *, roll: float) -> GambleRoll:
     chance = win_chance_for_bet(diff, bet_hours)
     win_mult = win_multiplier_for_bet(diff, bet_hours)
@@ -185,3 +240,43 @@ class GambleBook:
             _HIST_KEY.format(event=event_uid, user=user_id),
             json.dumps(hist),
         )
+
+    # ---------------------------------------------------------- session stats
+
+    def stats(self, event_uid: str, user_id: int) -> GambleStats:
+        raw = self.store.get_meta(_STATS_KEY.format(event=event_uid, user=user_id))
+        if not raw:
+            return GambleStats()
+        try:
+            return GambleStats.from_dict(json.loads(raw))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return GambleStats()
+
+    def record_gamble(
+        self,
+        event_uid: str,
+        user_id: int,
+        *,
+        bet_seconds: float,
+        won: bool,
+        jackpot: bool = False,
+        won_seconds: float = 0.0,
+        lost_seconds: float = 0.0,
+    ) -> GambleStats:
+        """Fold one finished roll into the player's event stats (persisted)."""
+        s = self.stats(event_uid, user_id)
+        s.bets += 1
+        s.staked_seconds += bet_seconds
+        if won:
+            s.wins += 1
+            s.won_seconds += won_seconds
+            if jackpot:
+                s.jackpots += 1
+        else:
+            s.losses += 1
+            s.lost_seconds += lost_seconds
+        self.store.set_meta(
+            _STATS_KEY.format(event=event_uid, user=user_id),
+            json.dumps(s.to_dict()),
+        )
+        return s

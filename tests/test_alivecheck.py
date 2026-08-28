@@ -631,7 +631,6 @@ def test_rejoin_dm_sent_once_with_exact_message(store, config, engine):
     io = FakeIO()
     checks = AliveCheckManager(config, store, io, rng=random.Random(1))
     monitor.alive_checks = checks
-    engine.hell_events.alive_checks = checks
 
     start(engine, T0, 1)
     checks.bind(engine.event_uid, now=T0)
@@ -663,36 +662,3 @@ def test_failed_kick_for_no_does_not_queue_a_rejoin_dm(alive):
     assert run(manager.process_reply(1, "no", channel_id=999)) == "no"
     assert io.kicked == [[]]
     assert manager.pop_no_kick_rejoins({1}) == []
-
-
-# ------------------------------------------- events affecting the schedule
-
-
-def test_accelerate_next_pulls_a_far_away_check_into_the_window(alive):
-    manager, _io = alive
-    far = T0 + 5 * HOUR
-    manager.store.set_next_alive_check("uid", far)
-    assert manager.next_check_ts() == far
-
-    new_ts = manager.accelerate_next(180.0, 360.0, now=T0)
-    assert new_ts is not None
-    assert T0 + 180.0 <= new_ts <= T0 + 360.0
-    assert manager.next_check_ts() == new_ts
-
-
-def test_accelerate_next_never_pushes_a_due_sooner_check_back(alive):
-    manager, _io = alive
-    soon = T0 + 60.0
-    manager.store.set_next_alive_check("uid", soon)
-    assert manager.accelerate_next(180.0, 360.0, now=T0) == soon
-    assert manager.next_check_ts() == soon
-
-
-def test_accelerate_next_refuses_while_a_check_is_pending(alive):
-    manager, _io = alive
-    io = _io
-    io.present = {1}
-    manager.store.set_next_alive_check("uid", T0)
-    run(manager.tick(T0 + 1, users(1)))
-    assert manager.pending is not None
-    assert manager.accelerate_next(180.0, 360.0, now=T0 + 2) is None

@@ -67,8 +67,6 @@ class VoiceMonitor:
         self.alive_io = DiscordAliveCheckIO(bot, config)
         self.alive_checks = AliveCheckManager(config, engine.store, self.alive_io, engine=engine)
         self.alive_checks.bind(engine.event_uid)
-        self.engine.hell_events.announcer = announcer
-        self.engine.hell_events.alive_checks = self.alive_checks
         self.engine._alive_checks = self.alive_checks
         self.engine.finale.announcer = announcer
         self.reports = FinalReportDM(bot, config, engine, announcer)
@@ -297,12 +295,12 @@ class VoiceMonitor:
         for event in events:
             await self.dispatch(event)
 
-        # While paused the event is frozen: no roll calls or hell events advance
+        # While paused the event is frozen: no roll calls advance
         if self.engine.is_running and not self.engine.is_paused:
             self._ensure_alive_checks_bound(now)
             self._pump_alive_check(now, humans)
-            # Hell Events & Finale tick.  Hell 2 continuation has one finish
-            # (the secret 320h reward), so the 159-160h finale never repeats.
+            # Finale tick.  Hell 2 continuation has one finish (the secret
+            # 320h reward), so the 159-160h finale never repeats.
             if not self.engine.is_continuation:
                 await self.engine.finale.tick(now, self.engine.elapsed(now), humans)
 
@@ -463,7 +461,7 @@ class VoiceMonitor:
 
         Difficulty tiers unlock exactly at milestones (32h/64h/96h/128h), but
         the milestone message only talks about the reward — so without this,
-        dead checks, gambling and the new Hell Events would silently appear.
+        dead checks and gambling would silently appear.
         The escalation announcement goes to the announcement channel, right
         after the milestone itself. Late re-announcements (crash recovery)
         never re-post it.
@@ -572,7 +570,6 @@ class VoiceMonitor:
         # A roll call interrupted by the restart is cancelled, never enforced:
         # nobody gets disconnected because the bot was offline.
         self.alive_checks.bind(state.event_uid)
-        self.engine.hell_events.bind(state.event_uid, now=now_ts())
         self.engine.finale.bind(state.event_uid)
         pending_check = self.alive_checks.pending
         if pending_check is not None:

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Sequence
-from typing import Any, Optional
+from typing import Optional
 
 import discord
 
@@ -53,14 +53,10 @@ from .engine import (
     Snapshot,
 )
 from .finale import FinaleAnnouncement
-from .hellevents import HellEventEnded, HellEventStarted
 from .models import LeaderboardEntry, MilestoneRecord
 from .texts import TEXT
 
 log = logging.getLogger("hell.announcer")
-
-# How many VC participants a Hell Event echo may ping (matches the roll calls).
-MAX_VC_EVENT_PINGS = 60
 
 __all__ = [
     "MAX_CONTENT",
@@ -273,40 +269,6 @@ class Announcer:
         """Broadcast the full difficulty system breakdown to the announcement channel."""
         return await self.send(
             [self.embeds.difficulty_info(self.engine.elapsed(), override=self.engine.difficulty_override)]
-        )
-
-    async def announce_hell_event_start(self, event: HellEventStarted) -> Optional[discord.Message]:
-        """Announce a Hell Event start in the VC text chat ONLY.
-
-        The people affected are sitting in the VC — the announcement (with a
-        ping) goes where they are looking, and nowhere else.
-        """
-        embed = self.embeds.hell_event_start(event)
-        log.info("Announcing Hell Event start: %s (VC only)", event.record.name)
-        return await self._send_hell_event_to_vc([embed], event.eligible_participants)
-
-    async def announce_hell_event_end(self, event: HellEventEnded) -> Optional[discord.Message]:
-        """Announce a Hell Event end in the VC text chat ONLY (no ping)."""
-        embed = self.embeds.hell_event_end(event)
-        log.info("Announcing Hell Event end: %s (VC only)", event.record.name)
-        return await self._send_hell_event_to_vc([embed])
-
-    async def _send_hell_event_to_vc(
-        self,
-        embeds: Sequence[discord.Embed],
-        participants: Sequence[Any] = (),
-    ) -> Optional[discord.Message]:
-        """Post a Hell Event announcement in the VC text chat.
-
-        Pings the affected participants (capped like the roll calls) so the
-        event cannot be missed.  If the VC chat is unreachable the message is
-        simply not delivered (logged by :meth:`send`) — hell events never fall
-        back to the announcement channel.
-        """
-        uids = [p.user_id for p in participants][:MAX_VC_EVENT_PINGS]
-        content = " ".join(f"<@{uid}>" for uid in uids) if uids else None
-        return await self.send(
-            list(embeds), content=content, target="vc", mention_users=bool(uids)
         )
 
     async def announce_finale_stage(self, ann: FinaleAnnouncement) -> Optional[discord.Message]:

@@ -323,13 +323,6 @@ class AliveCheckManager:
 
     def pick_delay(self, now: Optional[float] = None) -> float:
         """A random delay scaled by current difficulty (1-6h, 1-5h, 1-4h, 1-3h, 1-2h)."""
-        # While a check storm is active (Inferno 3–6 min, Ember Rain 8–15 min)
-        # roll calls follow the storm's window instead of the difficulty cadence.
-        if self.engine is not None and getattr(self.engine, "hell_events", None):
-            window = self.engine.hell_events.check_storm_window(now)
-            if window is not None:
-                return self.rng.uniform(*window)
-
         diff = self.current_difficulty(now)
         min_hours = min(self.config.alive_check_min_hours, diff.min_check_hours)
         max_hours = min(self.config.alive_check_max_hours, diff.max_check_hours)
@@ -363,55 +356,6 @@ class AliveCheckManager:
             log.info("Shifted next roll call forward by %.1fs", duration)
         else:
             self.schedule_next(now_ts())
-
-    def postpone_next(self, seconds: float, now: Optional[float] = None) -> Optional[float]:
-        """Push the next scheduled roll call back by ``seconds``.
-
-        Used by the Golden Hour Hell Event.  Returns the new due timestamp, or
-        ``None`` when nothing can be postponed right now: a roll call is already
-        pending, roll calls are disabled, or the manager is not bound to an
-        event.  Never touches a check that is currently running.
-        """
-        if not self._event_uid or not self.enabled or self.pending is not None or seconds <= 0:
-            return None
-        cur_now = now if now is not None else now_ts()
-        current = self.next_check_ts()
-        if current is None:
-            self.schedule_next(cur_now)
-            current = self.next_check_ts() or cur_now
-        new_ts = max(current, cur_now) + seconds
-        self.store.set_next_alive_check(self._event_uid, new_ts)
-        log.info("Next roll call postponed by %s (new due in %.0fs)", format_hm(seconds), new_ts - cur_now)
-        return new_ts
-
-    def accelerate_next(
-        self, min_seconds: float, max_seconds: float, now: Optional[float] = None
-    ) -> Optional[float]:
-        """Pull the next scheduled roll call INTO ``[min, max]`` seconds from now.
-
-        Used by the Inferno Hell Event: an already-scheduled roll call must not
-        calmly wait hours away while Hell is burning — checks become frequent
-        the moment Inferno starts, not only after the next check happens to
-        fire.  A roll call that is already due even sooner is left alone.
-        Returns the new due timestamp, or ``None`` when nothing can be moved
-        (a check is pending, checks are off, or the manager is not bound).
-        """
-        if not self._event_uid or not self.enabled or self.pending is not None:
-            return None
-        if max_seconds < min_seconds:
-            min_seconds, max_seconds = max_seconds, min_seconds
-        cur_now = now if now is not None else now_ts()
-        new_ts = cur_now + self.rng.uniform(min_seconds, max_seconds)
-        current = self.next_check_ts()
-        if current is not None and current <= new_ts:
-            return current  # already sooner than the accelerated window
-        self.store.set_next_alive_check(self._event_uid, new_ts)
-        log.info(
-            "Next roll call accelerated to %.0fs from now (was %s)",
-            new_ts - cur_now,
-            "not scheduled" if current is None else f"{max(0.0, current - cur_now):.0f}s away",
-        )
-        return new_ts
 
     def next_check_ts(self) -> Optional[float]:
         if not self._event_uid:

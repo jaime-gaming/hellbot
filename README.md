@@ -31,15 +31,11 @@ empties and nobody returns within the grace period, the run is dead — permanen
 * **15-second grace period** when the VC empties, with a no-ping warning
 * **Random alive checks** every 1–6 h: reply `Yes` in 5 minutes or get disconnected. They are
   **unpredictable** — the moment is drawn fresh (uniformly) inside the current difficulty's range,
-  and the next one is never shown to players. Hell Events bend the schedule in real time:
-  **Inferno** pulls the next roll call into a 3–6 minute window, **Golden Hour** postpones it, and
-  **The Culling** triggers one immediately. Saying `No` (or any of its synonyms) is a free exit —
+  and the next one is never shown to players. Saying `No` (or any of its synonyms) is a free exit —
   you are disconnected, keep all your time, and get a DM when you rejoin telling you that you
   don't have to answer anything to come back
-* **Random Hell Events** every 30m–3h — good and bad (bonuses, penalties, accelerated checks,
-  hidden info…), announced **only in the VC text chat** with a ping; about
-  **1 in 4 is secret**: it says *something* happened and only reveals what when it ends
-* A **personal stat card by DM** for every contestant when the run ends
+* A **personal stat card by DM** for every contestant when the run ends (it includes the
+  player's gambling record once they have bet)
 * Hosts can post **colored embeds** with `/hell broadcast` (`info`, `warning`, `error`, …) to the
   announcement channel or the VC text chat
 
@@ -236,8 +232,7 @@ in the log, and in the launcher's Dashboard.
 | `/hell milestones` | everyone | All five milestones, their rewards, when each was reached and how many users were eligible. |
 | `/hell difficulty` | everyone / `@gamenight host` | Show the 5 difficulty tiers and current level; `action: set` (host only, `0`-`4` or `auto`) overrides it; `action: announce` (host only) posts it to the announcement channel. |
 | `/hell broadcast` | `@gamenight host` | Post the host's message as a colored embed — `level: info/warning/error/…`, `target: announcements` or `vc`, no plain text outside the embed. |
-| `/hell hellevents` | everyone / `@gamenight host` | View active Hell Event, rules, or trigger an event (`action: trigger`, `@gamenight host` only). |
-| `/hell gamble` | everyone | Difficulty 3+: bet **Real Timer** (hourly quota + overflow timer) or **Gamble Time** (no rate limits). Bets snap to 15m chips; you cannot bet all of your time (`gamble_max_bet_hours`). Lose = stake + mute. |
+| `/hell gamble` | everyone | Difficulty 3+: bet **Real Timer** (hourly fast-bet quota + overflow timer) or **Gamble Time** (no rate limits, losses cost 1.5–2× the stake). Bets snap to 15m chips; you cannot bet all of your time (`gamble_max_bet_hours`). Every result shows the payout and the player's session stats (bets, W/L, net); a Real Timer loss also adds a server mute. |
 | `/hell adjtime` | `@gamenight host` | Add or remove hours on a member's **Real Timer** or **Gamble Time** (`hours` may be negative). |
 | `/hell stop` | `@gamenight host` | **Two-step, operator-approved.** The bot DMs a one-time code to the operator's DMs, then the host runs `/hell approve` with it → event marked **CANCELLED** (explicitly *not* FAILED), leaderboard frozen. |
 | `/hell reset` | `@gamenight host` | **Two-step, operator-approved.** The bot DMs a one-time code to the operator's DMs, then the host runs `/hell approve` with it → all event data wiped for a fresh run. |
@@ -446,39 +441,36 @@ Difficulties make the challenge harder as the event progresses, expanding at eve
 - **0 (Starter)**: 0h – 32h. Alive checks every **1–6h**. No dead checks, no gambling.
 - **1 (32h Milestone)**: 32h – 64h. Alive checks every **1–5h**. No dead checks, no gambling.
 - **2 (64h Milestone)**: 64h – 96h. Alive checks every **1–4h**. **Dead checks** enabled: reply `Yes` and you get **muted 1 minute** from the server.
-- **3 (96h Milestone)**: 96h – 128h. Alive checks every **1–3h**. Dead checks are more frequent with **1–5 minute mutes**. **Timer gambling unlocked** (`/hell gamble [hours]` or `!gamble [hours]`): max 1h bet, max 2 bets/hr, 40% win rate (+1.5x) / loss (-1.0x bet + 1m mute).
-- **4 (128h Milestone)**: 128h – 160h. Alive checks every **1–2h**. Dead checks with **5–15 minute mutes**. High-stakes gambling (max 2h bet, max 3 bets/hr, 30% win rate, 2.5x multiplier / loss -1.0x bet + 1m mute).
+- **3 (96h Milestone)**: 96h – 128h. Alive checks every **1–3h**. Dead checks are more frequent with **1–5 minute mutes**. **Timer gambling unlocked** (`/hell gamble [hours]` or `!gamble [hours]`): max 1h bet, max 2 bets/hr, 38% win rate (+1.5x) / loss (-1.0x bet + 1m mute).
+- **4 (128h Milestone)**: 128h – 160h. Alive checks every **1–2h**. Dead checks with **5–15 minute mutes**. High-stakes gambling (max 2h bet, max 3 bets/hr, 28% win rate, 2.5x multiplier / loss -1.0x bet + 1m mute).
 
-### Hell Events
+### Gambling ([`hell/gamble.py`](hell/gamble.py), [`hell/cog.py`](hell/cog.py))
 
-**Hell Events** are temporary random occurrences that happen while the challenge is in the `RUNNING` status (and never when IDLE, FAILED, COMPLETED, CANCELLED, PAUSED, or during an empty-VC grace countdown). Only one Hell Event may be active at a time.
+Unlocked at **Difficulty 3** (96h). Players bet from the Hell VC with `/hell gamble` (or
+`!gamble [hours] [real|gamble]`); every roll needs at least **15m of clock left** — betting your
+entire time is always refused. Bets snap to **15-minute chips** and are capped by difficulty
+(1h at 3, 2h at 4).
 
-Intervals between events occur randomly between **30 minutes and 3 hours** (scaling more frequently at higher difficulty tiers). All Hell Events persist in SQLite to survive bot restarts.
+Two clocks, one house:
 
-Every Hell Event announcement is posted in the **VC text chat only** — never in the announcement channel — pinging everyone the event applies to, so the people actually sitting in Hell never miss one.
+* **Real Timer** — the rate-limited game. You lose the stake **and** get a server mute
+  (1 minute base, +1 minute per extra 15m chip). Cooldown 5m (D3) / 4m (D4) between the
+  **fast bets** (2/h at D3, 3/h at D4); after the quota is used the same bet stays possible on a
+  separate **overflow timer** (45m at D3, 30m at D4). Cooldowns and history persist in SQLite per
+  event, so a restart (or a brand-new run) never leaks stale state.
+* **Gamble Time** — a private wallet everybody starts with **1h of**. No rate limits, but a loss
+  costs **1.5×–2× the stake** (heavier the bigger the bet) and there is no mute. The wallet is
+  visible to everyone on `/hell leaderboard` → `Gamble Time`.
 
-**Good events**
+Odds scale with the difficulty (38% at D3, 28% at D4) and **drop with the stake** — at the max
+bet you keep 70% of the listed chance — while the multiplier grows a little (+0.5 at the max
+stake: 1.5x→2.0x at D3, 2.5x→3.0x at D4). A **win credits bet × multiplier** on top of the
+untouched stake, and an extra **jackpot** (8% of the win band, +1.0 multiplier) pays even more.
+Every bet is negative expected value — the house is Hell and Hell always wins.
 
-1. **Double Time** (5 minutes): All valid humans in the VC receive **2× personal leaderboard time** while active (2.5× on Difficulty 4). The global 160h clock is not accelerated.
-2. **Overdrive** (5 minutes): A milder boost — **1.5× personal leaderboard time** while active (1.75× on Difficulty 4). Unlocks at Difficulty 1.
-3. **Blood Pact** (Instant): Everyone currently in the VC at the moment of the event receives an instant personal survival time bonus (**+5 minutes**, scaling up to +10m on Difficulty 4).
-4. **Hell Jackpot** (5 minutes): Temporarily increases gambling win multipliers (+1.0x bonus multiplier).
-5. **Fortune's Wheel** (5 minutes): A milder gambling boost (+0.75x bonus multiplier, +1.0x on Difficulty 4). Unlocks at Difficulty 3 alongside gambling itself.
-6. **Golden Hour** (Instant): Hell looks away — the next roll call is **postponed by 30–50 minutes** (more relief the higher the difficulty). Skipped honestly if a roll call is already running.
-7. **Soul Cache** (Instant): A hidden cache of stolen time surfaces for **one random person** in the VC: **+10 minutes** of personal survival time, scaling up to +20m on Difficulty 4.
-
-**Bad events**
-
-8. **Inferno** (10 minutes): Alive/Dead checks occur at a significantly accelerated frequency (every 3–6 minutes) while preserving normal response windows.
-9. **Ember Rain** (10 minutes): A milder check storm — roll calls fall every **8–15 minutes** while it lasts. Unlocks at Difficulty 2.
-10. **Blindness** (10 minutes): Temporarily hides remaining time and upcoming milestone from the progress card (`[HIDDEN BY BLINDNESS]`) while keeping the main elapsed timer and event status visible.
-11. **Time Vortex** (5 minutes): Personal leaderboard time runs at **half speed** for everyone in the VC (a quarter on Difficulty 4). The global clock is not touched.
-12. **Blood Debt** (Instant): The tax collectors of Hell come knocking — everyone in the VC is charged **-2 minutes** of personal survival time (scaling to -5m on Difficulty 4; never below zero).
-13. **The Culling** (Instant): An **immediate roll call** is triggered — reply `Yes` in time or be disconnected from the VC. Skipped if a roll call is already running.
-
-**Secret events** 🕯️
-
-Roughly **one in four** randomly scheduled events is a **secret event**: the announcement only says that *something* has changed deep within Hell — the event's name, duration and effect all stay hidden until the event ends and the veil is lifted (`THE SECRET EVENT IS REVEALED: …`). Instant events can never be secret (they are obvious the moment they happen), so secrets are always drawn from the timed ones. While a secret event runs, `/hell hellevents` shows it only as `??? (Secret Event)`. Hosts can force one with `/hell hellevents` → `trigger` → `Secret`.
+Every result shows the payout, the new clock total and the player's **session stats**
+(bets, W/L, net; plus fast bets left for Real Timer). The full record is persisted per event and
+shows on `/hell mystats` and in the end-of-run stat card DM.
 
 ### The 160-Hour Finale
 
@@ -522,10 +514,7 @@ You keep all your leaderboard time and can rejoin immediately.
   **cancelled** — nobody is punished for the bot being away.
 * The next check time is never announced (that would defeat the point); `/hell status` only says
   that checks happen randomly every 1–6 h. The moment is drawn uniformly inside the current
-  difficulty's range, so a check can land on **any second of that window** — and Hell Events
-  reshape the schedule **while it is pending**: **Inferno** pulls the next roll call forward into
-  its 3–6 minute window the instant it starts, **Golden Hour** postpones the next roll call, and
-  **The Culling** fires one immediately.
+  difficulty's range, so a check can land on **any second of that window**.
 
 ### Leaderboard
 

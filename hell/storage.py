@@ -25,7 +25,7 @@ from .models import EventState, EventStatus, LeaderboardEntry, MilestoneRecord, 
 
 log = logging.getLogger("hell.storage")
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -133,19 +133,6 @@ CREATE TABLE IF NOT EXISTS final_leaderboard (
 );
 CREATE INDEX IF NOT EXISTS idx_final_order ON final_leaderboard(event_uid, position);
 
-CREATE TABLE IF NOT EXISTS hell_events (
-    id             TEXT PRIMARY KEY,
-    event_uid      TEXT NOT NULL,
-    event_type     TEXT NOT NULL,
-    name           TEXT NOT NULL,
-    start_ts       REAL NOT NULL,
-    end_ts         REAL NOT NULL,
-    state          TEXT NOT NULL,
-    affected_users TEXT NOT NULL DEFAULT '[]',
-    metadata       TEXT NOT NULL DEFAULT '{}'
-);
-CREATE INDEX IF NOT EXISTS idx_hell_events_uid ON hell_events(event_uid);
-
 CREATE TABLE IF NOT EXISTS continuation_poll (
     id          INTEGER PRIMARY KEY CHECK (id = 1),
     event_uid   TEXT NOT NULL,
@@ -212,6 +199,10 @@ class Store:
 
     def _migrate(self) -> None:
         """Additive schema migrations for databases created by older versions."""
+        # v6: the Hell Events subsystem was retired — drop its table and any
+        # leftover meta keys so old databases do not carry dead rows around.
+        self._conn.execute("DROP TABLE IF EXISTS hell_events")
+        self._conn.execute("DELETE FROM meta WHERE key LIKE 'next_hell_event:%'")
         columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(event)").fetchall()}
         for name, ddl in (
             ("grace_started_ts", "REAL"),
@@ -871,152 +862,6 @@ class Store:
             counts[row["answer"]] = row["n"]
         return counts
 
-    # ------------------------------------------------------------ hell events
-
-    def save_hell_event(
-        self,
-        event_uid: str,
-        *,
-        event_id: str,
-        event_type: str,
-        name: str,
-        start_ts: float,
-        end_ts: float,
-        state: str,
-        affected_users: Sequence[int] = (),
-        metadata: Optional[dict] = None,
-    ) -> None:
-        with self._lock:
-            self._conn.execute(
-                """
-                INSERT OR REPLACE INTO hell_events(
-                    id, event_uid, event_type, name, start_ts, end_ts, state, affected_users, metadata
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event_id,
-                    event_uid,
-                    event_type,
-                    name,
-                    start_ts,
-                    end_ts,
-                    state,
-                    json.dumps(list(affected_users)),
-                    json.dumps(metadata or {}),
-                ),
-            )
-
-    def update_hell_event(
-        self,
-        event_id: str,
-        *,
-        state: Optional[str] = None,
-        end_ts: Optional[float] = None,
-        affected_users: Optional[Sequence[int]] = None,
-        metadata: Optional[dict] = None,
-    ) -> None:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM hell_events WHERE id = ?", (event_id,)
-            ).fetchone()
-            if not row:
-                return
-            new_state = state if state is not None else row["state"]
-            new_end = end_ts if end_ts is not None else row["end_ts"]
-            new_users = (
-                json.dumps(list(affected_users))
-                if affected_users is not None
-                else row["affected_users"]
-            )
-            new_meta = (
-                json.dumps(metadata)
-                if metadata is not None
-                else row["metadata"]
-            )
-            self._conn.execute(
-                """
-                UPDATE hell_events SET
-                    state = ?, end_ts = ?, affected_users = ?, metadata = ?
-                WHERE id = ?
-                """,
-                (new_state, new_end, new_users, new_meta, event_id),
-            )
-
-    def get_active_hell_event(self, event_uid: str) -> Optional[dict]:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM hell_events WHERE event_uid = ? AND state = 'active' ORDER BY start_ts DESC LIMIT 1",
-                (event_uid,),
-            ).fetchone()
-        if not row:
-            return None
-        return {
-            "id": row["id"],
-            "event_uid": row["event_uid"],
-            "event_type": row["event_type"],
-            "name": row["name"],
-            "start_ts": row["start_ts"],
-            "end_ts": row["end_ts"],
-            "state": row["state"],
-            "affected_users": json.loads(row["affected_users"]),
-            "metadata": json.loads(row["metadata"]),
-        }
-
-    def get_hell_event(self, event_id: str) -> Optional[dict]:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM hell_events WHERE id = ?", (event_id,)
-            ).fetchone()
-        if not row:
-            return None
-        return {
-            "id": row["id"],
-            "event_uid": row["event_uid"],
-            "event_type": row["event_type"],
-            "name": row["name"],
-            "start_ts": row["start_ts"],
-            "end_ts": row["end_ts"],
-            "state": row["state"],
-            "affected_users": json.loads(row["affected_users"]),
-            "metadata": json.loads(row["metadata"]),
-        }
-
-    def get_hell_events_history(self, event_uid: str) -> list[dict]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM hell_events WHERE event_uid = ? ORDER BY start_ts DESC",
-                (event_uid,),
-            ).fetchall()
-        return [
-            {
-                "id": r["id"],
-                "event_uid": r["event_uid"],
-                "event_type": r["event_type"],
-                "name": r["name"],
-                "start_ts": r["start_ts"],
-                "end_ts": r["end_ts"],
-                "state": r["state"],
-                "affected_users": json.loads(r["affected_users"]),
-                "metadata": json.loads(r["metadata"]),
-            }
-            for r in rows
-        ]
-
-    def set_next_hell_event(self, event_uid: str, ts: Optional[float]) -> None:
-        key = f"next_hell_event:{event_uid}"
-        if ts is None:
-            with self._lock:
-                self._conn.execute("DELETE FROM meta WHERE key = ?", (key,))
-            return
-        self.set_meta(key, repr(float(ts)))
-
-    def get_next_hell_event(self, event_uid: str) -> Optional[float]:
-        raw = self.get_meta(f"next_hell_event:{event_uid}")
-        try:
-            return float(raw) if raw is not None else None
-        except ValueError:
-            return None
-
     # ------------------------------------------------------------ maintenance
 
     def reset_all(self) -> None:
@@ -1026,13 +871,13 @@ class Store:
                 for table in (
                     "user_time", "gamble_time", "milestones", "milestone_members", "presence",
                     "final_leaderboard", "alive_check", "alive_check_history", "dm_log",
-                    "hell_events", "continuation_votes",
+                    "continuation_votes",
                 ):
                     self._conn.execute(f"DELETE FROM {table}")
                 self._conn.execute("DELETE FROM continuation_poll WHERE id = 1")
                 self._conn.execute(
                     "DELETE FROM meta WHERE key LIKE 'next_alive_check:%' OR key LIKE 'unverified:%' "
-                    "OR key LIKE 'alive_check_emptied:%' OR key LIKE 'next_hell_event:%' "
+                    "OR key LIKE 'alive_check_emptied:%' "
                     "OR key LIKE 'peak_population:%' OR key LIKE 'finale_stages:%'"
                 )
                 self._conn.execute(

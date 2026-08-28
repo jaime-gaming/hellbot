@@ -9,10 +9,10 @@ There are 5 difficulty levels (0 to 4):
      Alive checks every 1-4h. Dead checks enabled (saying yes = 1 min mute).
 - 3: Unlocked at 96h milestone (96h - 128h)
      Alive checks every 1-3h. Dead checks (1-5 min mute).
-     Timer gambling unlocked (max 1h bet, max 2 bets/hr, 40% win rate, +1.5x multiplier).
+     Timer gambling unlocked (max 1h bet, max 2 bets/hr, 38% win rate, +1.5x multiplier).
 - 4: Unlocked at 128h milestone (128h - 160h)
      Alive checks every 1-2h. Dead checks (5-15 min mute).
-     High-stakes gambling (max 2h bet, max 3 bets/hr, 30% win rate, +2.5x multiplier).
+     High-stakes gambling (max 2h bet, max 3 bets/hr, 28% win rate, +2.5x multiplier).
 """
 
 from __future__ import annotations
@@ -121,14 +121,16 @@ DIFFICULTIES: dict[int, DifficultyInfo] = {
         min_mute_seconds=60,
         max_mute_seconds=300,
         gamble_enabled=True,
-        gamble_win_chance=0.40,            # 40% win chance
+        # 38% — keeps a house edge on EVERY stake: the base 15m chip bet is the
+        # friendliest one (EV -5%); bigger bets pay more but their odds drop.
+        gamble_win_chance=0.38,
         gamble_max_bet_hours=1.0,          # Max 1 hour bet
         gamble_hourly_limit=2,             # 2 fast bets, then overflow timer
         gamble_win_multiplier=1.5,         # Win +1.5x bet
         gamble_loss_mute_seconds=60,       # 1 minute mute
         gamble_cooldown_seconds=300.0,     # 5 minute gap between fast Real Timer bets
         gamble_overflow_cooldown_seconds=2700.0,  # 45m between extra Real Timer gambles
-        description="Unlocked at 96h milestone: alive checks every 1–3h, dead checks (1–5 min mute), timer gambling (max 1h bet, 2 fast Real Timer bets/h then 45m timer, 40% win).",
+        description="Unlocked at 96h milestone: alive checks every 1–3h, dead checks (1–5 min mute), timer gambling (max 1h bet, 2 fast Real Timer bets/h then 45m timer, 38% win).",
     ),
     4: DifficultyInfo(
         level=4,
@@ -141,14 +143,16 @@ DIFFICULTIES: dict[int, DifficultyInfo] = {
         min_mute_seconds=300,
         max_mute_seconds=900,
         gamble_enabled=True,
-        gamble_win_chance=0.30,            # 30% win chance (harder)
+        # 28% — with the 2.5x base payout, 30% would have been +EV for the
+        # player; 28% keeps the base bet negative (EV -2%) like every other one.
+        gamble_win_chance=0.28,
         gamble_max_bet_hours=2.0,          # Max 2 hours bet
         gamble_hourly_limit=3,             # 3 fast bets, then overflow timer
         gamble_win_multiplier=2.5,         # Win +2.5x bet
         gamble_loss_mute_seconds=60,        # 1 minute mute
         gamble_cooldown_seconds=240.0,      # 4 minute gap between fast Real Timer bets
         gamble_overflow_cooldown_seconds=1800.0,  # 30m between extra Real Timer gambles
-        description="Unlocked at 128h milestone: alive checks every 1–2h, dead checks (5–15 min mute), high-stakes gambling (max 2h bet, 3 fast Real Timer bets/h then 30m timer, 30% win).",
+        description="Unlocked at 128h milestone: alive checks every 1–2h, dead checks (5–15 min mute), high-stakes gambling (max 2h bet, 3 fast Real Timer bets/h then 30m timer, 28% win).",
     ),
 }
 

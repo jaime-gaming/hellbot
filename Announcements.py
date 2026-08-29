@@ -718,6 +718,15 @@ CMD_RESTART_DONE = (
     "will resume where it left off."
 )
 CMD_RESTART_NOT_OPERATOR = "⛔ Only the bot operator can restart the bot."
+CMD_DUMP_DONE = (
+    "📦 **Database dump ready.** Two files are attached below:\n"
+    "• `hellbot-database-*.sql` — the **complete, restorable** database "
+    "({sql_kb} KB). Restore with `sqlite3 new.db < file.sql`.\n"
+    "• `hellbot-recap-*.txt` — a **human-readable recap** ({recap_kb} KB): "
+    "event state, both leaderboards, milestones + claimants, roll-call "
+    "history, continuation vote and every meta key.\n"
+    "_Taken read-only — the live event was never paused._"
+)
 CMD_RESTART_DM_ONLY = "⛔ This command can only be used in a DM to the bot."
 
 CMD_SECURITY_TITLE = "🛡️ WELCOME TO HELL — SECURITY REPORT"

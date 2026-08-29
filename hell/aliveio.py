@@ -152,6 +152,12 @@ class DiscordAliveCheckIO:
             return False
         try:
             until = discord.utils.utcnow() + datetime.timedelta(seconds=duration_seconds)
+            # Never shorten a longer timeout already in progress: a 1-minute
+            # gamble-loss mute must not cancel the rest of a 5-minute
+            # dead-check mute (Discord's timeout call replaces the old one).
+            current = getattr(member, "timed_out_until", None)
+            if current is not None and current > until:
+                until = current
             await member.timeout(until, reason=reason)
             log.info("Muted/timed out %s (%d) for %ds: %s", member.display_name, user_id, duration_seconds, reason)
             return True

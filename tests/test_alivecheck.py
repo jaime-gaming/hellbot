@@ -662,3 +662,47 @@ def test_failed_kick_for_no_does_not_queue_a_rejoin_dm(alive):
     assert run(manager.process_reply(1, "no", channel_id=999)) == "no"
     assert io.kicked == [[]]
     assert manager.pop_no_kick_rejoins({1}) == []
+
+
+def test_real_io_mute_never_shortens_a_longer_timeout(config):
+    """A 1m gamble-loss mute must not cancel a 5m dead-check mute in progress."""
+    import datetime
+    from unittest.mock import AsyncMock, MagicMock
+
+    import discord
+
+    from hell.aliveio import DiscordAliveCheckIO
+
+    def run_mute(current_timeout_seconds: float | None, requested_seconds: int) -> datetime.datetime:
+        io = DiscordAliveCheckIO(MagicMock(spec=discord.Client), config)
+        bot = io.bot
+        member = MagicMock()
+        if current_timeout_seconds is None:
+            member.timed_out_until = None
+        else:
+            member.timed_out_until = discord.utils.utcnow() + datetime.timedelta(
+                seconds=current_timeout_seconds
+            )
+        member.timeout = AsyncMock()
+        guild = MagicMock()
+        guild.get_member.return_value = member
+        bot.get_guild.return_value = guild
+
+        run(io.mute(1, requested_seconds, "test"))
+        until = member.timeout.await_args.args[0]
+        assert isinstance(until, datetime.datetime)
+        return until
+
+    now = discord.utils.utcnow()
+
+    # No timeout in progress -> the requested duration applies.
+    until = run_mute(None, 60)
+    assert (until - now).total_seconds() == pytest.approx(60, abs=2)
+
+    # A 5m timeout in progress -> a 1m request must keep it at 5m.
+    until = run_mute(300, 60)
+    assert (until - now).total_seconds() == pytest.approx(300, abs=2)
+
+    # A 5m timeout in progress -> a 10m request must extend it to 10m.
+    until = run_mute(300, 600)
+    assert (until - now).total_seconds() == pytest.approx(600, abs=2)

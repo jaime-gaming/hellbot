@@ -245,6 +245,7 @@ in the log, and in the launcher's Dashboard.
 | `/hell difficulty` | everyone / `@gamenight host` | Show the 5 difficulty tiers and current level; `action: set` (host only, `0`-`4` or `auto`) overrides it; `action: announce` (host only) posts it to the announcement channel. |
 | `/hell broadcast` | `@gamenight host` | Post the host's message as a colored embed — `level: info/warning/error/…`, `target: announcements` or `vc`, no plain text outside the embed. |
 | `/hell gamble` | everyone | Difficulty 3+: bet **Real Timer** (hourly fast-bet quota + overflow timer) or **Gamble Time** (no rate limits, losses cost 1.5–2× the stake). Bets snap to 15m chips; you cannot bet all of your time (`gamble_max_bet_hours`). Every result shows the payout and the player's session stats (bets, W/L, net); a Real Timer loss also adds a server mute. |
+| `/hell odds` | everyone | The house odds card for the current difficulty: win chance and payout at the 15m chip and at the max bet, the jackpot band, loss costs per clock, and the rate limits (or the unlock hint while gambling is locked). Also `!odds` / `!gamble odds`. |
 | `/hell adjtime` | `@gamenight host` | Add or remove hours on a member's **Real Timer** or **Gamble Time** (`hours` may be negative). |
 | `/hell stop` | `@gamenight host` | **Two-step, operator-approved.** The bot DMs a one-time code to the operator's DMs, then the host runs `/hell approve` with it → event marked **CANCELLED** (explicitly *not* FAILED), leaderboard frozen. |
 | `/hell reset` | `@gamenight host` | **Two-step, operator-approved.** The bot DMs a one-time code to the operator's DMs, then the host runs `/hell approve` with it → all event data wiped for a fresh run. |
@@ -261,7 +262,7 @@ users without 250 notifications — while the `@everyone` ping stays in the mess
 ### Server & Direct Message (DM) Commands
 
 - **Server commands:** Run via slash commands (`/hell <command>`) **or** with the `!` prefix directly in server channels (e.g. `!status`, `!leaderboard`, `!gamble 0.5`, `!hell status`). `!status` and `!leaderboard` used in the VC text chat reply with the pinned-card links, exactly like their slash twins.
-- **Direct Message (DM) commands:** The same `!` prefix commands also run in DMs with the bot (e.g. `!status`, `!help`, `!restart`, `!doctor`, `!hell status`). Prefix `!` commands enforce the same host/operator authorization checks everywhere they run.
+- **Direct Message (DM) commands:** The same `!` prefix commands also run in DMs with the bot (e.g. `!status`, `!help`, `!restart`, `!doctor`, `!hell status`). Prefix `!` commands enforce the same host/operator authorization checks everywhere they run. `!dump` (operator, DM only) exports the **entire database** as a restorable `.sql` file plus a human-readable `.txt` recap — taken read-only, so the live event is never paused.
 
 ---
 
@@ -482,7 +483,9 @@ Every bet is negative expected value — the house is Hell and Hell always wins.
 
 Every result shows the payout, the new clock total and the player's **session stats**
 (bets, W/L, net; plus fast bets left for Real Timer). The full record is persisted per event and
-shows on `/hell mystats` and in the end-of-run stat card DM.
+shows on `/hell mystats` and in the end-of-run stat card DM. Before betting, `/hell odds`
+(or `!odds`) shows the exact odds and payout for the 15m chip and the max bet of the current
+difficulty, so nobody bets blind.
 
 ### The 160-Hour Finale
 

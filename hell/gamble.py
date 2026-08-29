@@ -186,6 +186,45 @@ class GambleStats:
         )
 
 
+@dataclass(frozen=True)
+class OddsSummary:
+    """The house odds card for one difficulty tier (gambling unlocked)."""
+
+    level: int
+    name: str
+    base_chance: float
+    base_multiplier: float
+    max_chance: float
+    max_multiplier: float
+    max_bet_hours: float
+    hourly_limit: int
+    overflow_cooldown_seconds: float
+    loss_mute_seconds: int
+
+
+def odds_summary(diff: object) -> Optional[OddsSummary]:
+    """Odds and limits for the current difficulty, or ``None`` when locked.
+
+    Both endpoints of the bet range are reported (the 15m chip and the max
+    bet) because the odds and the payout both move with the stake.
+    """
+    if not getattr(diff, "gamble_enabled", False):
+        return None
+    max_bet = float(getattr(diff, "gamble_max_bet_hours", MIN_BET_HOURS) or MIN_BET_HOURS)
+    return OddsSummary(
+        level=int(getattr(diff, "level", 0)),
+        name=str(getattr(diff, "name", "")),
+        base_chance=win_chance_for_bet(diff, MIN_BET_HOURS),
+        base_multiplier=win_multiplier_for_bet(diff, MIN_BET_HOURS),
+        max_chance=win_chance_for_bet(diff, max_bet),
+        max_multiplier=win_multiplier_for_bet(diff, max_bet),
+        max_bet_hours=max_bet,
+        hourly_limit=int(getattr(diff, "gamble_hourly_limit", 0) or 0),
+        overflow_cooldown_seconds=float(getattr(diff, "gamble_overflow_cooldown_seconds", 0.0) or 0.0),
+        loss_mute_seconds=int(getattr(diff, "gamble_loss_mute_seconds", 0) or 0),
+    )
+
+
 def resolve_gamble(diff: object, bet_hours: float, *, roll: float) -> GambleRoll:
     chance = win_chance_for_bet(diff, bet_hours)
     win_mult = win_multiplier_for_bet(diff, bet_hours)

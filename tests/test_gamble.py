@@ -16,6 +16,7 @@ from hell.gamble import (
     GambleBook,
     GambleStats,
     gamble_time_loss_multiplier,
+    odds_summary,
     resolve_gamble,
     win_chance_for_bet,
     win_multiplier_for_bet,
@@ -291,6 +292,49 @@ def test_odds_and_payout_curve():
     assert not r_lose.won
     assert r_jack.won and r_jack.jackpot
     assert r_jack.multiplier == pytest.approx(1.5 + 1.0)
+
+
+def test_odds_summary_reports_both_bet_endpoints():
+    from hell.difficulty import get_difficulty_by_level
+
+    d3 = get_difficulty_by_level(3)
+    s3 = odds_summary(d3)
+    assert s3 is not None
+    assert s3.level == 3 and s3.name == "Torment"
+    assert s3.base_chance == pytest.approx(0.38)
+    assert s3.base_multiplier == pytest.approx(1.5)
+    assert s3.max_chance == pytest.approx(0.38 * 0.70)
+    assert s3.max_multiplier == pytest.approx(2.0)
+    assert s3.max_bet_hours == 1.0
+    assert s3.hourly_limit == 2
+    assert s3.overflow_cooldown_seconds == 2700.0
+    assert s3.loss_mute_seconds == 60
+
+    s4 = odds_summary(get_difficulty_by_level(4))
+    assert s4.base_chance == pytest.approx(0.28)
+    assert s4.base_multiplier == pytest.approx(2.5)
+    assert s4.max_multiplier == pytest.approx(3.0)
+
+    # Locked tiers produce no odds card.
+    for lvl in (0, 1, 2):
+        assert odds_summary(get_difficulty_by_level(lvl)) is None
+
+
+def test_odds_embed_shows_the_current_numbers(engine, config):
+    from hell.announcer import Announcer
+    from hell.difficulty import get_difficulty_by_level
+    from hell.embeds import embed_to_text
+
+    embeds = Announcer(MagicMock(), config, engine).embeds
+    unlocked = embed_to_text(embeds.gamble_odds(get_difficulty_by_level(3)))
+    assert "38%" in unlocked and "1.5x" in unlocked
+    assert "26%" in unlocked and "2.0x" in unlocked
+    assert "jackpot" in unlocked.lower()
+    assert "overflow" in unlocked.lower()
+
+    locked = embed_to_text(embeds.gamble_odds(get_difficulty_by_level(2)))
+    assert "locked" in locked.lower()
+    assert "96h" in locked
 
 
 def now_ts_safe() -> float:

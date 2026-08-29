@@ -282,6 +282,70 @@ def test_dm_difficulty_and_gamble(wired, engine):
     assert "locked" in ctx_gamble.text().lower()
 
 
+def test_dm_odds_commands_show_the_current_card(wired, engine):
+    cog, bot, _text, _voice = wired
+    now = now_ts()
+    start(engine, now - 100 * 3600, 100)   # 100h elapsed -> Difficulty 3 / Torment
+    engine.tick(obs(now, 100))
+
+    ctx = FakeContext(bot, FakeAuthor(uid=100))
+    call(cog, "prefix_odds", ctx)
+    text = ctx.text()
+    assert "GAMBLE ODDS" in text
+    assert "38%" in text and "1.5x" in text      # 15m chip at D3
+    assert "2.0x" in text                          # max bet at D3
+
+    # `!gamble odds` is a shortcut for the same card.
+    ctx2 = FakeContext(bot, FakeAuthor(uid=100))
+    call(cog, "prefix_gamble", ctx2, hours="odds")
+    assert "GAMBLE ODDS" in ctx2.text()
+
+
+def test_dm_odds_when_gambling_is_locked(wired, engine):
+    cog, bot, _text, _voice = wired
+    now = now_ts()
+    start(engine, now - 10 * 3600, 100)   # 10h elapsed -> Difficulty 0
+    engine.tick(obs(now, 100))
+
+    ctx = FakeContext(bot, FakeAuthor(uid=100))
+    call(cog, "prefix_odds", ctx)
+    text = ctx.text().lower()
+    assert "locked" in text
+    assert "96h" in text
+
+
+def test_dm_dump_sends_sql_and_recap_to_the_operator_only(wired, config):
+    cog, bot, _text, _voice = wired
+
+    # Outsiders get the operator gate, even in a DM.
+    ctx_outsider = FakeContext(bot, FakeAuthor(uid=12345))
+    call(cog, "prefix_dump", ctx_outsider)
+    assert "operator" in ctx_outsider.text().lower()
+    assert ctx_outsider.sent[0].get("files") is None
+
+    # The operator gets the two attachments: restorable SQL + human recap.
+    ctx_op = FakeContext(bot, FakeAuthor(uid=config.log_dm_user_id))
+    call(cog, "prefix_dump", ctx_op)
+    sent = ctx_op.sent
+    assert len(sent) == 1
+    files = sent[0].get("files")
+    assert files is not None and len(files) == 2
+    names = [f.filename for f in files]
+    assert any(n.startswith("hellbot-database-") and n.endswith(".sql") for n in names)
+    assert any(n.startswith("hellbot-recap-") and n.endswith(".txt") for n in names)
+    assert "database dump ready" in sent[0]["content"].lower()
+
+
+def test_dm_dump_refused_outside_a_dm(wired, config):
+    cog, bot, _text, _voice = wired
+    ctx_guild = FakeContext(
+        bot, FakeAuthor(uid=config.log_dm_user_id), guild_id=1
+    )
+    call(cog, "prefix_dump", ctx_guild)
+    assert "dm" in ctx_guild.text().lower()
+    assert ctx_guild.sent[0].get("files") is None
+
+
 def test_dm_setdifficulty_and_announcedifficulty(wired, config, engine):
     cog, bot, _text, _voice = wired
     now = now_ts()

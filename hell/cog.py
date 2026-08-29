@@ -8,6 +8,7 @@ import io
 import logging
 import random
 import re
+import time
 from typing import Any, Optional, Union
 
 import discord
@@ -219,6 +220,12 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             getattr(TEXT, "CMD_ANNOUNCE_DIFFICULTY_DONE", "📢 Difficulty announcement posted to {channel}."),
             channel=f"<#{chan_id}>",
         )
+
+    def _build_odds_embed(self) -> discord.Embed:
+        from .difficulty import get_difficulty
+
+        diff = get_difficulty(self.engine.elapsed(), override=self.engine.difficulty_override)
+        return self.announcer.embeds.gamble_odds(diff)
 
     def _gamble_stats_line(self, stats: GambleStats, *, clock: str, left_bets: Optional[int]) -> str:
         """One-line session summary appended to every gamble result."""
@@ -1120,6 +1127,12 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         _ok, msg = await self._perform_gamble(interaction.user, hours=hours, clock=which)
         await interaction.followup.send(msg)
 
+    @app_commands.command(name="odds", description="Current gambling odds, payouts and limits (Difficulty 3+).")
+    @app_commands.guild_only()
+    async def odds(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(thinking=True)
+        await interaction.response.send_message(embed=self._build_odds_embed())
+
     @app_commands.command(name="adjtime", description="Host: add or remove Real Timer or Gamble Time for a member.")
     @app_commands.describe(
         member="Who to adjust.",
@@ -1828,6 +1841,9 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         await ctx.send(text)
 
     async def _exec_gamble(self, ctx: commands.Context, hours: Optional[str] = None) -> None:
+        if hours is not None and str(hours).strip().lower() == "odds":
+            await ctx.send(embed=self._build_odds_embed())
+            return
         clock = "real"
         stake = hours
         if hours:
@@ -1895,6 +1911,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
                 "`!milestones` (or `!ms`) — Milestones, rewards & list of claimants",
                 "`!difficulty` (or `!diff`) — View the 5 difficulty tiers and current level",
                 "`!gamble [hours] [real|gamble]` — Bet Real Timer (rate limits) or Gamble Time (none)",
+                "`!odds` (or `!gamble odds`) — Current gambling odds, payouts & limits",
                 "`!errors <code>` — Look up an error code explanation (e.g. `!errors HEL-100`)",
                 "`!help` — Show this command help list",
             ]),
@@ -1918,6 +1935,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
                 "`!approve <code>` — Enter approval code to execute pending action",
                 "`!start` — Start the 160h challenge if VC has valid humans",
                 "`!restart` — (Operator only in DMs) Restart the bot process",
+                "`!dump` — (Operator only in DMs) Export the whole database: restorable SQL + human recap",
             ]),
         )
         add_chunked_field(
@@ -1948,6 +1966,47 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             except Exception:
                 pass
         raise SystemExit(RESTART_EXIT_CODE)
+
+    async def _exec_dump(self, ctx: commands.Context) -> None:
+        """DM-only, operator-only: send the full database dump + a human recap."""
+        if ctx.guild is not None:
+            # DM-only: a whole-database export must not land in a public channel.
+            await ctx.send(TEXT.CMD_DM_ONLY)
+            return
+        if not self._is_operator(ctx):
+            await ctx.send(TEXT.CMD_OPERATOR_ONLY)
+            return
+        from . import dbdump
+
+        path = self.engine.store.path
+        if str(path) == ":memory:" or not path.exists():
+            await ctx.send("❌ No database file to dump (in-memory store?).")
+            return
+        try:
+            sql_bytes = dbdump.dump_database(path)
+            recap_bytes = dbdump.build_recap(path).encode("utf-8")
+        except Exception:
+            log.exception("Database dump failed")
+            await ctx.send("❌ The database dump failed — the error is in the bot logs.")
+            return
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+        files = [
+            discord.File(io.BytesIO(sql_bytes), filename=f"hellbot-database-{stamp}.sql"),
+            discord.File(io.BytesIO(recap_bytes), filename=f"hellbot-recap-{stamp}.txt"),
+        ]
+        await ctx.send(
+            say(
+                TEXT.CMD_DUMP_DONE,
+                sql_kb=f"{len(sql_bytes) / 1024:.0f}",
+                recap_kb=f"{len(recap_bytes) / 1024:.1f}",
+            ),
+            files=files,
+        )
+        log.info(
+            "Database dumped to the operator DM by %s (%s): %d KB SQL + %d KB recap",
+            ctx.author, getattr(ctx.author, "id", "?"),
+            len(sql_bytes) // 1024, len(recap_bytes) // 1024,
+        )
 
     async def _exec_doctor(self, ctx: commands.Context) -> None:
         if not await self._is_host_or_operator(ctx):
@@ -2292,6 +2351,8 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             await self._exec_broadcast(ctx, level=lvl, target=tgt, message=msg)
         elif sub in ("gamble", "bet"):
             await self._exec_gamble(ctx, hours=rest)
+        elif sub == "odds":
+            await ctx.send(embed=self._build_odds_embed())
         elif sub in ("mystats", "stats", "me", "mycard", "card"):
             await self._exec_mystats(ctx)
         elif sub in ("user", "whois", "profile"):
@@ -2302,6 +2363,8 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             await self._exec_help(ctx)
         elif sub == "restart":
             await self._exec_restart(ctx)
+        elif sub == "dump":
+            await self._exec_dump(ctx)
         elif sub in ("doctor", "diag", "health"):
             await self._exec_doctor(ctx)
         elif sub in ("logs", "log"):
@@ -2364,8 +2427,13 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
 
     @commands.command(name="gamble", aliases=["bet"])
     async def prefix_gamble(self, ctx: commands.Context, *, hours: Optional[str] = None) -> None:
-        """Gamble Real Timer or Gamble Time (Difficulty 3+)."""
+        """Gamble Real Timer or Gamble Time (Difficulty 3+). `!gamble odds` shows the odds."""
         await self._exec_gamble(ctx, hours=hours)
+
+    @commands.command(name="odds")
+    async def prefix_odds(self, ctx: commands.Context) -> None:
+        """Current gambling odds, payouts and limits."""
+        await ctx.send(embed=self._build_odds_embed())
 
     @commands.command(name="adjtime", aliases=["addtime", "settime"])
     async def prefix_adjtime(self, ctx: commands.Context, *, rest: Optional[str] = None) -> None:
@@ -2401,6 +2469,11 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
     async def prefix_restart(self, ctx: commands.Context) -> None:
         """Restart the bot to apply updates (operator only in DMs)."""
         await self._exec_restart(ctx)
+
+    @commands.command(name="dump")
+    async def prefix_dump(self, ctx: commands.Context) -> None:
+        """Export the whole bot database: restorable SQL + human recap (operator DM only)."""
+        await self._exec_dump(ctx)
 
     @commands.command(name="doctor", aliases=["diag", "health"])
     async def prefix_doctor(self, ctx: commands.Context) -> None:

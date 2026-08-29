@@ -189,6 +189,31 @@ def embed_to_text(embed: discord.Embed) -> str:
         lines.append(f"_{embed.footer.text}_")
     return "\n".join(lines).strip()
 
+
+def _gamble_info_line(diff: DifficultyInfo) -> str:
+    """One-line gambling summary shared by the difficulty embeds and the odds card.
+
+    Reports both endpoints of the bet range (15m chip and max bet): the odds
+    and the payout both move with the stake, so quoting only the 15m numbers
+    would be misleading for anyone betting bigger.
+    """
+    from .gamble import MIN_BET_HOURS, win_chance_for_bet, win_multiplier_for_bet
+
+    if not diff.gamble_enabled:
+        return "Locked (unlocks at Difficulty 3)"
+    base_mult = win_multiplier_for_bet(diff, MIN_BET_HOURS)
+    max_mult = win_multiplier_for_bet(diff, diff.gamble_max_bet_hours)
+    base_pct = int(win_chance_for_bet(diff, MIN_BET_HOURS) * 100)
+    max_pct = int(win_chance_for_bet(diff, diff.gamble_max_bet_hours) * 100)
+    return (
+        f"Active — Win: **{base_mult:g}x** at 15m ({base_pct}% odds) → up to "
+        f"**{max_mult:g}x** at {diff.gamble_max_bet_hours:g}h (odds drop to {max_pct}%); "
+        f"rare jackpot **+1x** extra · Lose: **-1.0x** + {diff.gamble_loss_mute_seconds // 60}m mute "
+        f"(Gamble Time: **-1.5–2.0x**, no mute) · Limits: max **{diff.gamble_max_bet_hours:g}h** bet, "
+        f"**{diff.gamble_hourly_limit}** fast bets/hour then a "
+        f"**{int(diff.gamble_overflow_cooldown_seconds // 60)}m** overflow timer"
+    )
+
 def embeds_to_text(embeds: Sequence[discord.Embed]) -> str:
     return "\n\n".join(embed_to_text(e) for e in embeds)
 
@@ -948,17 +973,7 @@ class EmbedFactory:
                     dead_info = f"Enabled ({d.min_mute_seconds // 60}m mute on reply)"
                 else:
                     dead_info = f"Enabled ({d.min_mute_seconds // 60}–{d.max_mute_seconds // 60}m mute on reply)"
-            gamble_info = "Locked"
-            if d.gamble_enabled:
-                gamble_info = (
-                    f"Active (`/hell gamble [hours]` / `!gamble [hours]`) — "
-                    f"Win: **+{d.gamble_win_multiplier:g}x** "
-                    f"({int(d.gamble_win_chance * 100)}% / **{d.gamble_win_multiplier:g}x** at 15m; bigger bets = worse odds, better payout; rare jackpot **+1x** extra), "
-                    f"Lose: **-1.0x** + {d.gamble_loss_mute_seconds // 60}m mute | "
-                    f"Limits: max **{d.gamble_max_bet_hours:g}h** bet, "
-                    f"**{d.gamble_hourly_limit}** fast bets/hour then a "
-                    f"**{int(d.gamble_overflow_cooldown_seconds // 60)}m** extra timer"
-                )
+            gamble_info = _gamble_info_line(d)
             embed.add_field(
                 name=f"Level {d.level}: {d.name} — {unlocked}{active_marker}",
                 value=f"• **Alive checks:** every {d.min_check_hours:g}–{d.max_check_hours:g}h\n"
@@ -969,6 +984,54 @@ class EmbedFactory:
         self._brand(embed, timestamp=False)
         return embed
 
+    def gamble_odds(self, diff: DifficultyInfo) -> discord.Embed:
+        """The house odds card: both endpoints of the bet range, jackpot and limits.
+
+        Players bet blind otherwise — the win/loss messages only reveal the
+        odds of the bet that just rolled, and the difficulty embed buries the
+        numbers in a wall of text.
+        """
+        from .gamble import JACKPOT_EXTRA, JACKPOT_SHARE, odds_summary
+
+        s = odds_summary(diff)
+        if s is None:
+            embed = discord.Embed(
+                title="🎰 WELCOME TO HELL — GAMBLE ODDS",
+                description=(
+                    "🔒 **Gambling is locked at this difficulty.**\n"
+                    "It unlocks at **Difficulty 3 — Torment** (96h milestone).\n\n"
+                    "When it opens, `/hell gamble [hours]` (or `!gamble [hours]`) accepts "
+                    "either clock — **Real Timer** (rate limited; a loss costs the stake "
+                    "plus a mute) or **Gamble Time** (no rate limits; a loss costs 1.5–2x "
+                    "the stake, no mute)."
+                ),
+                color=theme_color("IDLE"),
+            )
+            self._brand(embed)
+            return embed
+        lines = [
+            f"**Difficulty {s.level}: {s.name}**",
+            "",
+            f"• **15m chip:** {int(s.base_chance * 100)}% odds → **{s.base_multiplier:g}x** payout",
+            f"• **Max bet ({s.max_bet_hours:g}h):** {int(s.max_chance * 100)}% odds → "
+            f"**{s.max_multiplier:g}x** payout",
+            f"• **Jackpot:** the bottom {int(JACKPOT_SHARE * 100)}% of the win band pays "
+            f"**+{JACKPOT_EXTRA:g}x** extra",
+            f"• **Real Timer loss:** -1.0x the stake + {s.loss_mute_seconds // 60}m mute",
+            "• **Gamble Time loss:** -1.5 to -2.0x the stake (no mute)",
+            f"• **Limits:** max **{s.max_bet_hours:g}h** bet · {s.hourly_limit} fast Real Timer "
+            f"bets/hour, then a {int(s.overflow_cooldown_seconds // 60)}m overflow timer",
+            "",
+            "📉 Every bet is negative expected value — the house always has an edge.",
+        ]
+        embed = discord.Embed(
+            title="🎰 WELCOME TO HELL — GAMBLE ODDS",
+            description="\n".join(lines),
+            color=theme_color("RUNNING"),
+        )
+        self._brand(embed)
+        return embed
+
     def difficulty_announcement(self, diff: DifficultyInfo) -> discord.Embed:
         """Announcement embed for a difficulty change/unlock."""
         dead_info = "Disabled"
@@ -977,17 +1040,7 @@ class EmbedFactory:
                 dead_info = f"Enabled ({diff.min_mute_seconds // 60}m mute on reply)"
             else:
                 dead_info = f"Enabled ({diff.min_mute_seconds // 60}–{diff.max_mute_seconds // 60}m mute on reply)"
-        gamble_info = "Locked"
-        if diff.gamble_enabled:
-            gamble_info = (
-                f"Active (`/hell gamble [hours]` / `!gamble [hours]`) — "
-                f"Win: **+{diff.gamble_win_multiplier:g}x** "
-                f"({int(diff.gamble_win_chance * 100)}% / **{diff.gamble_win_multiplier:g}x** at 15m; bigger bets = worse odds, better payout; rare jackpot **+1x** extra), "
-                f"Lose: **-1.0x** + {diff.gamble_loss_mute_seconds // 60}m mute | "
-                f"Limits: max **{diff.gamble_max_bet_hours:g}h** bet, "
-                f"**{diff.gamble_hourly_limit}** fast bets/hour then a "
-                f"**{int(diff.gamble_overflow_cooldown_seconds // 60)}m** extra timer"
-            )
+        gamble_info = _gamble_info_line(diff)
 
         embed = discord.Embed(
             title=say(

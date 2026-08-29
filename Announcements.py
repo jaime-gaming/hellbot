@@ -771,6 +771,15 @@ CMD_BROADCAST_FAILED = (
 CMD_SETDIFFICULTY_LEVEL_REQUIRED = "❌ Please choose a difficulty level (`0`, `1`, `2`, `3`, `4`, or `auto`)."
 CMD_BROADCAST_NEED_MESSAGE = "❌ Please include a message to broadcast."
 
+CMD_BROADCAST_DM_DONE = (
+    "📣 **DM broadcast complete.** {delivered} of {total} participants received the message{blocked_note}{failed_note}."
+)
+CMD_BROADCAST_DM_NETWORK_DOWN = (
+    "⚠️ **DM broadcast interrupted:** Discord stopped answering mid-way — {delivered} of {total} received it."
+    " Send it again once the connection is back."
+)
+CMD_BROADCAST_DM_EMPTY = "📣 Nobody to DM: the event has no recorded participants yet."
+
 CMD_CONTINUATION_NOT_ALLOWED = (
     "❌ **Hell 2 cannot resume yet.** The 160h *keep on Hell?* vote must have closed with a **Yes** majority after 10 minutes."
 )

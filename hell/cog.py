@@ -16,6 +16,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from . import RESTART_EXIT_CODE, __version__
+from .broadcast import BroadcastResult, dm_participants
 from .config import Config
 from .embeds import MAX_DESCRIPTION, add_chunked_field
 from .engine import HellEngine, StartError
@@ -68,7 +69,7 @@ _BROADCAST_LEVELS: dict[str, tuple[str, str, int]] = {
     "grace": ("⏳", "GRACE", None),
     "completed": ("🏆", "COMPLETED", None),
 }
-_BROADCAST_TARGETS = ("announcements", "vc")
+_BROADCAST_TARGETS = ("announcements", "vc", "participants")
 
 
 class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell event controls"):
@@ -177,6 +178,59 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         )
         self.announcer.embeds._brand(embedding)
         return embedding
+
+    # ------------------------------------------------- broadcast by DM (host)
+
+    def _broadcast_roster(self) -> list[int]:
+        """Who "all participants" means: every contestant with recorded time
+        in the current event (the final-DM roster), falling back to whoever
+        is in the VC right now."""
+        board = self.engine.leaderboard()
+        ids = [entry.user_id for entry in board]
+        if not ids:
+            ids = [p.user_id for p in self.engine.last_participants]
+        return ids
+
+    async def _broadcast_to_participants(self, message: str) -> BroadcastResult:
+        ids = self._broadcast_roster()
+        return await dm_participants(
+            self.bot, ids, message, delay=self.config.dm_delay_seconds
+        )
+
+    def _dm_broadcast_summary(self, result: BroadcastResult) -> str:
+        """One line for the host about what the DM broadcast actually did."""
+        if result.total == 0:
+            return str(
+                getattr(
+                    TEXT,
+                    "CMD_BROADCAST_DM_EMPTY",
+                    "📣 Nobody to DM: the event has no recorded participants yet.",
+                )
+            )
+        if result.network_down:
+            return say(
+                getattr(
+                    TEXT,
+                    "CMD_BROADCAST_DM_NETWORK_DOWN",
+                    "⚠️ **DM broadcast interrupted:** Discord stopped answering mid-way — "
+                    "{delivered} of {total} received it. Send it again once the connection is back.",
+                ),
+                delivered=result.delivered,
+                total=result.total,
+            )
+        blocked_note = f" · {result.blocked} with closed DMs" if result.blocked else ""
+        failed_note = f", **{len(result.failed)}** could not be delivered" if result.failed else ""
+        return say(
+            getattr(
+                TEXT,
+                "CMD_BROADCAST_DM_DONE",
+                "📣 **DM broadcast complete.** {delivered} of {total} participants received the message{blocked_note}{failed_note}.",
+            ),
+            delivered=result.delivered,
+            total=result.total,
+            blocked_note=blocked_note,
+            failed_note=failed_note,
+        )
 
     async def _handle_set_difficulty(self, level_input: str) -> tuple[bool, str]:
         clean = level_input.strip().lower()
@@ -1044,11 +1098,11 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             return False
         return any(r.id == self.config.gamenight_host_role_id for r in roles)
 
-    @app_commands.command(name="broadcast", description="Post a colored embed in the VC text chat or the announcement channel (host message, no plain text).")
+    @app_commands.command(name="broadcast", description="Embed to the announcement channel or VC chat, or a markdown DM to every participant.")
     @app_commands.describe(
-        message="The host message to post inside the colored embed.",
+        message="The host message to post (or DM, verbatim, for the participants target).",
         level="Broadcast colour/severity (info, warning, error, …). Default: info.",
-        target="Where to post it: voice-chat text or the announcement channel. Default: announcements.",
+        target="Where to send it: announcement channel, VC text chat, or every participant by DM. Default: announcements.",
     )
     @app_commands.choices(
         level=[
@@ -1065,6 +1119,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         target=[
             app_commands.Choice(name="Announcement channel", value="announcements"),
             app_commands.Choice(name="VC text chat", value="vc"),
+            app_commands.Choice(name="All participants (DM each)", value="participants"),
         ],
     )
     @is_host()
@@ -1085,6 +1140,16 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             return
         lvl = (level.value if level is not None else "info").lower()
         tgt = (target.value if target is not None else "announcements")
+        if tgt == "participants":
+            result = await self._broadcast_to_participants(message)
+            log.info(
+                "DM broadcast by %s (%s): %d/%d delivered, %d blocked, %d failed%s",
+                interaction.user, interaction.user.id, result.delivered, result.total,
+                result.blocked, len(result.failed),
+                " (network down)" if result.network_down else "",
+            )
+            await interaction.followup.send(self._dm_broadcast_summary(result), ephemeral=True)
+            return
         embed = self._build_broadcast_embed(message, lvl)
         sent = await self.announcer.send([embed], target=tgt)
         if sent is None:
@@ -1922,7 +1987,7 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
             "\n".join([
                 "`!adjtime @user <hours> [real|gamble]` — Add/remove Real Timer or Gamble Time",
                 "`!setdifficulty <0-4|auto>` — Set or override difficulty level",
-                "`!broadcast <info|warning|error|...> <announcements|vc> <message>` — Post a colored embed",
+                "`!broadcast <info|warning|error|...> <announcements|vc|participants> <message>` — Colored embed, or a DM to every participant",
                 "`!announcedifficulty [overview]` — Broadcast difficulty update to announcement channel",
                 "`!doctor` — Diagnostic self-check (permissions, state, runtime, config)",
                 "`!logs [status|on|off|test|tail|flush] [level]` — Control live log stream",
@@ -2113,7 +2178,21 @@ class HellCommands(commands.GroupCog, name="hell", description="Welcome to Hell 
         lvl = level.lower()
         if lvl not in _BROADCAST_LEVELS:
             lvl = "info"
-        tgt = target if target in _BROADCAST_TARGETS else "announcements"
+        tgt = str(target).strip().lower()
+        if tgt in ("participants", "dm", "dms", "all"):
+            tgt = "participants"
+        if tgt not in _BROADCAST_TARGETS:
+            tgt = "announcements"
+        if tgt == "participants":
+            result = await self._broadcast_to_participants(message.strip())
+            log.info(
+                "DM broadcast (prefix) by %s (%s): %d/%d delivered, %d blocked, %d failed%s",
+                ctx.author, ctx.author.id, result.delivered, result.total,
+                result.blocked, len(result.failed),
+                " (network down)" if result.network_down else "",
+            )
+            await ctx.send(self._dm_broadcast_summary(result))
+            return
         embed = self._build_broadcast_embed(message.strip(), lvl)
         sent = await self.announcer.send([embed], target=tgt)
         if sent is None:

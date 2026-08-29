@@ -37,7 +37,9 @@ empties and nobody returns within the grace period, the run is dead — permanen
 * A **personal stat card by DM** for every contestant when the run ends (it includes the
   player's gambling record once they have bet)
 * Hosts can post **colored embeds** with `/hell broadcast` (`info`, `warning`, `error`, …) to the
-  announcement channel or the VC text chat
+  announcement channel or the VC text chat — or **DM a markdown message to every
+  participant** (`target: participants`, one DM per contestant, closed-DM users are counted,
+  a network outage stops the run and is reported honestly)
 
 **How the run can continue (Hell 2)**
 
@@ -243,7 +245,7 @@ in the log, and in the launcher's Dashboard.
 | `/hell export` | `@gamenight host` | The leaderboard as a CSV attachment, for handing out rewards outside Discord. |
 | `/hell milestones` | everyone | All five milestones, their rewards, when each was reached and how many users were eligible. |
 | `/hell difficulty` | everyone / `@gamenight host` | Show the 5 difficulty tiers and current level; `action: set` (host only, `0`-`4` or `auto`) overrides it; `action: announce` (host only) posts it to the announcement channel. |
-| `/hell broadcast` | `@gamenight host` | Post the host's message as a colored embed — `level: info/warning/error/…`, `target: announcements` or `vc`, no plain text outside the embed. |
+| `/hell broadcast` | `@gamenight host` | Post the host's message as a colored embed — `level: info/warning/error/…`, `target: announcements` or `vc`, no plain text outside the embed. With `target: participants` the message is **DM'd verbatim (markdown) to every contestant** with recorded time (fallback: current VC); closed DMs are counted, a dead connection stops the run and the host gets an honest summary. Also `!broadcast <level> participants <message>`. |
 | `/hell gamble` | everyone | Difficulty 3+: bet **Real Timer** (hourly fast-bet quota + overflow timer) or **Gamble Time** (no rate limits, losses cost 1.5–2× the stake). Bets snap to 15m chips; you cannot bet all of your time (`gamble_max_bet_hours`). Every result shows the payout and the player's session stats (bets, W/L, net); a Real Timer loss also adds a server mute. |
 | `/hell odds` | everyone | The house odds card for the current difficulty: win chance and payout at the 15m chip and at the max bet, the jackpot band, loss costs per clock, and the rate limits (or the unlock hint while gambling is locked). Also `!odds` / `!gamble odds`. |
 | `/hell adjtime` | `@gamenight host` | Add or remove hours on a member's **Real Timer** or **Gamble Time** (`hours` may be negative). |

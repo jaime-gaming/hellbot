@@ -212,7 +212,7 @@ def _milestones_section(conn: sqlite3.Connection, uid: Optional[str], out: list[
 
 def _alive_checks_section(conn: sqlite3.Connection, uid: Optional[str], out: list[str]) -> None:
     rows = conn.execute(
-        "SELECT started_ts, resolved_ts, required, responded, kicked, cancelled "
+        "SELECT check_id, started_ts, resolved_ts, required, responded, kicked, cancelled "
         "FROM alive_check_history WHERE event_uid = ? ORDER BY started_ts DESC",
         (uid,),
     ).fetchall() if uid else []
@@ -230,7 +230,7 @@ def _alive_checks_section(conn: sqlite3.Connection, uid: Optional[str], out: lis
             f"{row['responded']}/{row['required']} replied, {len(kicked)} kicked"
         )
         out.append(
-            f"  {_fmt_ts(row['started_ts'])}  → {_fmt_ts(row['resolved_ts'])}  ·  {state}"
+            f"  [{row['check_id']}] {_fmt_ts(row['started_ts'])}  → {_fmt_ts(row['resolved_ts'])}  ·  {state}"
         )
     if len(rows) > 50:
         out.append(f"  … and {len(rows) - 50} older checks (see the .sql dump)")

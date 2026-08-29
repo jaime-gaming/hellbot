@@ -9,7 +9,7 @@ Governs the final hour (159:00:00 → 160:00:00) of the challenge:
 - 160:00:00 (Exact completion): Atomic completion of the 160h challenge.
 
 All core survival rules (VC monitoring, empty-VC grace, alive checks, dead checks,
-difficulty, gambling, Hell Events) remain active throughout the Finale.
+difficulty, gambling) remain active throughout the Finale.
 """
 
 from __future__ import annotations

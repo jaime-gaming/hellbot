@@ -44,7 +44,6 @@ from typing import Any, Optional
 from .config import Config
 from .finale import FinaleManager
 from .grace import ALIVE_CHECK_RECOVERY_GRACE_SECONDS, EmptyVcGracePeriod
-from .hellevents import HellEventManager
 from .leaderboard import top_participants
 from .milestones import (
     FINAL_MILESTONE_HOURS,
@@ -172,10 +171,8 @@ class Snapshot:
     grace_total: float = 0.0
     paused: bool = False
     difficulty: int = 0
-    blindness_active: bool = False
     is_final_hour: bool = False
     countdown_seconds: Optional[int] = None
-    active_hell_event: Optional[Any] = None
     peak_participants: int = 0
     continuation: bool = False
     paused_seconds: float = 0.0
@@ -208,11 +205,9 @@ class HellEngine:
         self.grace.restore(self.state.grace_started_ts, seconds=self.state.grace_duration)
         self._alive_check_emptied_ts: Optional[float] = None
         self._difficulty_override: Optional[int] = None
-        self.hell_events = HellEventManager(config, store, engine=self)
         self.finale = FinaleManager(config, store, engine=self)
         self._alive_checks: Optional[Any] = None
         if self.state.event_uid:
-            self.hell_events.bind(self.state.event_uid)
             self.finale.bind(self.state.event_uid)
 
     # ------------------------------------------------------------- accessors
@@ -316,10 +311,8 @@ class HellEngine:
             grace_total=self.grace.seconds,
             paused=self.is_paused,
             difficulty=diff.level,
-            blindness_active=False,
             is_final_hour=self.finale.is_final_hour(elapsed),
             countdown_seconds=self.finale.countdown_seconds_left(elapsed),
-            active_hell_event=None,
             peak_participants=peak,
             continuation=self.state.continuation,
             paused_seconds=max(0.0, now - self._effective_now(now)),
@@ -426,7 +419,6 @@ class HellEngine:
         self.store.ensure_starting_gamble_time(uid, participants)
         if participants:
             self.store.record_population(uid, len(participants))
-        self.hell_events.bind(uid, now=now)
         self.finale.bind(uid)
         log.info("Event %s started at %.3f by %s", uid, now, started_by)
         return self.state
@@ -475,7 +467,6 @@ class HellEngine:
         if self.state.grace_started_ts is not None:
             self.state.grace_started_ts += duration
             self.grace.restore(self.state.grace_started_ts)
-        self.hell_events.shift_schedule(duration)
         self._shift_alive_checks(duration)
         self.store.save_state(self.state)
         log.warning(
@@ -517,7 +508,6 @@ class HellEngine:
         if self.state.end_ts is not None:
             fail_duration = max(0.0, now - self.state.end_ts)
             self.state.paused_seconds = max(self.state.paused_seconds, fail_duration)
-            self.hell_events.shift_schedule(fail_duration)
             self._shift_alive_checks(fail_duration)
         self.state.status = EventStatus.RUNNING
         self.state.end_ts = None
@@ -550,7 +540,6 @@ class HellEngine:
         if self.state.end_ts is not None:
             wait_duration = max(0.0, now - self.state.end_ts)
             self.state.paused_seconds = max(self.state.paused_seconds, wait_duration)
-            self.hell_events.shift_schedule(wait_duration)
             self._shift_alive_checks(wait_duration)
         self.state.continuation = True
         self.state.milestones_enabled = False
@@ -599,7 +588,6 @@ class HellEngine:
         self._last_participants = ()
         self._presence_signature = frozenset()
         self._difficulty_override = None
-        self.hell_events.reset()
         self.finale.reset()
         self.grace.restore(None)
         log.warning("Event data reset")

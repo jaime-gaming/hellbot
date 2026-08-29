@@ -53,7 +53,7 @@ def test_difficulty_rules():
     d3 = get_difficulty_by_level(3)
     assert d3.min_check_hours == 1.0 and d3.max_check_hours == 3.0
     assert d3.dead_checks_enabled and d3.min_mute_seconds == 60 and d3.max_mute_seconds == 300
-    assert d3.gamble_enabled and d3.gamble_win_chance == 0.40
+    assert d3.gamble_enabled and d3.gamble_win_chance == 0.38
     assert d3.gamble_max_bet_hours == 1.0
     assert d3.gamble_hourly_limit == 2
     assert d3.gamble_win_multiplier == 1.5
@@ -61,7 +61,7 @@ def test_difficulty_rules():
     d4 = get_difficulty_by_level(4)
     assert d4.min_check_hours == 1.0 and d4.max_check_hours == 2.0
     assert d4.dead_checks_enabled and d4.min_mute_seconds == 300 and d4.max_mute_seconds == 900
-    assert d4.gamble_enabled and d4.gamble_win_chance == 0.30
+    assert d4.gamble_enabled and d4.gamble_win_chance == 0.28
     assert d4.gamble_max_bet_hours == 2.0
     assert d4.gamble_hourly_limit == 3
     assert d4.gamble_win_multiplier == 2.5
@@ -344,7 +344,7 @@ def test_gambling_exceeds_max_bet_hours(engine, config):
     # Diff 3 max bet is 1.0h; trying to bet 2.0h must fail
     ok, msg = asyncio.run(cog._perform_gamble(user, hours=2.0))
     assert not ok
-    assert "at most" in msg.lower()
+    assert "between" in msg.lower() and "1h" in msg
 
 
 def test_gambling_hourly_limit_enforced(engine, config):
@@ -369,7 +369,8 @@ def test_gambling_hourly_limit_enforced(engine, config):
     assert ok1
 
     # Simulate cooldown passing but still within the 1-hour window
-    cog._gamble_cooldowns[1] = 0.0
+    # (the cooldown lives in the persisted GambleBook, keyed by event)
+    cog._gamble_book.store.set_meta(f"gamble_cd:{engine.event_uid}:1", "0")
 
     # Bet 2 (uses up the fast quota of 2/h)
     with patch("random.random", return_value=0.1):
@@ -383,7 +384,7 @@ def test_gambling_hourly_limit_enforced(engine, config):
     assert "separate timer" in msg3.lower() or "fast bets" in msg3.lower()
 
     # After the overflow timer is treated as elapsed, extra gambles are allowed
-    cog._gamble_cooldowns[1] = 0.0
+    cog._gamble_book.store.set_meta(f"gamble_cd:{engine.event_uid}:1", "0")
     with patch("random.random", return_value=0.1):
         ok4, _ = asyncio.run(cog._perform_gamble(user, hours=0.5))
     assert ok4
@@ -441,7 +442,7 @@ def test_gambling_requires_minimum_time(engine, config):
     user = MagicMock(id=2, display_name="Bob", mention="<@2>")
     ok, msg = asyncio.run(cog._perform_gamble(user))
     assert not ok
-    assert "need at least" in msg.lower()
+    assert "need more than" in msg.lower()
 
 
 def test_gambling_cooldown_enforced(engine, config):
@@ -522,9 +523,9 @@ def test_win_chance_drops_on_bigger_bets():
     d3 = get_difficulty_by_level(3)
     small = win_chance_for_bet(d3, 0.25)
     big = win_chance_for_bet(d3, 1.0)
-    assert small == pytest.approx(0.40)
+    assert small == pytest.approx(0.38)
     assert big < small
-    assert big == pytest.approx(0.40 * 0.70)
+    assert big == pytest.approx(0.38 * 0.70)
 
     jackpot = resolve_gamble(d3, 0.25, roll=0.01)
     assert jackpot.jackpot and jackpot.multiplier == pytest.approx(2.5)

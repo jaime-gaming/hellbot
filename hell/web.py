@@ -28,6 +28,7 @@ fallbacks would be blocked without these headers.
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import time
@@ -178,20 +179,49 @@ def set_status_provider(provider: Optional[Callable[[], dict[str, Any]]]) -> Non
 # ------------------------------------------------------------- server lifecycle
 
 
+def _address_in_use(exc: OSError) -> bool:
+    return getattr(exc, "errno", None) in (errno.EADDRINUSE, 10048)  # 10048: Windows
+
+
 async def start_server(port: int = 8080) -> Optional[web.AppRunner]:
     """Start the HTTP + WebSocket server.  Returns the runner (for shutdown)."""
     global _app
+    app = create_app()
+    runner = web.AppRunner(app)
     try:
-        _app = create_app()
-        runner = web.AppRunner(_app)
         await runner.setup()
         site = web.TCPSite(runner, "0.0.0.0", port)
         await site.start()
-        log.info("Web server listening on http://0.0.0.0:%d  (pages: / and /dev)", port)
-        return runner
+    except OSError as exc:
+        if _address_in_use(exc):
+            # The most common cause is a second copy of the bot (a stale
+            # container or a leftover process) — say exactly that, with the
+            # fix, instead of a bare traceback.
+            log.error(
+                "Web dashboard NOT started: port %d is already in use. "
+                "Is another copy of the bot still running (check `docker ps` "
+                "and `ps aux`), or is another app using this port? "
+                "Set WEB_PORT in .env to a free port, or WEB_PORT=0 to "
+                "disable the dashboard.",
+                port,
+            )
+        else:
+            log.error("Web server could not bind to 0.0.0.0:%d: %s", port, exc)
+        try:
+            await runner.cleanup()
+        except Exception:  # pragma: no cover - cleanup of a failed startup
+            pass
+        return None
     except Exception:
+        try:
+            await runner.cleanup()
+        except Exception:  # pragma: no cover
+            pass
         log.exception("Failed to start web server on port %d", port)
         return None
+    _app = app
+    log.info("Web server listening on http://0.0.0.0:%d  (pages: / and /dev)", port)
+    return runner
 
 
 async def stop_server(runner: Optional[web.AppRunner]) -> None:

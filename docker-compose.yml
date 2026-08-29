@@ -7,7 +7,9 @@ services:
     environment:
       DATABASE_PATH: /data/hell.sqlite3
     ports:
-      - "8080:8080"
+      # Host port:container port — both follow WEB_PORT (same .env the bot
+      # reads), so changing WEB_PORT keeps the dashboard reachable.
+      - "${WEB_PORT:-8080}:${WEB_PORT:-8080}"
     volumes:
       - hell-data:/data
     logging:

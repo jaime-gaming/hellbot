@@ -631,7 +631,6 @@ def test_rejoin_dm_sent_once_with_exact_message(store, config, engine):
     io = FakeIO()
     checks = AliveCheckManager(config, store, io, rng=random.Random(1))
     monitor.alive_checks = checks
-    engine.hell_events.alive_checks = checks
 
     start(engine, T0, 1)
     checks.bind(engine.event_uid, now=T0)
@@ -665,34 +664,45 @@ def test_failed_kick_for_no_does_not_queue_a_rejoin_dm(alive):
     assert manager.pop_no_kick_rejoins({1}) == []
 
 
-# ------------------------------------------- events affecting the schedule
+def test_real_io_mute_never_shortens_a_longer_timeout(config):
+    """A 1m gamble-loss mute must not cancel a 5m dead-check mute in progress."""
+    import datetime
+    from unittest.mock import AsyncMock, MagicMock
 
+    import discord
 
-def test_accelerate_next_pulls_a_far_away_check_into_the_window(alive):
-    manager, _io = alive
-    far = T0 + 5 * HOUR
-    manager.store.set_next_alive_check("uid", far)
-    assert manager.next_check_ts() == far
+    from hell.aliveio import DiscordAliveCheckIO
 
-    new_ts = manager.accelerate_next(180.0, 360.0, now=T0)
-    assert new_ts is not None
-    assert T0 + 180.0 <= new_ts <= T0 + 360.0
-    assert manager.next_check_ts() == new_ts
+    def run_mute(current_timeout_seconds: float | None, requested_seconds: int) -> datetime.datetime:
+        io = DiscordAliveCheckIO(MagicMock(spec=discord.Client), config)
+        bot = io.bot
+        member = MagicMock()
+        if current_timeout_seconds is None:
+            member.timed_out_until = None
+        else:
+            member.timed_out_until = discord.utils.utcnow() + datetime.timedelta(
+                seconds=current_timeout_seconds
+            )
+        member.timeout = AsyncMock()
+        guild = MagicMock()
+        guild.get_member.return_value = member
+        bot.get_guild.return_value = guild
 
+        run(io.mute(1, requested_seconds, "test"))
+        until = member.timeout.await_args.args[0]
+        assert isinstance(until, datetime.datetime)
+        return until
 
-def test_accelerate_next_never_pushes_a_due_sooner_check_back(alive):
-    manager, _io = alive
-    soon = T0 + 60.0
-    manager.store.set_next_alive_check("uid", soon)
-    assert manager.accelerate_next(180.0, 360.0, now=T0) == soon
-    assert manager.next_check_ts() == soon
+    now = discord.utils.utcnow()
 
+    # No timeout in progress -> the requested duration applies.
+    until = run_mute(None, 60)
+    assert (until - now).total_seconds() == pytest.approx(60, abs=2)
 
-def test_accelerate_next_refuses_while_a_check_is_pending(alive):
-    manager, _io = alive
-    io = _io
-    io.present = {1}
-    manager.store.set_next_alive_check("uid", T0)
-    run(manager.tick(T0 + 1, users(1)))
-    assert manager.pending is not None
-    assert manager.accelerate_next(180.0, 360.0, now=T0 + 2) is None
+    # A 5m timeout in progress -> a 1m request must keep it at 5m.
+    until = run_mute(300, 60)
+    assert (until - now).total_seconds() == pytest.approx(300, abs=2)
+
+    # A 5m timeout in progress -> a 10m request must extend it to 10m.
+    until = run_mute(300, 600)
+    assert (until - now).total_seconds() == pytest.approx(600, abs=2)
